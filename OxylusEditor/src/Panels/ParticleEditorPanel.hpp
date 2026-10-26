@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/SceneTarget.hpp"
+
 #include <array>
 #include <imgui.h>
 #include <memory>
@@ -21,7 +23,7 @@ public:
   ~ParticleEditorPanel();
 
   auto on_update(this ParticleEditorPanel& self) -> void;
-  auto on_render(this ParticleEditorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   // Loads the asset into the panel and shows it. The panel keeps a working copy; edits are pushed
   // back through AssetManager::edit_particle_system so every holder recompiles at once.
@@ -35,7 +37,7 @@ private:
   auto draw_inspector(this ParticleEditorPanel& self) -> void;
   // Plots one curve and lets its control points be dragged. Returns true when the curve changed.
   auto draw_curve_editor(this ParticleEditorPanel& self, usize curve_index, ParticleCurve& curve) -> bool;
-  auto draw_preview(this ParticleEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment) -> void;
+  auto draw_preview(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
   // Outlines the emission shape over the rendered preview, in the preview camera's projection.
   auto draw_shape_overlay(this ParticleEditorPanel& self, ImVec2 image_min, ImVec2 image_size) -> void;
   auto ensure_preview_scene(this ParticleEditorPanel& self) -> void;
@@ -77,6 +79,7 @@ private:
   bool graph_dock_built = false;
 
   std::unique_ptr<Scene> preview_scene = nullptr;
+  SceneTarget preview_target_texture = {};
   flecs::entity preview_emitter = {};
   flecs::entity preview_sky = {};
   glm::vec4 preview_background = {0.05f, 0.05f, 0.06f, 1.0f};

@@ -1745,7 +1745,7 @@ auto CinematicEditorPanel::draw_inspector(this CinematicEditorPanel& self) -> vo
   }
 }
 
-auto CinematicEditorPanel::on_render(this CinematicEditorPanel& self, vuk::ImageAttachment) -> void {
+auto CinematicEditorPanel::on_render(this CinematicEditorPanel& self, const SwapchainInfo&) -> void {
   ZoneScoped;
 
   if (!self.on_begin()) {

@@ -1,7 +1,6 @@
 #pragma once
 
-#include <vuk/Name.hpp>
-#include <vuk/Types.hpp>
+#include <vir/Types.hpp>
 
 #include "Core/Types.hpp"
 #include "Render/GPU/Shared.hpp"
@@ -16,7 +15,7 @@ struct Transforms {
   glm::mat4 previous_world = {};
 };
 
-constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vuk::Extent3D {
+constexpr auto ddgi_atlas_extent(u32 probe_count, u32 interior_texels) -> vir::Extent3D {
   const auto tile = interior_texels + 2;
   const auto rows = (probe_count + DDGI_PROBES_PER_ATLAS_ROW - 1) / DDGI_PROBES_PER_ATLAS_ROW;
   return {.width = DDGI_PROBES_PER_ATLAS_ROW * tile, .height = rows * tile, .depth = 1};
@@ -28,7 +27,7 @@ constexpr auto ddgi_radiance_atlas_y_offset(u32 probe_count) -> u32 {
   return ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS).height;
 }
 
-constexpr auto ddgi_irradiance_atlas_extent(u32 probe_count) -> vuk::Extent3D {
+constexpr auto ddgi_irradiance_atlas_extent(u32 probe_count) -> vir::Extent3D {
   const auto irradiance = ddgi_atlas_extent(probe_count, DDGI_IRRADIANCE_TEXELS);
   const auto radiance_rows = (probe_count + DDGI_RADIANCE_PROBES_PER_ATLAS_ROW - 1) /
                              DDGI_RADIANCE_PROBES_PER_ATLAS_ROW;
@@ -51,7 +50,7 @@ constexpr auto ddgi_probes_per_ray_row(u32 rays_per_probe) -> u32 {
   return probes;
 }
 
-constexpr auto ddgi_ray_data_extent(u32 probe_count, u32 rays_per_probe) -> vuk::Extent3D {
+constexpr auto ddgi_ray_data_extent(u32 probe_count, u32 rays_per_probe) -> vir::Extent3D {
   const auto probes_per_row = ddgi_probes_per_ray_row(rays_per_probe);
   const auto rows = (probe_count + probes_per_row - 1) / probes_per_row;
   return {.width = probes_per_row * rays_per_probe, .height = rows, .depth = 1};
@@ -73,7 +72,6 @@ struct EyeAdaptationSettings {
 };
 
 struct DrawBatch2D {
-  vuk::Name pipeline_name = {};
   u32 offset = 0;
   u32 count = 0;
 };

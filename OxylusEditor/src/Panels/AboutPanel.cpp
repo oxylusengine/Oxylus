@@ -34,7 +34,7 @@ AboutPanel::AboutPanel() : EditorPanelState("About Oxylus", ICON_MDI_INFORMATION
   window_center_cond = ImGuiCond_Appearing;
 }
 
-auto AboutPanel::on_render(this AboutPanel& self, vuk::ImageAttachment) -> void {
+auto AboutPanel::on_render(this AboutPanel& self, const SwapchainInfo&) -> void {
   ZoneScoped;
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, UI::scale(ImVec2(24.0f, 20.0f)));
@@ -64,7 +64,7 @@ auto AboutPanel::on_render(this AboutPanel& self, vuk::ImageAttachment) -> void 
                                          : build_info.dirty               ? "Modified"
                                                                           : "Clean";
   const std::string_view platform = SDL_GetPlatform();
-  const auto api_version = render_context.vkbphysical_device.properties.apiVersion;
+  const auto api_version = render_context.device_api_version;
   const auto vulkan_version = stack.format(
     "{}.{}.{}",
     VK_API_VERSION_MAJOR(api_version),

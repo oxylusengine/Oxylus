@@ -238,7 +238,7 @@ auto LoadingPanel::on_update(this LoadingPanel& self) -> void {
   }
 }
 
-auto LoadingPanel::on_render(this LoadingPanel& self, vuk::ImageAttachment) -> void {
+auto LoadingPanel::on_render(this LoadingPanel& self, const SwapchainInfo&) -> void {
   ZoneScoped;
 
   if (self.visible && !ImGui::IsPopupOpen("ProjectLoading"))

@@ -141,12 +141,14 @@ auto TextEditor::Document::draw_body(this TextEditor::Document& self) -> void {
 
   ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0));
 
-  if (ImGui::InputTextMultiline(
-        "##source", //
-        &self.content,
-        ImGui::GetContentRegionAvail(),
-        ImGuiInputTextFlags_AllowTabInput
-      )) {
+  if (
+    ImGui::InputTextMultiline(
+      "##source", //
+      &self.content,
+      ImGui::GetContentRegionAvail(),
+      ImGuiInputTextFlags_AllowTabInput
+    )
+  ) {
     self.dirty = true;
   }
 

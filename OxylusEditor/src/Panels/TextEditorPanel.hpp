@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vuk/ImageAttachment.hpp>
+#include "Render/Fwd.hpp"
+
 
 #include "Panels/EditorPanelState.hpp"
 #include "UI/TextEditor.hpp"
@@ -13,6 +14,6 @@ public:
   TextEditorPanel();
 
   auto on_update(this TextEditorPanel& self) -> void{}
-  auto on_render(this TextEditorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this TextEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
 };
 } // namespace ox

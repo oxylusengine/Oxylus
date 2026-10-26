@@ -7,6 +7,7 @@
 #include <implot.h>
 #include <memory>
 #include <span>
+#include <vir/Types.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Core/App.hpp"
@@ -28,11 +29,11 @@ auto EditorTheme::init(this EditorTheme& self) -> void {
   ZoneScoped;
 
   self.engine_banner = std::make_unique<Texture>(Texture::create({
-    .format = vuk::Format::eR8G8B8A8Srgb,
-    .extent = vuk::Extent3D{.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Srgb,
+    .extent = {.width = editor_bannerWidth, .height = editor_bannerHeight, .depth = 1},
+    .usage = vir::ImageUsageFlags::Sampled,
   }));
-  self.engine_banner->upload(std::span(editor_banner), vuk::eFragmentSampled);
+  self.engine_banner->upload(std::span(editor_banner), vir::Access::FragmentSampled);
 
   auto& vfs = App::get_vfs();
   auto regular_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraSans-Regular.ttf");
@@ -110,7 +111,8 @@ auto EditorTheme::draw_banner(this const EditorTheme& self, const f32 width) -> 
     {50.0f / 332.0f, 13.0f / 119.0f},
     {253.0f / 332.0f, 105.0f / 119.0f}
   );
-  ImGui::SetCursorPosX(cursor_x);}
+  ImGui::SetCursorPosX(cursor_x);
+}
 
 void EditorTheme::apply_theme(bool dark) {
   ImVec4* colors = ImGui::GetStyle().Colors;

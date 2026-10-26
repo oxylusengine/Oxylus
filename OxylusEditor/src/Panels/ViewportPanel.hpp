@@ -1,11 +1,12 @@
 #pragma once
 
-#include <vuk/Buffer.hpp>
-#include <vuk/runtime/vk/Allocator.hpp>
+#include <vir/Resource.hpp>
 
 #include "EditorPanelState.hpp"
 #include "UI/RuntimeConsole.hpp"
+#include "Utils/PendingPick.hpp"
 #include "Utils/SceneManager.hpp"
+#include "Utils/SceneTarget.hpp"
 
 namespace ox {
 class ViewportPanel : public EditorPanelState {
@@ -24,25 +25,28 @@ public:
   ViewportPanel();
   ~ViewportPanel();
 
-  auto on_render(this ViewportPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ViewportPanel& self, const SwapchainInfo& swapchain_info) -> void;
   auto on_update(this ViewportPanel& self) -> void;
 
   auto set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void;
   auto get_scene(this const ViewportPanel& self) -> EditorScene* { return self.editor_scene.get(); }
 
-  void drag_drop(this const ViewportPanel& self);
+  auto drag_drop(this const ViewportPanel& self) -> void;
+
+  // what the stages recorded into the scene's program read every frame
+  glm::uvec2 picking_texel = {};
+  bool is_picking = false;
+  u32 picking_terrain_index = ~0_u32;
+  std::vector<u32> highlight_indices = {};
+  u32 highlight_terrain_index = ~0_u32;
+  vir::Buffer highlight_indices_buffer = {};
 
 private:
-  struct PendingPick {
-    vuk::Unique<vuk::Buffer> buffer;
-    u64 submitted_frame = 0;
-    bool pending = false;
-  };
-
   auto resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void;
 
   PendingPick pending_pick_2d;
   PendingPick pending_pick_3d;
+  std::weak_ptr<Scene> pending_pick_scene = {};
 
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
@@ -86,7 +90,7 @@ private:
   bool draw_entity_highlighting = true;
   bool mouse_picking_enabled = true;
 
-  std::vector<vuk::Unique<vuk::Buffer>> id_buffers = {};
+  SceneTarget scene_target = {};
 
   // Camera
   f32 translation_dampening = 0.15f;

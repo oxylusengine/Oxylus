@@ -25,7 +25,7 @@ public:
   auto add_viewport(this MainViewportPanel& self) -> ViewportPanel*;
 
   auto on_update(this MainViewportPanel& self) -> void {}
-  auto on_render(this MainViewportPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this MainViewportPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   void update(this MainViewportPanel& self, const Timestep& timestep, SceneHierarchyPanel* sh);
 

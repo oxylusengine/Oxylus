@@ -4,6 +4,7 @@
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <sol/state.hpp>
+#include <vir/Types.hpp>
 
 #include "Core/App.hpp"
 #include "Scene/Scene.hpp"
@@ -214,7 +215,7 @@ auto LuaSystem::on_scene_fixed_update(this const LuaSystem& self, Scene* scene, 
   check_result(result, "on_scene_fixed_update");
 }
 
-auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vuk::Extent3D extent) -> void {
+auto LuaSystem::on_scene_render(this const LuaSystem& self, Scene* scene, vir::Extent3D extent) -> void {
   ZoneScoped;
 
   if (!self.on_scene_render_func)

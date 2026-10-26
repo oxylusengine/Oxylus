@@ -12,7 +12,8 @@
 #include <fmt/format.h>
 #include <fmt/std.h>
 #include <mutex>
-#include <vuk/Types.hpp>
+#include <vir/Types.hpp>
+#include <vulkan/vulkan_core.h>
 
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -21,8 +22,8 @@
 #include "Session.hpp"
 
 namespace ox::rc {
-// VkComponentSwizzle per channel. a one-channel pack reads back the way the grayscale image it came from would, and a
-// BC5 normal map gets a blue of one: the shader rebuilds z anyway, but previews look like a normal map again and
+// vir::ComponentSwizzle per channel. a one-channel pack reads back the way the grayscale image it came from would, and
+// a BC5 normal map gets a blue of one: the shader rebuilds z anyway, but previews look like a normal map again and
 // anything sampling it without the rebuild still gets a normal facing outward
 constexpr static auto GRAYSCALE_COMPONENTS = std::array<u8, 4>{3, 3, 3, 2};
 constexpr static auto NORMAL_COMPONENTS = std::array<u8, 4>{3, 4, 2, 2};
@@ -73,15 +74,15 @@ static auto mip_count(u32 width, u32 height) -> u32 {
 
 static auto block_bytes(TextureUsage usage) -> u32 { return usage == TextureUsage::Mask ? 8 : 16; }
 
-static auto block_format(TextureUsage usage) -> vuk::Format {
+static auto block_format(TextureUsage usage) -> vir::Format {
   switch (usage) {
-    case TextureUsage::Color : return vuk::Format::eBc7SrgbBlock;
-    case TextureUsage::Linear: return vuk::Format::eBc7UnormBlock;
-    case TextureUsage::Normal: return vuk::Format::eBc5UnormBlock;
-    case TextureUsage::Mask  : return vuk::Format::eBc4UnormBlock;
+    case TextureUsage::Color : return vir::Format::BC7SrgbBlock;
+    case TextureUsage::Linear: return vir::Format::BC7UnormBlock;
+    case TextureUsage::Normal: return vir::Format::BC5UnormBlock;
+    case TextureUsage::Mask  : return vir::Format::BC4UnormBlock;
   }
 
-  return vuk::Format::eBc7SrgbBlock;
+  return vir::Format::BC7SrgbBlock;
 }
 
 // the usual names for a normal map, since nothing in a plain image says it is one
@@ -327,21 +328,21 @@ static auto compile_dds(Session& session, std::span<const u8> bytes, std::string
     return encode_image(session, std::move(image), resolved, name);
   }
 
-  auto format = vuk::Format::eUndefined;
+  auto format = vir::Format::Undefined;
   auto components = std::array<u8, 4>{};
   switch (kind) {
-    case Kind::cBC1: format = vuk::Format::eBc1RgbaUnormBlock; break;
-    case Kind::cBC2: format = vuk::Format::eBc2UnormBlock; break;
-    case Kind::cBC3: format = vuk::Format::eBc3UnormBlock; break;
+    case Kind::cBC1: format = vir::Format::BC1RGBAUnormBlock; break;
+    case Kind::cBC2: format = vir::Format::BC2UnormBlock; break;
+    case Kind::cBC3: format = vir::Format::BC3UnormBlock; break;
     case Kind::cBC4: {
-      format = vuk::Format::eBc4UnormBlock;
+      format = vir::Format::BC4UnormBlock;
       components = GRAYSCALE_COMPONENTS;
     } break;
     case Kind::cBC5: {
-      format = vuk::Format::eBc5UnormBlock;
+      format = vir::Format::BC5UnormBlock;
       components = NORMAL_COMPONENTS;
     } break;
-    case Kind::cBC7: format = vuk::Format::eBc7UnormBlock; break;
+    case Kind::cBC7: format = vir::Format::BC7UnormBlock; break;
     default        : {
       session.push_error(fmt::format("'{}' holds a DDS format basisu can't read.", name));
       return nullopt;

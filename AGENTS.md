@@ -84,7 +84,7 @@ ox::App(argc, argv).with_name(name).with_window(...).with(ox::DefaultModules{}).
 
 A **module** is any type satisfying the `Module` concept in `Core/ModuleRegistry.hpp`: it has
 `init()`, `deinit()`, and a `static constexpr MODULE_NAME`. `update(const Timestep&)` and
-`render(vuk::Extent3D, vuk::Format)` are optional and detected via concepts. Declare a
+`render(VkExtent3D, VkFormat)` are optional and detected via concepts. Declare a
 `using module_dependencies = std::tuple<...>` member and the registry fatal-errors at `add()` time if
 a dependency is missing — so **registration order matters**. `init`/`deinit` return
 `std::expected<void, std::string>`.
@@ -172,7 +172,7 @@ and it still acquires when the asset is already loaded — and every path that s
 gives exactly one back (`unload_asset` is just `release_ref`; it destroys the payload and erases the
 registry entry only when the count reaches zero). Component observers are where this usually goes
 wrong: if `OnAdd` loads a UUID then `OnRemove` must unload it, and code that swaps a component's
-asset UUID for another has to release the old one *and* acquire the new one. Never call the
+asset UUID for another has to release the old one _and_ acquire the new one. Never call the
 payload-level `unload_*` helpers or erase from `asset_registry` to force an unload — that strands
 every other holder on a freed slot.
 
@@ -191,15 +191,43 @@ chain.
 
 ### Rendering
 
-vuk-based, with a bindless descriptor set held by `RenderContext`. `Renderer` is the module (owns
-shared resources and pipelines); `RendererInstance` is per-scene and builds the frame.
+The renderer uses `vir`, the C++ render graph, with a bindless descriptor set held by `RenderContext`.
+vir lives in its own repo (`oxylusengine/vir`) and ships as the `vir` package in the oxylus xmake-repo,
+pinned by commit. To pick up a vir change, push it, add a version to that package, then bump the `vir`
+version in `xmake/packages.lua`. `Renderer` owns shared resources and pipelines. `RendererInstance` caches
+compile-once `vir::Program`s in an LRU keyed by `FrameShape`. Extents, feature switches and injected
+stage names determine the shape. Passes record directly into a `vir::Module`; each cached program's
+`PreparedFrame` holds its variable IDs, while `FrameData` holds current host data. `FrameRecording` is
+plain recording data: the shape, prepared variables and resource values. Passes receive the Module
+explicitly and declare variables where they record their uses; there is no separate declaration phase.
+Repeated culls reuse their existing IDs, while indexed mip/volume inputs keep distinct IDs. Before each
+execution, `bind_frame` and the pass groups' `bind_*_variables` fill those variables with `Program::set` / `set_bytes`,
+then submit through `RenderContext::execute`. Setting an absent variable is a no-op; guard staging
+allocations and optional feature calculations with `has_variable` so unused inputs allocate nothing.
+Callbacks declared with a body read current state during execution, never copies captured when recording. `OX_DUMP_IR=1` logs each newly
+compiled scene program.
+
+Write render-graph resource declarations directly at their use sites, including their extent, format,
+usage and name. Do not wrap module calls in pass-through helpers or lambdas that hide those parameters.
+
+Every pass declares the precise stage-specific `vir::Access` for every resource it touches, including
+buffers read through device addresses. vir derives synchronization from these declarations and does
+not compare them with shader layouts. Use `Module::mip` and `subrange` for independent subresources.
+Dynamic draw lists and scattered uploads use `record_from` callbacks with declared accesses.
+
+Persistent resources use strong slot-map IDs and retire through `RenderContext`. Destroy requests
+remove them from lookup immediately. Seal retirements with the final successful frame submission
+ticket, then collect them after that ticket completes. Readbacks poll `is_retired(ticket)` and
+invalidate mapped memory before reading. Frame counts are not evidence of GPU completion.
 
 Shaders are Slang (`Oxylus/src/Render/Shaders/`, editor-only ones under `Shaders/editor/`). They are
 **not** compiled by name discovery: every shader program must be declared in a TOML manifest —
 `OxylusEditor/Assets/engine.toml` and `editor.toml` — listing `name`, `path`, `entry_points`, and
 `bindless`. The `ox.compile_shaders` xmake rule (`xmake/rules.lua`) feeds each TOML to `rcli`, which
 produces `engine.oxpack` / `editor.oxpack` next to the binary. At runtime `Renderer::init` unpacks
-`engine.oxpack` and calls `RenderContext::create_pipeline` for each entry. **Adding a shader means
+`engine.oxpack` and calls `RenderContext::create_pipeline` for each entry. ResourceCompiler stores
+Slang reflection with each entry point. The runtime consumes that layout without parsing SPIR-V.
+**Adding a shader means
 editing the TOML**, and the rule parses the TOML to register `.slang` files as build dependencies.
 
 **GPU-visible types are written once.** `Oxylus/include/Render/GPU/Shared.hpp` holds every struct,
@@ -215,9 +243,17 @@ and static_asserts every field's offset and size, so a layout mismatch is a buil
 `RendererInstance.hpp` defines the frame structure: a fixed `RenderStage` enum (Initialization,
 Culling, VisBufferEncode/Decode, Forward2D, Lighting, PostProcessing, Atmosphere, Debug, FinalOutput)
 into which callbacks are injected via `StageDependency{target_stage, Before/After, order}`.
-`RenderStageContext` passes named `vuk::Value<Buffer>` / `vuk::Value<ImageAttachment>` resources
-between stages, with a `SharedResources` tier that persists across stages. Pass implementations live
-in `Oxylus/src/Render/Passes/`.
+Injected callbacks record once per shape and store variable IDs through `RenderStageContext::variables`
+in `PreparedFrame::stage_variables`. The optional bind hook receives that stage's variables before each
+execution; register it with `add_stage_before/after(stage, name, record, bind, order)`.
+`RenderStageContext` passes named `vir::ValueID`s between stages, with a
+`SharedResources` tier that persists across stages. Pass implementations live in
+`Oxylus/src/Render/Passes/`. The editor caches its acquire, ImGui and present Program per swapchain
+generation. Panels render into persistent textures exported at `FragmentSampled` before the UI reads
+them on the same graphics queue. Games call `App::render_scene(scene, draw_ui)` from their update
+module after ticking the scene. It renders into an App-owned persistent target and presents through
+a Program cached per swapchain generation. The optional callback draws ImGui inside its frame.
+`VK_NOT_READY` means the window is minimized, other errors propagate to the caller.
 
 Rendering is configured through the CVar system (`Utils/CVars.hpp`): `RendererCVar` is **per-scene**
 (serialized with the scene), while `ContextCVar` is global and persisted to `context_config.toml`.
@@ -296,9 +332,11 @@ introducing a PCH.
   strong ID enums, small POD structs, and opaque C typedefs (`typedef struct _ENetHost ENetHost;`)
   with no third-party include in sight. Add one when a module starts leaking its heavy header to
   name a handle.
-- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, vuk, ImGui, sol2, flecs,
-  simdjson. Where the current code does (`Scene/Scene.hpp` includes six Jolt headers,
-  `Asset/Texture.hpp` five vuk ones), that's debt, not a precedent to copy. Options, in order:
+- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, ImGui, sol2, flecs,
+  simdjson. Existing heavy includes such as the Jolt headers in `Scene/Scene.hpp` are debt,
+  not a precedent to copy. Render headers should use `Render/Fwd.hpp` and `<vir/Fwd.hpp>`
+  for IDs and opaque graph types. Include recording and execution headers at their use sites.
+  Options, in order:
   forward declaration, an opaque handle/pimpl, moving the member to the `.cpp`, or — when the
   library can't be forward-declared at all — **making the signature a template parameter declared in
   the header and explicitly instantiated in the `.cpp`** next to the definition. That last trick is
@@ -316,7 +354,7 @@ introducing a PCH.
   `-ftime-trace-file=` spelling is rejected, and no trace is emitted under `-fsyntax-only`). Compare
   against a pristine `git archive HEAD` copy with both trees run interleaved — wall-clock drifts ~3%
   run to run, enough to invent or hide a win; total preprocessed bytes (`-E`) is a deterministic
-  secondary metric. Note that `vuk/IR.hpp` dominates what remains and is upstream.
+  secondary metric. Measure current include costs before identifying the next header to remove.
 
 ### Allocation
 
@@ -362,6 +400,7 @@ preference:
 
   (Some older headers still put `private:` first — follow the layout above for new types and when
   restructuring an existing one.)
+
 - **Every ID is a strong enum**, exactly like the asset IDs. Never identify something with a bare
   `u64`/`u32`, an index, a `usize`, or a type alias — those silently interconvert and get passed to
   the wrong function. Declare:
@@ -380,6 +419,7 @@ preference:
   The slot-map-backed set is `ModelID`, `TextureID`, `MaterialID`, `SceneID`, `AudioID`, `ScriptID`,
   `TransformID`, `LightID`, `NetClientID`, `BufferID`, `ImageID`, `ImageViewID`, `SamplerID`,
   `PipelineID`. A new ID belongs next to the type it identifies.
+
 - **No pass-through getters and setters.** `get_x()`/`set_x()` that only read or assign `x` are
   noise: make the member public instead. A setter earns its existence only by doing more than
   assigning — validating, marking dirty (`Scene::set_dirty`), re-uploading to the GPU, taking a lock,
@@ -387,6 +427,13 @@ preference:
   (`ReadGuard<T>`), not to launder a public field through a function call.
 
 ### Threading
+
+- Graph recording, allocation and submission are serialized by the queue's submit mutex. Ticket
+  waits run outside that lock. Finish all Program variable updates before execution and never mutate
+  a Program while it is executing. Concurrent upload jobs use separate frame allocators and retain
+  staging resources until their submission tickets retire. Persistent allocator bookkeeping is
+  locked, but callers still control resource lifetime. Flush mapped uploads before submission and
+  invalidate GPU-to-host mappings after completion.
 
 - **Don't take a lock you don't need.** Lock-free atomics beat any mutex — if the shared state is a
   counter, a flag, an index, or anything else a single `std::atomic` / `std::atomic_ref` operation
@@ -412,7 +459,7 @@ preference:
   past its use site** (never as a member, never in a container), don't hold one across a frame
   boundary or a job boundary, and drop it (scope it, or `reset()`) before taking any other lock so
   the ordering stays acyclic. Copy the value out with `guard.copy()` if you need to outlive it.
-- When the accessor must *search* before it knows what to return, lock first and construct the
+- When the accessor must _search_ before it knows what to return, lock first and construct the
   guard with `ox::adopt_lock` — the two-argument constructor locks itself and would be a TOCTOU
   window. Unlock manually on the failure paths and return a default-constructed (null) guard:
 

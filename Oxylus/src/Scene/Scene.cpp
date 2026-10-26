@@ -1,5 +1,7 @@
 #include "Scene/Scene.hpp"
 
+#include "Render/RenderContext.hpp"
+
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
@@ -1661,6 +1663,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // moves one also raises `meshes_dirty`, so the table is re-read from the models every frame
     // instead of being captured once at rebuild
     {
+      auto& render_context = App::get_rendercontext();
       auto cached_model_id = ModelID::Invalid;
       auto cached_model = ReadGuard<Model>();
       for (const auto& [source, address] : std::views::zip(mesh_sources, blas_addresses)) {
@@ -1671,7 +1674,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
         }
 
         address = cached_model && source.mesh_node_index < cached_model->mesh_blases.size()
-                    ? cached_model->mesh_blases[source.mesh_node_index].device_address
+                    ? render_context.acceleration_structure(cached_model->mesh_blases[source.mesh_node_index])
+                        .device_address
                     : 0_u64;
       }
     }
@@ -3674,12 +3678,12 @@ auto Scene::destroy_vehicle(this Scene& self, VehicleComponent& component) -> vo
 
 auto Scene::render(
   this Scene& self,
-  vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+  const vir::ImageAttachment& target,
   glm::ivec2 viewport_origin,
   glm::ivec2 viewport_size,
   glm::ivec2 surface_size,
   bool keyboard_focused
-) -> vuk::Value<vuk::ImageAttachment> {
+) -> std::expected<vir::SubmitTicket, VkResult> {
   ZoneScoped;
 
   auto ri = self.get_renderer_instance();
@@ -3697,32 +3701,31 @@ auto Scene::render(
   }
 
   for (auto& [_, system] : self.lua_systems) {
-    system->on_scene_render(&self, dst_attachment->extent);
+    system->on_scene_render(&self, target.extent);
   }
 
   // Paired with the render below: the GPU-side work is built here rather than in `runtime_update` so
   // that a scene which ticks without rendering never leaves an unsubmitted graph behind.
   self.prepare_render();
 
-  // The prepared frame is consumed here, so the dirty state it covers has now really been submitted.
-  self.dirty_transforms.clear();
-  self.dirty_mesh_instances.clear();
-  self.removed_mesh_bounds.clear();
-  self.meshes_dirty = false;
-
-  auto scene_surface = ri->render(
-    std::move(dst_attachment),
-    viewport_origin,
-    viewport_size,
-    surface_size,
-    self.renderer_cvar
-  );
-
-  if (!self.rml_view) {
-    return scene_surface;
+  if (self.rml_view) {
+    self.rml_view->upload(App::get_rendercontext());
+    ri->add_stage_after(RenderStage::FinalOutput, "rmlui", [view = self.rml_view.get()](RenderStageContext& ctx) {
+      ctx.set_image_resource(
+        "result_attachment",
+        view->record(ctx.module, ctx.render_context, ctx.get_image_resource("result_attachment"))
+      );
+    });
   }
 
-  return self.rml_view->draw(App::get_rendercontext(), std::move(scene_surface));
+  const auto ticket = ri->render(target, viewport_origin, viewport_size, surface_size, self.renderer_cvar);
+  if (ticket) {
+    self.dirty_transforms.clear();
+    self.dirty_mesh_instances.clear();
+    self.removed_mesh_bounds.clear();
+    self.meshes_dirty = false;
+  }
+  return ticket;
 }
 
 auto Scene::get_rml_context(this const Scene& self) -> Rml::Context* {

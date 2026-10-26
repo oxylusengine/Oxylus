@@ -3,23 +3,34 @@
 #include <ankerl/svector.h>
 #include <ankerl/unordered_dense.h>
 #include <array>
+#include <bit>
+#include <functional>
 #include <glm/gtc/packing.hpp>
+#include <memory>
+#include <vir/Fwd.hpp>
+#include <vir/Resource.hpp>
+#include <vir/Types.hpp>
 
 #include "Animation/Fwd.hpp"
 #include "Asset/Texture.hpp"
 #include "Render/AccelerationStructure.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Render/Fwd.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/RendererCVar.hpp"
 #include "Render/Upscaler.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
 
-namespace vuk {
-class CommandBuffer;
+namespace vir {
+struct ColorBlendAttachmentState;
 }
 
 namespace ox {
+struct RecordedFrame;
+
+using StageVariables = ankerl::unordered_dense::map<std::string, vir::ValueID>;
+
 enum class RenderStage {
   Initialization,
   Culling,
@@ -46,8 +57,8 @@ struct StageDependency {
 };
 
 struct SharedResources {
-  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
-  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
+  ankerl::unordered_dense::map<std::string, vir::ValueID> buffer_resources = {};
+  ankerl::unordered_dense::map<std::string, vir::ValueID> image_resources = {};
 
   auto clear() -> void {
     buffer_resources.clear();
@@ -55,79 +66,64 @@ struct SharedResources {
   }
 };
 
+// what an injected stage records into. Stages run once per frame shape, so anything that changes
+// per frame has to reach the program through variables a stage declares into `variables` and fills
+// in its bind function
 struct RenderStageContext {
   RendererInstance& renderer_instance;
+  vir::Module& module;
   SharedResources& shared_resources;
   RenderStage current_stage;
   RenderContext& render_context;
 
-  glm::uvec2 viewport_size;
+  glm::uvec2 viewport_size = {};
+  // the extent of `result_attachment` from PostProcessing on, which the module can't report for the render target
+  glm::uvec2 display_size = {};
 
-  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::Buffer>> buffer_resources = {};
-  ankerl::unordered_dense::map<std::string, vuk::Value<vuk::ImageAttachment>> image_resources = {};
+  StageVariables& variables;
 
-  RenderStageContext(RendererInstance& instance, SharedResources& shared_r, RenderStage stage, RenderContext& rctx)
-      : renderer_instance(instance),
-        shared_resources(shared_r),
-        current_stage(stage),
-        render_context(rctx) {}
+  ankerl::unordered_dense::map<std::string, vir::ValueID>& buffer_resources;
+  ankerl::unordered_dense::map<std::string, vir::ValueID>& image_resources;
 
-  auto get_buffer_resource(this const RenderStageContext& self, const std::string& name) -> vuk::Value<vuk::Buffer> {
-    return std::move(self.buffer_resources.at(name));
+  auto get_buffer_resource(this const RenderStageContext& self, const std::string& name) -> vir::ValueID {
+    return self.buffer_resources.at(name);
   }
 
   auto get_shared_buffer_resource(this const RenderStageContext& self, const std::string& name)
-    -> option<vuk::Value<vuk::Buffer>> {
+    -> option<vir::ValueID> {
     const auto it = self.shared_resources.buffer_resources.find(name);
-    if (it == self.shared_resources.buffer_resources.end()) {
-      return nullopt;
-    }
-
-    return std::move(it->second);
+    return it == self.shared_resources.buffer_resources.end() ? nullopt : option<vir::ValueID>(it->second);
   }
 
-  auto get_image_resource(this const RenderStageContext& self, const std::string& name)
-    -> vuk::Value<vuk::ImageAttachment> {
-    return std::move(self.image_resources.at(name));
+  auto get_image_resource(this const RenderStageContext& self, const std::string& name) -> vir::ValueID {
+    return self.image_resources.at(name);
   }
 
-  auto get_shared_image_resource(this const RenderStageContext& self, const std::string& name)
-    -> option<vuk::Value<vuk::ImageAttachment>> {
+  auto get_shared_image_resource(this const RenderStageContext& self, const std::string& name) -> option<vir::ValueID> {
     const auto it = self.shared_resources.image_resources.find(name);
-    if (it == self.shared_resources.image_resources.end()) {
-      return nullopt;
-    }
-
-    return std::move(it->second);
+    return it == self.shared_resources.image_resources.end() ? nullopt : option<vir::ValueID>(it->second);
   }
 
-  auto set_viewport_size(this RenderStageContext& self, glm::uvec2 size) -> RenderStageContext& {
-    self.viewport_size = size;
-    return self;
-  }
-
-  auto set_buffer_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::Buffer> value)
+  auto set_buffer_resource(this RenderStageContext& self, const std::string& name, vir::ValueID value)
     -> RenderStageContext& {
     self.buffer_resources[name] = value;
     return self;
   }
 
-  auto set_shared_buffer_resource(this RenderStageContext& self, const std::string& name, vuk::Value<vuk::Buffer> value)
+  auto set_shared_buffer_resource(this RenderStageContext& self, const std::string& name, vir::ValueID value)
     -> RenderStageContext& {
     self.shared_resources.buffer_resources[name] = value;
     return self;
   }
 
-  auto set_image_resource(
-    this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value
-  ) -> RenderStageContext& {
+  auto set_image_resource(this RenderStageContext& self, const std::string& name, vir::ValueID value)
+    -> RenderStageContext& {
     self.image_resources[name] = value;
     return self;
   }
 
-  auto set_shared_image_resource(
-    this RenderStageContext& self, const std::string& name, vuk::Value<vuk::ImageAttachment> value
-  ) -> RenderStageContext& {
+  auto set_shared_image_resource(this RenderStageContext& self, const std::string& name, vir::ValueID value)
+    -> RenderStageContext& {
     self.shared_resources.image_resources[name] = value;
     return self;
   }
@@ -147,7 +143,7 @@ struct RenderQueue2D {
     clear();
     batches.reserve(last_batches_size);
     sprite_data.reserve(last_sprite_data_size);
-    batches.emplace_back(GPU::DrawBatch2D{.pipeline_name = "2d_forward", .offset = previous_offset, .count = 0});
+    batches.emplace_back(GPU::DrawBatch2D{.offset = previous_offset, .count = 0});
   }
 
   void update() {
@@ -187,6 +183,7 @@ struct RenderQueue2D {
 
 struct RenderStageCallback {
   std::function<void(RenderStageContext&)> callback;
+  std::function<void(vir::Program&, const StageVariables&)> bind;
   StageDependency dependency;
   std::string name;
 };
@@ -218,34 +215,56 @@ struct RendererInstanceUpdateInfo {
 struct ParticleMeshDraw {
   u32 emitter_index = 0;
   GPU::Mesh gpu_mesh = {};
-  vuk::Buffer index_buffer = {};
+  vir::Buffer index_buffer = {};
   u32 index_count = 0;
 };
 
-struct PreparedFrame {
+struct TransformRun {
+  u32 src = 0;
+  u32 dst = 0;
+  u32 count = 0;
+};
+
+// everything `update` prepares on the host for this frame. The recorded program stages it into
+// buffers when it is updated, so nothing here refers to a buffer
+struct FrameData {
   u32 mesh_instance_count = 0;
   u32 max_meshlet_instance_count = 0;
   bool use_mesh_shaders = false;
-  vuk::Value<vuk::Buffer> transforms_world_buffer = {};
-  vuk::Value<vuk::Buffer> transforms_previous_buffer = {};
-  vuk::Value<vuk::Buffer> meshes_buffer = {};
-  vuk::Value<vuk::Buffer> blas_addresses_buffer = {};
-  vuk::Value<vuk::Buffer> skinned_blas_addresses_buffer = {};
+
   u32 skinned_instance_count = 0;
-  vuk::Value<vuk::Buffer> mesh_instances_buffer = {};
-  vuk::Value<vuk::Buffer> skinning_transforms_buffer = {};
-  vuk::Value<vuk::Buffer> skinned_vertices_buffer = {};
   u32 skinned_vertex_total = 0;
   std::vector<GPU::SkinJob> skin_jobs = {};
-  vuk::Value<vuk::Buffer> meshlet_instances_buffer = {};
-  vuk::Value<vuk::Buffer> visible_meshlet_instances_indices_buffer = {};
-  vuk::Value<vuk::Buffer> meshlet_instance_visibility_mask_buffer = {};
-  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
-  vuk::Value<vuk::Buffer> materials_buffer = {};
-  vuk::Value<vuk::Buffer> camera_buffer = {};
-  vuk::Value<vuk::Buffer> atmosphere_buffer = {};
-  vuk::Value<vuk::Buffer> lights_buffer = {};
-  vuk::Value<vuk::Buffer> exposure_buffer = {};
+  std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> skinned_blas_builds = {};
+  std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> tlas_builds = {};
+
+  // projected transforms packed per run, no runs means no upload
+  std::vector<GPU::TransformWorld> transforms_world = {};
+  std::vector<GPU::TransformPrevious> transforms_previous = {};
+  std::vector<TransformRun> transform_runs = {};
+
+  // meshes and instances are only filled when they changed
+  std::vector<GPU::Mesh> meshes = {};
+  std::vector<GPU::MeshInstance> mesh_instances = {};
+  std::vector<u64> blas_addresses = {};
+  // one entry per skinned instance rather than per mesh, because ten characters sharing a model
+  // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
+  // outlive a scene dirty flag that never fires
+  std::vector<u64> skinned_blas_addresses = {};
+  std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  std::vector<GPU::Light> lights = {};
+  std::vector<u32> dirty_mesh_instances = {};
+  std::vector<GPU::MeshBounds> removed_mesh_bounds = {};
+
+  bool is_meshlet_visibility_reset = false;
+  bool is_terrain_visibility_reset = false;
+  bool is_exposure_reset = false;
+
+  // sizes of the GPU only scratch the frame allocates
+  u64 meshlet_instances_size = 0;
+  u64 visible_meshlet_instances_size = 0;
+  u64 reordered_indices_size = 0;
+  u64 terrain_visible_patches_size = 0;
 
   u32 spot_light_count = 0;
   u32 point_light_count = 0;
@@ -256,50 +275,79 @@ struct PreparedFrame {
   u32 shadow_slots_reassigned = 0;
   u32 shadow_slots_invalidated = 0;
 
-  vuk::Value<vuk::Buffer> dirty_mesh_instances_buffer = {};
-  u32 dirty_mesh_instance_count = 0;
-  vuk::Value<vuk::Buffer> removed_mesh_bounds_buffer = {};
-  u32 removed_mesh_bounds_count = 0;
-
-  vuk::Value<vuk::Buffer> terrain_patch_visibility_mask_buffer = {};
-
   ankerl::svector<GPU::ParticleEmitter, 8> particle_emitters = {};
   std::vector<GPU::ParticleInstruction> particle_instructions = {};
   std::vector<glm::vec4> particle_constants = {};
   ankerl::svector<ParticleMeshDraw, 4> particle_mesh_draws = {};
+  // one entry per `particle_mesh_draws`, never empty so the buffer always binds
+  ankerl::svector<GPU::Mesh, 4> particle_meshes = {};
+  ankerl::svector<u32, 4> particle_index_counts = {};
   u32 particle_total_spawn = 0;
   u32 particle_total_capacity = 0;
   u32 particle_sorted_count = 0;
   bool particle_pool_reset = false;
   bool particle_sort_enabled = false;
+  // which alive list this frame reads, they swap every frame
+  bool particle_ping = false;
 
   DebugRenderer::DrawRanges debug_draw_ranges = {};
-  vuk::Value<vuk::Buffer> debug_renderer_vertices_buffer = {};
 };
 
-struct ParticleContext {
-  u32 total_capacity = 0;
-  u32 sorted_count = 0;
-  u32 emitter_count = 0;
-  u32 total_spawn = 0;
-  bool needs_init = false;
-  bool sort_enabled = false;
+// what changes how the frame is put together. A program is compiled per shape and reused for every
+// frame that shares it, so anything that only changes what the passes compute stays out of here
+struct FrameShape {
+  glm::uvec2 display_size = {};
+  glm::uvec2 render_size = {};
+  UpscalerBackend upscaler = UpscalerBackend::None;
+  GPU::DebugView debug_view = GPU::DebugView::None;
+  vir::Format target_format = vir::Format::Undefined;
+  // spec constants of several passes
+  GPU::SceneFlags scene_flags = GPU::SceneFlags::None;
+  GPU::TonemapType tonemap = GPU::TonemapType::AgX;
+  VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
+  bool is_debugging = false;
+  bool has_meshes = false;
+  bool has_terrain = false;
+  bool has_sprites = false;
+  bool has_particles = false;
+  bool has_atmosphere = false;
+  bool has_directional_light = false;
+  bool has_directional_shadows = false;
+  bool has_pointspot_shadows = false;
+  bool has_bloom = false;
+  bool has_fxaa = false;
+  bool has_gtao = false;
+  bool has_rtao = false;
+  bool has_contact_shadows = false;
+  bool has_eye_adaptation = false;
+  bool has_ddgi = false;
+  bool has_tlas = false;
+  bool has_debug_renderer = false;
+  bool use_mesh_shaders = false;
+  bool is_transparent = false;
+  bool is_particle_sort = false;
+  // the bitonic sort is unrolled into one pass per step, so its size fixes the passes
+  u32 particle_sorted_count = 0;
+  // one trace and select pass per volume, and the ray data image is sized by the probes and rays
+  u32 probe_volume_count = 0;
+  u32 ddgi_probe_count = 0;
+  u32 ddgi_rays_per_probe = 0;
+  std::vector<std::string> stages = {};
 
-  std::span<const ParticleMeshDraw> mesh_draws = {};
+  auto operator==(const FrameShape&) const -> bool = default;
+};
 
-  vuk::Value<vuk::Buffer> emitters_buffer = {};
-  vuk::Value<vuk::Buffer> program_buffer = {};
-  vuk::Value<vuk::Buffer> constants_buffer = {};
-  vuk::Value<vuk::Buffer> camera_buffer = {};
-  vuk::Value<vuk::Buffer> materials_buffer = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
-  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
+struct FrameShapeHash {
+  using is_avalanching = void;
+  auto operator()(const FrameShape& shape) const noexcept -> u64;
+};
 
-  vuk::Value<vuk::Buffer> particles_buffer = {};
-  vuk::Value<vuk::Buffer> sort_keys_buffer = {};
-  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
-  vuk::Value<vuk::Buffer> draw_indexed_cmd_buffer = {};
+struct FrameProgramStats {
+  u32 cached_count = 0;
+  u32 compile_count = 0;
+  // compiles of a shape the cache had evicted, so more shapes alternate than it holds
+  u32 recompile_count = 0;
+  f32 last_compile_ms = 0.0f;
 };
 
 struct ShadowSlotState {
@@ -308,6 +356,31 @@ struct ShadowSlotState {
   glm::vec3 direction = {};
   f32 range = 0.0f;
   f32 outer_cone_angle = 0.0f;
+};
+
+// resources threaded through the recorded frame
+struct FrameValues {
+  vir::ValueID transforms_world = vir::ValueID::Invalid;
+  vir::ValueID transforms_previous = vir::ValueID::Invalid;
+  vir::ValueID meshes = vir::ValueID::Invalid;
+  vir::ValueID blas_addresses = vir::ValueID::Invalid;
+  vir::ValueID skinned_blas_addresses = vir::ValueID::Invalid;
+  vir::ValueID mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID skinning_transforms = vir::ValueID::Invalid;
+  vir::ValueID skinned_vertices = vir::ValueID::Invalid;
+  vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
+  vir::ValueID meshlet_instance_visibility_mask = vir::ValueID::Invalid;
+  vir::ValueID reordered_indices = vir::ValueID::Invalid;
+  vir::ValueID materials = vir::ValueID::Invalid;
+  vir::ValueID camera = vir::ValueID::Invalid;
+  vir::ValueID atmosphere = vir::ValueID::Invalid;
+  vir::ValueID lights = vir::ValueID::Invalid;
+  vir::ValueID exposure = vir::ValueID::Invalid;
+  vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID terrain_patch_visibility_mask = vir::ValueID::Invalid;
+  vir::ValueID tlas = vir::ValueID::Invalid;
 };
 
 struct CullGeometryContext {
@@ -321,109 +394,97 @@ struct CullGeometryContext {
   bool init_cull_meshes = false;
 
   GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
-  GPU::CullCamera cull_camera = {};
-  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
-  vuk::Value<vuk::Buffer> vsm_clipmap_dirty_flags_buffer = {};
-  u32 vsm_clipmap_count = 0;
+  vir::ValueID vsm_clipmaps_buffer = vir::ValueID::Invalid;
+  vir::ValueID vsm_clipmap_dirty_flags_buffer = vir::ValueID::Invalid;
 
   // HiZ pyramid attachment consumed by `cull_meshlets_hiz` (only when `use_hiz`).
-  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
+  vir::ValueID hiz_attachment = vir::ValueID::Invalid;
 
   // HPB pyramid attachment consumed by `cull_meshlets_hpb` (only when `use_hpb`)
-  vuk::Value<vuk::ImageAttachment> hpb_attachment = {};
+  vir::ValueID hpb_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
-  vuk::Value<vuk::Buffer> cull_meshlets_cmd_buffer = {};
-  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
+  vir::ValueID visibility_buffer = vir::ValueID::Invalid;
+  vir::ValueID cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID draw_geometry_cmd_buffer = vir::ValueID::Invalid;
 };
 
 struct CullGeometryPointSpotContext {
   bool init = false;
 
-  GPU::VSMPointSpotContext ps_ctx = {};
+  // the page table mip this context culls against, fixed per recorded pass
+  u32 curr_mip = 0;
 
-  vuk::Value<vuk::Buffer> views_buffer = {};
-  vuk::Value<vuk::Buffer> layer_dirty_mask_buffer = {};
-  vuk::Value<vuk::ImageAttachment> page_table_attachment = {};
-  vuk::Value<vuk::ImageAttachment> hpb_attachment = {};
+  vir::ValueID views_buffer = vir::ValueID::Invalid;
+  vir::ValueID layer_dirty_mask_buffer = vir::ValueID::Invalid;
+  vir::ValueID page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID hpb_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> vsm_meshlet_instances_buffer = {};
-  vuk::Value<vuk::Buffer> vsm_meshlet_instance_count_buffer = {};
-  vuk::Value<vuk::Buffer> visible_indices_buffer = {};
-  vuk::Value<vuk::Buffer> reordered_indices_buffer = {};
+  vir::ValueID vsm_meshlet_instances_buffer = vir::ValueID::Invalid;
+  vir::ValueID vsm_meshlet_instance_count_buffer = vir::ValueID::Invalid;
+  vir::ValueID visible_indices_buffer = vir::ValueID::Invalid;
+  vir::ValueID reordered_indices_buffer = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
+  vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
 };
 
 struct MainGeometryContext {
   bool draw_overdraw = false;
 
   GPU::CullFlag cull_flags = GPU::CullFlag::TestAll;
-  GPU::CullCamera cull_camera = {};
 
-  vuk::PersistentDescriptorSet* bindless_set = nullptr;
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
-  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
-  vuk::Value<vuk::ImageAttachment> overdraw_attachment = {};
-  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
-  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID hiz_attachment = vir::ValueID::Invalid;
+  vir::ValueID visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID overdraw_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID emissive_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID velocity_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> draw_geometry_cmd_buffer = {};
-  vuk::Value<vuk::Buffer> visibility_buffer = {};
+  vir::ValueID draw_geometry_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID visibility_buffer = vir::ValueID::Invalid;
 };
 
 struct LightGridContext {
-  glm::vec3 grid_origin = {};
-
-  vuk::Value<vuk::Buffer> light_grid_buffer = {};
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
-  const Terrain* terrain = nullptr;
-
   GPU::CullFlag cull_flags = GPU::CullFlag::TestFrustum;
-  GPU::CullCamera cull_camera = {};
 
-  vuk::Value<vuk::Buffer> terrain_buffer = {};
+  vir::ValueID terrain_buffer = vir::ValueID::Invalid;
   // Compacted list of patch indices that survived culling, plus its indirect draw.
-  vuk::Value<vuk::Buffer> visible_patches_buffer = {};
-  vuk::Value<vuk::Buffer> draw_cmd_buffer = {};
+  vir::ValueID visible_patches_buffer = vir::ValueID::Invalid;
+  vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
   // One persistent bit per patch, so the early pass can draw last frame's visible set.
-  vuk::Value<vuk::Buffer> patch_visibility_mask_buffer = {};
+  vir::ValueID patch_visibility_mask_buffer = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::ImageAttachment> heightmap_attachment = {};
-  vuk::Value<vuk::ImageAttachment> patch_minmax_attachment = {};
-  vuk::Value<vuk::ImageAttachment> hiz_attachment = {};
-  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vir::ValueID heightmap_attachment = vir::ValueID::Invalid;
+  vir::ValueID patch_minmax_attachment = vir::ValueID::Invalid;
+  vir::ValueID hiz_attachment = vir::ValueID::Invalid;
+  vir::ValueID visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
 };
 
 struct TerrainBrushContext {
-  const Terrain* terrain = nullptr;
-
-  TerrainMaps maps = {};
-  vuk::Value<vuk::Buffer> hit_buffer = {};
+  TerrainMapValues maps = {};
+  vir::ValueID hit_buffer = vir::ValueID::Invalid;
 };
 
 struct TerrainDecodeContext {
-  vuk::PersistentDescriptorSet* bindless_set = nullptr;
+  vir::ValueID terrain_buffer = vir::ValueID::Invalid;
+  vir::ValueID brush_hit_buffer = vir::ValueID::Invalid;
+  vir::ValueID normalmap_attachment = vir::ValueID::Invalid;
+  vir::ValueID splatmap_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> terrain_buffer = {};
-  vuk::Value<vuk::Buffer> brush_hit_buffer = {};
-  vuk::Value<vuk::ImageAttachment> normalmap_attachment = {};
-  vuk::Value<vuk::ImageAttachment> splatmap_attachment = {};
-
-  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
-  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
+  vir::ValueID visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID emissive_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID velocity_attachment = vir::ValueID::Invalid;
 };
 
 struct RMVSMContext {
@@ -453,92 +514,74 @@ struct RMVSMContext {
   constexpr static f32 POINT_LIGHT_FOV_DEG = 95.0f;
   constexpr static f32 POINT_LIGHT_NEAR = 0.05f;
   constexpr static f32 SPOT_LIGHT_NEAR = 0.05f;
+  constexpr static f32 MAX_SHADOW_DISTANCE = 1000.0f;
 
-  vuk::PersistentDescriptorSet* bindless_set = nullptr;
-  bool sun_moved = false;
-  vuk::Extent3D depth_extent = {};
-  f32 max_shadow_dist = 1000.0f;
+  vir::Extent3D depth_extent = {};
 
-  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
-  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID virtual_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID physical_page_table_attachment = vir::ValueID::Invalid;
 
-  glm::vec3 light_grid_origin = {};
-  vuk::Value<vuk::Buffer> light_grid_buffer = {};
-  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
-  vuk::Value<vuk::Buffer> pointspot_layer_dirty_mask_buffer = {};
-  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_layer_dirty_mask_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
 };
 
-auto bind_vsm_pointspot_spec_constants(vuk::CommandBuffer& cmd) -> vuk::CommandBuffer&;
+auto bind_vsm_pointspot_spec_constants(vir::Module& module) -> vir::Module&;
 
-struct ShadowResolveContext {
-  // TODO: Add shadowmap kind enum
-  f32 max_shadow_dist = 1000.0f;
-
-  vuk::Value<vuk::Buffer> directional_clipmaps_buffer = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> virtual_page_table_attachment = {};
-  vuk::Value<vuk::ImageAttachment> physical_page_table_attachment = {};
-
-  vuk::Value<vuk::ImageAttachment> shadows_attachment = {};
-};
+template <typename Pass>
+  requires requires(Pass pass) { *pass.module; }
+auto bind_vsm_pointspot_spec_constants(Pass pass) -> Pass {
+  bind_vsm_pointspot_spec_constants(*pass.module);
+  return pass;
+}
 
 struct AtmosphereContext {
-  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_multiscatter_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_multiscatter_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_aerial_perspective_lut_attachment = vir::ValueID::Invalid;
 };
 
 struct AmbientOcclusionContext {
-  vuk::Value<vuk::ImageAttachment> noise_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_differences_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vir::ValueID noise_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_differences_attachment = vir::ValueID::Invalid;
+  vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
 };
 
 struct RTAOContext {
-  const SceneTLAS* tlas = nullptr;
-  u32 ray_count = 2;
-  f32 radius = 1.0f;
-  f32 power = 1.0f;
-  u32 frame_index = 0;
-
-  vuk::Value<vuk::Buffer> tlas_buffer = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
+  vir::ValueID tlas_buffer = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
 };
 
 struct PBRContext {
-  vuk::PersistentDescriptorSet* bindless_set = nullptr;
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_aerial_perspective_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID emissive_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_aerial_perspective_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_cubemap_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
-  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> shadows_attachment = {};
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
 
-  glm::vec3 light_grid_origin = {};
-  vuk::Value<vuk::Buffer> light_grid_buffer = {};
-
-  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
-  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
-  vuk::Value<vuk::ImageAttachment> vsm_physical_pages_attachment = {};
-  vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -553,136 +596,58 @@ struct ProbeVolumeScroll {
   glm::ivec3 scroll = {};
 };
 
-struct DDGITraceContext {
-  vuk::PersistentDescriptorSet* bindless_set = nullptr;
-  const SceneTLAS* tlas = nullptr;
-  GPU::SceneFlags scene_flags = {};
-  u32 rays_per_probe = 128;
-  u32 frame_index = 0;
-  u32 light_count = 0;
-  f32 max_ray_distance = 50.0f;
-  f32 max_ray_radiance = 25.0f;
-  f32 shadow_ray_offset = 0.05f;
-  f32 normal_bias = 0.25f;
-  glm::vec3 sun_direction = {};
-  f32 sun_intensity = 0.0f;
-  glm::vec3 ambient_color = {};
-
-  u32 volume_count = 0;
-  u32 radiance_atlas_y_offset = 0;
-  bool distance_culling_enabled = true;
-  bool bounce_valid = false;
-  f32 view_bias = 0.1f;
-  glm::vec3 light_grid_origin = {};
-
-  vuk::Value<vuk::Buffer> tlas_buffer = {};
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::Buffer> light_grid_buffer = {};
-  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
-  vuk::Value<vuk::ImageAttachment> sky_view_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> sky_transmittance_lut_attachment = {};
-  vuk::Value<vuk::ImageAttachment> pointspot_page_table_attachment = {};
-  vuk::Value<vuk::ImageAttachment> vsm_physical_pages_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
-  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
-  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
-};
-
-struct DDGIUpdateContext {
-  u32 rays_per_probe = 128;
-  u32 frame_index = 0;
-  u32 radiance_atlas_y_offset = 0;
-  f32 hysteresis = 0.97f;
-  f32 max_brightness_step = 0.1f;
-  f32 firefly_ratio = 32.0f;
-  f32 hysteresis_dark_bias = 0.15f;
-
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
-  vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
-  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
-  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
-};
-
-struct DDGISelectContext {
-  u32 frame_index = 0;
-  u32 max_interval = 8;
-  f32 full_rate_distance = 10.0f;
-  bool update_all = false;
-  bool force_update_all = false;
-  bool distance_culling_enabled = true;
-
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
-};
-
-struct DDGIRelocateContext {
-  u32 rays_per_probe = 128;
-  u32 frame_index = 0;
-  f32 min_frontface_distance = 0.5f;
-  bool relocation_enabled = true;
-  bool distance_culling_enabled = true;
-
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_list_buffer = {};
-  vuk::Value<vuk::Buffer> probe_update_args_buffer = {};
-  vuk::Value<vuk::ImageAttachment> ray_data_attachment = {};
+struct DDGIContext {
+  vir::ValueID tlas_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_update_list_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_update_args_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+  vir::ValueID ray_data_attachment = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
 };
 
 struct DDGIApplyContext {
-  u32 volume_count = 0;
-  f32 normal_bias = 0.05f;
-  f32 view_bias = 0.1f;
-  f32 intensity = 1.0f;
-  glm::vec3 ambient_color = {};
-
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
-  vuk::Value<vuk::ImageAttachment> distance_attachment = {};
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
 };
 
 struct DDGIDebugContext {
-  f32 probe_radius = 0.1f;
-  bool atlas_valid = false;
-
-  vuk::Value<vuk::Buffer> probe_volumes_buffer = {};
-  vuk::Value<vuk::Buffer> probe_states_buffer = {};
-  vuk::Value<vuk::ImageAttachment> irradiance_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
 };
 
 struct DebugContext {
-  f32 overdraw_heatmap_scale = 0.0f;
-  GPU::DebugView debug_view = GPU::DebugView::None;
+  vir::ValueID vsm_clipmaps_buffer = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::Buffer> vsm_clipmaps_buffer = {};
+  vir::ValueID visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID overdraw_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID emissive_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::ImageAttachment> visbuffer_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> overdraw_attachment = {};
-  vuk::Value<vuk::ImageAttachment> albedo_attachment = {};
-  vuk::Value<vuk::ImageAttachment> normal_attachment = {};
-  vuk::Value<vuk::ImageAttachment> emissive_attachment = {};
-  vuk::Value<vuk::ImageAttachment> metallic_roughness_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> ambient_occlusion_attachment = {};
-  vuk::Value<vuk::ImageAttachment> vsm_page_table_attachment = {};
-
-  glm::vec3 light_grid_origin = {};
-  vuk::Value<vuk::Buffer> pointspot_views_buffer = {};
-  vuk::Value<vuk::Buffer> light_grid_buffer = {};
-  vuk::Value<vuk::ImageAttachment> vsm_pointspot_page_table_attachment = {};
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID vsm_pointspot_page_table_attachment = vir::ValueID::Invalid;
 };
 
 // Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
@@ -692,43 +657,319 @@ struct DebugContext {
 // BlendOp::eMax would say "take the strongest layer" more directly, but it hangs the Metal Vulkan
 // driver inside its NIR lowering, apparently while lowering max blending into the shader. Nothing
 // else in the engine uses eMax, so that path had never been exercised.
-constexpr static auto REACTIVE_MASK_BLEND_STATE = vuk::PipelineColorBlendAttachmentState{
-  .blendEnable = true,
-  .srcColorBlendFactor = vuk::BlendFactor::eOne,
-  .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcColor,
-  .colorBlendOp = vuk::BlendOp::eAdd,
-  .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
-  .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
-  .alphaBlendOp = vuk::BlendOp::eAdd,
-};
+auto reactive_mask_blend_state() -> vir::ColorBlendAttachmentState;
 
 struct FSR3Context {
-  GPU::FSR3Constants constants = {};
-  // 0 skips the RCAS pass, in which case the accumulate pass writes the final output itself
-  f32 sharpness = 0.0f;
-  // drops history and treats every pixel as a new sample, for the first frame and after a
-  // resolution or quality change
-  bool reset = false;
-  // diagnostic: non-zero replaces the output with an intermediate, see pp.upscaler_debug_view
-  u32 debug_view = 0;
+  vir::ValueID color_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID velocity_attachment = vir::ValueID::Invalid;
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+  vir::ValueID exposure_buffer = vir::ValueID::Invalid;
 
-  vuk::Value<vuk::ImageAttachment> color_attachment = {};
-  vuk::Value<vuk::ImageAttachment> depth_attachment = {};
-  vuk::Value<vuk::ImageAttachment> velocity_attachment = {};
-  vuk::Value<vuk::ImageAttachment> reactive_mask_attachment = {};
-  vuk::Value<vuk::Buffer> exposure_buffer = {};
-
-  vuk::Value<vuk::ImageAttachment> output_attachment = {};
+  vir::ValueID output_attachment = vir::ValueID::Invalid;
 };
 
 struct PostProcessContext {
+  vir::Extent3D extent = {};
+
+  vir::ValueID dst_attachment = vir::ValueID::Invalid;
+  vir::ValueID final_attachment = vir::ValueID::Invalid;
+  vir::ValueID bloom_upsampled_attachment = vir::ValueID::Invalid;
+};
+
+struct ParticleContext {
+  // indirect commands for mesh emitters are laid out ahead of time, so their count is capped
+  constexpr static u32 MAX_MESH_DRAWS = 64;
+
+  vir::ValueID emitters_buffer = vir::ValueID::Invalid;
+  vir::ValueID program_buffer = vir::ValueID::Invalid;
+  vir::ValueID constants_buffer = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID particles_buffer = vir::ValueID::Invalid;
+  vir::ValueID sort_keys_buffer = vir::ValueID::Invalid;
+  vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID draw_indexed_cmd_buffer = vir::ValueID::Invalid;
+};
+
+// per-frame values the recorded passes read through their variables. `render` fills this before
+// the program is updated, so every function registered while recording sees the current frame
+struct UploadVariables {
+  vir::ValueID staging = vir::ValueID::Invalid;
+  vir::ValueID is_uploading = vir::ValueID::Invalid;
+};
+
+struct CullVariables {
+  vir::ValueID mesh_instance_count = vir::ValueID::Invalid;
+  vir::ValueID camera = vir::ValueID::Invalid;
+  vir::ValueID shadow_camera = vir::ValueID::Invalid;
+  vir::ValueID clipmap_push = vir::ValueID::Invalid;
+  std::array<vir::ValueID, RMVSMContext::POINT_SPOT_MIP_COUNT> pointspot_contexts = {};
+  std::array<vir::ValueID, RMVSMContext::POINT_SPOT_MIP_COUNT> pointspot_cull_meshes_commands = {};
+
+  CullVariables() {
+    pointspot_contexts.fill(vir::ValueID::Invalid);
+    pointspot_cull_meshes_commands.fill(vir::ValueID::Invalid);
+  }
+};
+
+struct LightGridVariables {
+  vir::ValueID push = vir::ValueID::Invalid;
+};
+
+struct TerrainVariables {
+  vir::ValueID data = vir::ValueID::Invalid;
+  vir::ValueID cull_camera = vir::ValueID::Invalid;
+  vir::ValueID patch_total = vir::ValueID::Invalid;
+  vir::ValueID brush_params = vir::ValueID::Invalid;
+  vir::ValueID brush_generate = vir::ValueID::Invalid;
+  vir::ValueID brush_derive = vir::ValueID::Invalid;
+  vir::ValueID brush_minmax = vir::ValueID::Invalid;
+  vir::ValueID brush_apply_groups = vir::ValueID::Invalid;
+  vir::ValueID brush_derive_groups = vir::ValueID::Invalid;
+  vir::ValueID brush_minmax_groups = vir::ValueID::Invalid;
+  vir::ValueID is_brush_active = vir::ValueID::Invalid;
+  vir::ValueID is_brush_painting = vir::ValueID::Invalid;
+
+  vir::ValueID heightmap = vir::ValueID::Invalid;
+  vir::ValueID ridgemap = vir::ValueID::Invalid;
+  vir::ValueID normalmap = vir::ValueID::Invalid;
+  vir::ValueID splatmap = vir::ValueID::Invalid;
+  vir::ValueID patch_minmax = vir::ValueID::Invalid;
+  vir::ValueID height_edit = vir::ValueID::Invalid;
+  vir::ValueID splat_edit = vir::ValueID::Invalid;
+};
+
+struct ShadowVariables {
+  vir::ValueID context = vir::ValueID::Invalid;
+  vir::ValueID pointspot_context = vir::ValueID::Invalid;
+  vir::ValueID clipmap_context = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views = vir::ValueID::Invalid;
+  vir::ValueID clipmap_scroll_deltas = vir::ValueID::Invalid;
+  vir::ValueID is_sun_moved = vir::ValueID::Invalid;
+  vir::ValueID pointspot_moved_lights = vir::ValueID::Invalid;
+  vir::ValueID pointspot_mark_push = vir::ValueID::Invalid;
+  vir::ValueID pointspot_dirty_count = vir::ValueID::Invalid;
+  vir::ValueID pointspot_removed_count = vir::ValueID::Invalid;
+  vir::ValueID dirty_count = vir::ValueID::Invalid;
+  vir::ValueID removed_count = vir::ValueID::Invalid;
+};
+
+struct PBRVariables {
+  vir::ValueID is_luts_dirty = vir::ValueID::Invalid;
+  vir::ValueID sky_view_push = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_push = vir::ValueID::Invalid;
+  vir::ValueID aerial_push = vir::ValueID::Invalid;
+  vir::ValueID vbgtao_prefilter_push = vir::ValueID::Invalid;
+  vir::ValueID vbgtao_settings = vir::ValueID::Invalid;
+  vir::ValueID vbgtao_denoise_push = vir::ValueID::Invalid;
+  vir::ValueID rtao_push = vir::ValueID::Invalid;
+  vir::ValueID lighting = vir::ValueID::Invalid;
+  vir::ValueID sky = vir::ValueID::Invalid;
+};
+
+struct DDGIVolumeVariables {
+  vir::ValueID select_push = vir::ValueID::Invalid;
+  vir::ValueID select_probe_count = vir::ValueID::Invalid;
+  vir::ValueID trace_push = vir::ValueID::Invalid;
+  vir::ValueID trace_tail_push = vir::ValueID::Invalid;
+  vir::ValueID trace_probe_count = vir::ValueID::Invalid;
+  vir::ValueID debug_push = vir::ValueID::Invalid;
+  vir::ValueID debug_probe_count = vir::ValueID::Invalid;
+};
+
+struct DDGIVariables {
+  std::vector<DDGIVolumeVariables> volumes = {};
+  vir::ValueID is_history_invalid = vir::ValueID::Invalid;
+  vir::ValueID rays = vir::ValueID::Invalid;
+  vir::ValueID relocate_push = vir::ValueID::Invalid;
+  vir::ValueID irradiance_push = vir::ValueID::Invalid;
+  vir::ValueID distance_push = vir::ValueID::Invalid;
+  vir::ValueID apply_push = vir::ValueID::Invalid;
+
+  vir::ValueID probe_states = vir::ValueID::Invalid;
+  vir::ValueID probe_update_list = vir::ValueID::Invalid;
+  vir::ValueID irradiance = vir::ValueID::Invalid;
+  vir::ValueID distance = vir::ValueID::Invalid;
+};
+
+struct FSR3Variables {
+  vir::ValueID constants = vir::ValueID::Invalid;
+  vir::ValueID is_reset = vir::ValueID::Invalid;
+  vir::ValueID accumulate_push = vir::ValueID::Invalid;
+  vir::ValueID is_sharpening = vir::ValueID::Invalid;
+  vir::ValueID sharpness = vir::ValueID::Invalid;
+  vir::ValueID is_debugging = vir::ValueID::Invalid;
+  vir::ValueID debug_mode = vir::ValueID::Invalid;
+
+  vir::ValueID internal_upscaled_color = vir::ValueID::Invalid;
+  vir::ValueID accumulation = vir::ValueID::Invalid;
+  vir::ValueID current_luma = vir::ValueID::Invalid;
+  vir::ValueID luma_history = vir::ValueID::Invalid;
+  vir::ValueID internal_upscaled_color_prev = vir::ValueID::Invalid;
+  vir::ValueID accumulation_prev = vir::ValueID::Invalid;
+  vir::ValueID previous_luma = vir::ValueID::Invalid;
+  vir::ValueID luma_history_prev = vir::ValueID::Invalid;
+};
+
+struct PostProcessVariables {
+  vir::ValueID histogram_generate_push = vir::ValueID::Invalid;
+  vir::ValueID histogram_average_push = vir::ValueID::Invalid;
+  vir::ValueID bloom_prefilter_push = vir::ValueID::Invalid;
+  vir::ValueID bloom_radius = vir::ValueID::Invalid;
+  vir::ValueID tonemap_push = vir::ValueID::Invalid;
+  vir::ValueID render_target = vir::ValueID::Invalid;
+};
+
+struct ParticleVariables {
+  vir::ValueID emitters = vir::ValueID::Invalid;
+  vir::ValueID programs = vir::ValueID::Invalid;
+  vir::ValueID constants = vir::ValueID::Invalid;
+  vir::ValueID index_counts = vir::ValueID::Invalid;
+  vir::ValueID meshes = vir::ValueID::Invalid;
+
+  vir::ValueID particles = vir::ValueID::Invalid;
+  vir::ValueID dead_list = vir::ValueID::Invalid;
+  vir::ValueID dead_counts = vir::ValueID::Invalid;
+  vir::ValueID counters = vir::ValueID::Invalid;
+  vir::ValueID sort_keys = vir::ValueID::Invalid;
+  vir::ValueID alive_in = vir::ValueID::Invalid;
+  vir::ValueID alive_out = vir::ValueID::Invalid;
+
+  vir::ValueID total_capacity = vir::ValueID::Invalid;
+  vir::ValueID total_spawn = vir::ValueID::Invalid;
+  vir::ValueID is_pool_reset = vir::ValueID::Invalid;
+  vir::ValueID init_push = vir::ValueID::Invalid;
+  vir::ValueID emit_push = vir::ValueID::Invalid;
+  vir::ValueID mesh_draw_push = vir::ValueID::Invalid;
+};
+
+struct DebugVariables {
+  vir::ValueID pointspot_push = vir::ValueID::Invalid;
+  vir::ValueID vsm_context = vir::ValueID::Invalid;
+  vir::ValueID vertices = vir::ValueID::Invalid;
+  // triangles then lines, each split by depth test
+  std::array<vir::ValueID, 4> shape_counts = {};
+  std::array<vir::ValueID, 4> shape_offsets = {};
+
+  DebugVariables() {
+    shape_counts.fill(vir::ValueID::Invalid);
+    shape_offsets.fill(vir::ValueID::Invalid);
+  }
+};
+
+// the variables one recorded program reads, `bind_frame` fills them before every run
+struct PreparedFrame {
+  vir::ValueID transforms_world = vir::ValueID::Invalid;
+  vir::ValueID transforms_previous = vir::ValueID::Invalid;
+  vir::ValueID meshes = vir::ValueID::Invalid;
+  vir::ValueID blas_addresses = vir::ValueID::Invalid;
+  vir::ValueID skinned_blas_addresses = vir::ValueID::Invalid;
+  vir::ValueID mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID skinning_transforms = vir::ValueID::Invalid;
+  vir::ValueID lights = vir::ValueID::Invalid;
+  vir::ValueID meshlet_instance_visibility_mask = vir::ValueID::Invalid;
+  vir::ValueID exposure = vir::ValueID::Invalid;
+  vir::ValueID skinned_vertices = vir::ValueID::Invalid;
+  vir::ValueID materials = vir::ValueID::Invalid;
+  vir::ValueID terrain_patch_visibility_mask = vir::ValueID::Invalid;
+
+  vir::ValueID transforms_world_staging = vir::ValueID::Invalid;
+  vir::ValueID transforms_previous_staging = vir::ValueID::Invalid;
+  UploadVariables meshes_upload = {};
+  UploadVariables blas_addresses_upload = {};
+  UploadVariables skinned_blas_addresses_upload = {};
+  UploadVariables mesh_instances_upload = {};
+  UploadVariables skinning_transforms_upload = {};
+  UploadVariables lights_upload = {};
+  vir::ValueID is_meshlet_visibility_reset = vir::ValueID::Invalid;
+  vir::ValueID is_terrain_visibility_reset = vir::ValueID::Invalid;
+  vir::ValueID is_exposure_reset = vir::ValueID::Invalid;
+
+  vir::ValueID camera = vir::ValueID::Invalid;
+  vir::ValueID atmosphere = vir::ValueID::Invalid;
+  vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID probe_volumes = vir::ValueID::Invalid;
+  vir::ValueID sprites = vir::ValueID::Invalid;
+
+  vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
+  vir::ValueID reordered_indices = vir::ValueID::Invalid;
+  vir::ValueID terrain_visible_patches = vir::ValueID::Invalid;
+
+  vir::ValueID skinned_blas_arena = vir::ValueID::Invalid;
+  vir::ValueID skinned_blas_scratch = vir::ValueID::Invalid;
+  vir::ValueID skinned_blas_builds = vir::ValueID::Invalid;
+  vir::ValueID tlas_instances = vir::ValueID::Invalid;
+  vir::ValueID tlas_instance_count = vir::ValueID::Invalid;
+  vir::ValueID tlas_instance_counts = vir::ValueID::Invalid;
+  vir::ValueID tlas = vir::ValueID::Invalid;
+  vir::ValueID tlas_scratch = vir::ValueID::Invalid;
+  vir::ValueID tlas_builds = vir::ValueID::Invalid;
+
+  ankerl::unordered_dense::map<std::string, StageVariables> stage_variables = {};
+
+  CullVariables cull = {};
+  LightGridVariables light_grid = {};
+  TerrainVariables terrain = {};
+  ShadowVariables shadow = {};
+  PBRVariables pbr = {};
+  DDGIVariables ddgi = {};
+  FSR3Variables fsr3 = {};
+  PostProcessVariables post_process = {};
+  ParticleVariables particle = {};
+  DebugVariables debug = {};
+};
+
+// recording-local resource versions, separate from the cached variable IDs
+struct FrameRecording {
+  const FrameShape& shape;
+  PreparedFrame& prepared;
+  FrameValues values = {};
+};
+
+struct FrameParams {
+  // the shape the current program was recorded for
+  FrameShape shape = {};
+  const RendererCVar* cvar = nullptr;
   f32 delta_time = 0.0f;
-  vuk::Extent3D extent = {};
+  u32 frame_index = 0;
+  bool is_upscaling = false;
+  glm::uvec2 render_size = {};
+  glm::uvec2 display_size = {};
+  GPU::CullCamera cull_camera = {};
   f32 bloom_intensity = 0.0f;
 
-  vuk::Value<vuk::ImageAttachment> dst_attachment = {};
-  vuk::Value<vuk::ImageAttachment> final_attachment = {};
-  vuk::Value<vuk::ImageAttachment> bloom_upsampled_attachment = {};
+  // fsr3
+  GPU::FSR3Constants fsr3_constants = {};
+  f32 fsr3_sharpness = 0.0f;
+  bool fsr3_reset = false;
+  u32 fsr3_debug_view = 0;
+  bool fsr3_history_ping = false;
+
+  // ddgi
+  u32 ddgi_total_probe_count = 0;
+  u32 ddgi_rays_per_probe = 128;
+  bool ddgi_history_valid = false;
+  bool ddgi_distance_culling_changed = false;
+  bool ddgi_distance_culling_enabled = true;
+  ankerl::svector<glm::ivec3, 8> ddgi_scroll_deltas = {};
+
+  // terrain
+  bool is_terrain_brush_active = false;
+  bool is_terrain_brush_painting = false;
+
+  // virtual shadow maps
+  bool vsm_sun_moved = false;
+  GPU::VSMContext vsm = {};
+  GPU::VSMPointSpotContext vsm_pointspot = {};
+  std::array<GPU::VirtualClipmap, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT> vsm_directional_clipmaps = {};
+  std::array<glm::ivec2, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT> vsm_clipmap_scroll_deltas = {};
+  std::array<GPU::VSMPointSpotView, RMVSMContext::POINT_SPOT_LAYER_COUNT> vsm_pointspot_views = {};
 };
 
 class RendererInstance {
@@ -743,11 +984,14 @@ public:
 
   auto add_stage_callback(this RendererInstance& self, RenderStageCallback callback) -> void;
 
+  // a stage is recorded with the program and kept for as long as its name stays registered, so it
+  // has to read per-frame data through the variables it declares, which `bind` sets before every run
   auto add_stage_before(
     this RendererInstance& self,
     RenderStage stage,
     const std::string& name,
     std::function<void(RenderStageContext&)> callback,
+    std::function<void(vir::Program&, const StageVariables&)> bind = {},
     int order = 0
   ) -> void;
 
@@ -756,19 +1000,21 @@ public:
     RenderStage stage,
     const std::string& name,
     std::function<void(RenderStageContext&)> callback,
+    std::function<void(vir::Program&, const StageVariables&)> bind = {},
     int order = 0
   ) -> void;
 
   auto clear_stages(this RendererInstance& self) -> void;
 
+  // renders into `target`, which the frame leaves at `vir::Access::FragmentSampled`
   auto render(
     this RendererInstance& self,
-    vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+    const vir::ImageAttachment& target,
     glm::ivec2 viewport_origin,
     glm::ivec2 viewport_size,
     glm::ivec2 surface_size,
     const RendererCVar& cvar
-  ) -> vuk::Value<vuk::ImageAttachment>;
+  ) -> std::expected<vir::SubmitTicket, VkResult>;
 
   auto update(this RendererInstance& self, RendererInstanceUpdateInfo& info, const RendererCVar& cvar) -> void;
 
@@ -778,74 +1024,226 @@ public:
   // so anything indexing the visbuffer or g-buffer by pixel has to go through this
   auto get_render_size(this const RendererInstance& self) -> glm::uvec2 { return self.render_size_; }
 
-  auto generate_hiz(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto skin_vertices(this RendererInstance& self) -> void;
-  auto cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void;
-  auto cull_geometry_pointspot(this RendererInstance& self, CullGeometryPointSpotContext& context) -> void;
-  auto build_light_grid(this RendererInstance&, LightGridContext& context) -> void;
-  auto apply_terrain_brush(this RendererInstance& self, TerrainBrushContext& context) -> void;
-  auto cull_terrain(this RendererInstance& self, TerrainContext& context) -> void;
-  auto draw_terrain_for_visbuffer(this RendererInstance& self, TerrainContext& context) -> void;
-  auto decode_terrain(this RendererInstance& self, TerrainDecodeContext& context) -> void;
-  auto build_terrain_buffer(this RendererInstance& self, const Terrain& terrain) -> vuk::Value<vuk::Buffer>;
-  auto draw_for_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto draw_for_visbuffer_ms(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto decode_visbuffer(this RendererInstance&, MainGeometryContext& context) -> void;
-  auto draw_virtual_shadowmap(this RendererInstance&, RMVSMContext& context) -> void;
-  auto resolve_shadowmap(this RendererInstance&, ShadowResolveContext& context) -> void;
-  auto draw_atmosphere(this RendererInstance&, AtmosphereContext& context) -> void;
-  auto generate_ambient_occlusion(this RendererInstance&, AmbientOcclusionContext& context) -> void;
-  auto generate_rtao(this RendererInstance&, RTAOContext& context) -> void;
+  // the record half of every pass, run once per frame shape
+  static auto record_upload(vir::Module& module, std::string_view name, vir::ValueID dst, UploadVariables& upload)
+    -> vir::ValueID;
+  static auto record_fill(
+    vir::Module& module, std::string_view name, vir::ValueID dst, u32 value, vir::ValueID& is_filling
+  ) -> vir::ValueID;
+  auto bind_cull_variables(this const RendererInstance& self, vir::Program& program, const CullVariables& variables)
+    -> void;
+  auto bind_light_grid_variables(
+    this const RendererInstance& self, vir::Program& program, const LightGridVariables& variables
+  ) -> void;
+  auto bind_terrain_variables(
+    this const RendererInstance& self, vir::Program& program, const TerrainVariables& variables
+  ) -> void;
+  auto bind_shadow_variables(this const RendererInstance& self, vir::Program& program, const ShadowVariables& variables)
+    -> void;
 
-  // mirrors the two sites that actually consume the TLAS. With no consumer the whole chain would be
-  // recorded and then dropped unsubmitted, so both the pool and the build read this one answer
+  static auto generate_hiz(vir::Module& module, RenderContext& render_context, MainGeometryContext& context) -> void;
+  auto skin_vertices(this RendererInstance& self, vir::Module& module, FrameRecording& recording) -> void;
+  static auto cull_geometry(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryContext& context
+  ) -> void;
+  static auto cull_geometry_pointspot(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryPointSpotContext& context
+  ) -> void;
+  static auto build_light_grid(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, LightGridContext& context
+  ) -> void;
+  auto apply_terrain_brush(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TerrainBrushContext& context
+  ) -> void;
+  static auto cull_terrain(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, TerrainContext& context
+  ) -> void;
+  auto draw_terrain_for_visbuffer(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TerrainContext& context
+  ) -> void;
+  auto decode_terrain(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TerrainDecodeContext& context
+  ) -> void;
+  auto build_terrain_buffer(this RendererInstance& self, vir::Module& module, FrameRecording& recording)
+    -> vir::ValueID;
+  auto draw_for_visbuffer(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
+  ) -> void;
+  auto draw_for_visbuffer_ms(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
+  ) -> void;
+  auto decode_visbuffer(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
+  ) -> void;
+  auto draw_virtual_shadowmap(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
+  ) -> void;
+  // the host side of the shadow maps, once per frame before the program updates
+  auto prepare_virtual_shadowmap(this RendererInstance& self) -> void;
+  auto bind_atmosphere_variables(
+    this const RendererInstance& self, vir::Program& program, const PBRVariables& variables
+  ) -> void;
+  auto bind_ambient_occlusion_variables(
+    this const RendererInstance& self, vir::Program& program, const PBRVariables& variables
+  ) -> void;
+  auto bind_rtao_variables(this const RendererInstance& self, vir::Program& program, const PBRVariables& variables)
+    -> void;
+  auto bind_pbr_variables(this const RendererInstance& self, vir::Program& program, const PBRVariables& variables)
+    -> void;
+  auto bind_ddgi_variables(this const RendererInstance& self, vir::Program& program, const DDGIVariables& variables)
+    -> void;
+  auto bind_fsr3_variables(this const RendererInstance& self, vir::Program& program, const FSR3Variables& variables)
+    -> void;
+  auto bind_eye_adaptation_variables(
+    this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+  ) -> void;
+  auto bind_bloom_variables(
+    this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+  ) -> void;
+  auto bind_tonemap_variables(
+    this const RendererInstance& self, vir::Program& program, const PostProcessVariables& variables
+  ) -> void;
+
+  auto bind_particle_variables(
+    this const RendererInstance& self, vir::Program& program, const ParticleVariables& variables
+  ) -> void;
+  auto bind_debug_variables(this const RendererInstance& self, vir::Program& program, const DebugVariables& variables)
+    -> void;
+
+  auto draw_atmosphere(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, AtmosphereContext& context
+  ) -> void;
+  auto generate_ambient_occlusion(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, AmbientOcclusionContext& context
+  ) -> void;
+  auto generate_rtao(this RendererInstance& self, vir::Module& module, FrameRecording& recording, RTAOContext& context)
+    -> void;
+
+  // mirrors the two sites that actually consume the TLAS, so both the pool and the build skip the
+  // work when nothing traces
   auto tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool;
-  auto apply_pbr(this RendererInstance&, PBRContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment)
-    -> vuk::Value<vuk::ImageAttachment>;
-  auto apply_eye_adaptation(this RendererInstance&, PostProcessContext& context) -> void;
-  auto apply_bloom(this RendererInstance& self, PostProcessContext& context, const RendererCVar& cvar) -> void;
-  auto apply_tonemap(this RendererInstance&, PostProcessContext& context) -> vuk::Value<vuk::ImageAttachment>;
+  // baked into the program, so it is part of the frame shape
+  auto tlas_handle(this const RendererInstance& self) -> VkAccelerationStructureKHR;
+  auto apply_pbr(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, PBRContext& context, vir::ValueID dst
+  ) -> vir::ValueID;
+  static auto apply_eye_adaptation(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+  ) -> void;
+  static auto apply_bloom(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+  ) -> void;
+  static auto apply_tonemap(
+    vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
+  ) -> vir::ValueID;
   auto apply_debug_view(
-    this RendererInstance&, DebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
-  ) -> vuk::Value<vuk::ImageAttachment>;
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, DebugContext& context, vir::ValueID dst
+  ) -> vir::ValueID;
   auto allocate_ddgi_atlases(this RendererInstance& self, u32 probe_count) -> void;
-  auto trace_ddgi_probes(this RendererInstance& self, DDGITraceContext& context) -> void;
-  auto select_ddgi_probes(this RendererInstance& self, DDGISelectContext& context) -> void;
-  auto relocate_ddgi_probes(this RendererInstance& self, DDGIRelocateContext& context) -> void;
-  auto update_ddgi_probes(this RendererInstance& self, DDGIUpdateContext& context) -> void;
-  auto apply_ddgi(this RendererInstance& self, DDGIApplyContext& context, vuk::Value<vuk::ImageAttachment>&& dst)
-    -> vuk::Value<vuk::ImageAttachment>;
-  auto draw_ddgi_probes(
-    this RendererInstance& self, DDGIDebugContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
-  ) -> vuk::Value<vuk::ImageAttachment>;
+  // the host side of the probes, once per frame before the program updates
+  auto prepare_ddgi(this RendererInstance& self, const RendererCVar& cvar) -> void;
+  auto record_ddgi(this RendererInstance& self, vir::Module& module, FrameRecording& recording, DDGIContext& context)
+    -> void;
+  auto apply_ddgi(
+    this RendererInstance& self,
+    vir::Module& module,
+    FrameRecording& recording,
+    DDGIApplyContext& context,
+    vir::ValueID dst
+  ) -> vir::ValueID;
+  static auto draw_ddgi_probes(
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    DDGIDebugContext& context,
+    vir::ValueID dst
+  ) -> vir::ValueID;
   auto draw_debug_shapes(
-    this RendererInstance&,
-    vuk::Value<vuk::ImageAttachment>&& depth_attachment,
-    vuk::Value<vuk::ImageAttachment>&& dst_attachment
-  ) -> vuk::Value<vuk::ImageAttachment>;
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, vir::ValueID depth, vir::ValueID dst
+  ) -> vir::ValueID;
 
   auto prepare_particles(this RendererInstance& self, f32 delta_time, bool sort_enabled) -> void;
-  auto simulate_particles(this RendererInstance& self, ParticleContext& context) -> void;
+  auto simulate_particles(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, ParticleContext& context
+  ) -> void;
   auto draw_particles(
-    this RendererInstance& self, ParticleContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
-  ) -> vuk::Value<vuk::ImageAttachment>;
+    this RendererInstance& self,
+    vir::Module& module,
+    FrameRecording& recording,
+    ParticleContext& context,
+    vir::ValueID dst
+  ) -> vir::ValueID;
 
   auto update_vbgtao_info(this RendererInstance&, const RendererCVar& cvar) -> void;
 
   auto allocate_fsr3_resources(this RendererInstance& self, glm::uvec2 render_size, glm::uvec2 display_size) -> void;
-  auto apply_fsr3(this RendererInstance& self, FSR3Context& context) -> vuk::Value<vuk::ImageAttachment>;
+  auto apply_fsr3(this RendererInstance& self, vir::Module& module, FrameRecording& recording, FSR3Context& context)
+    -> vir::ValueID;
+  static auto sharpen_fsr3(
+    vir::Module& module,
+    RenderContext& render_context,
+    vir::ValueID enabled,
+    vir::ValueID sharpness,
+    vir::ValueID constants,
+    vir::ValueID history,
+    vir::ValueID exposure,
+    vir::ValueID output
+  ) -> std::array<vir::ValueID, 4>;
+
+  FrameProgramStats program_stats = {};
+
+  // read by passes and their variables, filled per frame
+  FrameParams frame_params = {};
+  FrameData frame_data = {};
 
 private:
-  bool update_ran_this_frame = false; // Sanity Check
-
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
   std::vector<std::vector<usize>> before_callbacks;
   std::vector<std::vector<usize>> after_callbacks;
 
+  ankerl::unordered_dense::map<FrameShape, std::unique_ptr<RecordedFrame>, FrameShapeHash> programs = {};
+  std::vector<FrameShape> program_order = {};
+  ankerl::svector<u64, 8> evicted_shapes = {};
+  const vir::ImageAttachment* render_target = nullptr;
+
   auto rebuild_execution_order(this RendererInstance& self) -> void;
-  auto execute_stages_before(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
-  auto execute_stages_after(this const RendererInstance& self, RenderStage stage, RenderStageContext& ctx) -> void;
+  auto execute_stages_before(
+    this RendererInstance& self,
+    RenderStage stage,
+    vir::Module& module,
+    SharedResources& resources,
+    PreparedFrame& prepared
+  ) -> void;
+  auto execute_stages_after(
+    this RendererInstance& self,
+    RenderStage stage,
+    vir::Module& module,
+    SharedResources& resources,
+    PreparedFrame& prepared
+  ) -> void;
+
+  // settles the scene flags this frame renders with, so it runs once per frame before anything reads them
+  auto frame_shape(
+    this RendererInstance& self, glm::uvec2 display_size, vir::Format target_format, const RendererCVar& cvar
+  ) -> FrameShape;
+  auto record_acceleration_structures(this RendererInstance& self, vir::Module& module, FrameRecording& recording)
+    -> void;
+  auto bind_acceleration_structures(
+    this const RendererInstance& self, vir::Program& program, const PreparedFrame& prepared
+  ) -> void;
+  auto prepare_frame_params(this RendererInstance& self, const FrameShape& shape, const RendererCVar& cvar) -> void;
+  auto record_frame(this RendererInstance& self, vir::Module& module, const FrameShape& shape, PreparedFrame& prepared)
+    -> void;
+  auto bind_frame(this const RendererInstance& self, vir::Program& program, const PreparedFrame& prepared) -> void;
+  auto bind_upload(
+    this const RendererInstance& self,
+    vir::Program& program,
+    const UploadVariables& upload,
+    std::span<const u8> data,
+    std::string_view name
+  ) -> void;
+  auto program_for(this RendererInstance& self, const FrameShape& shape) -> RecordedFrame*;
 
   Scene& scene;
   Renderer& renderer;
@@ -862,10 +1260,9 @@ private:
   glm::vec2 previous_jitter = {};
   u32 jitter_frame_index = 0;
 
-  vuk::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
-  vuk::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
+  vir::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
+  vir::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
-  PreparedFrame prepared_frame = {};
   GPU::Camera camera_data = {};
   GPU::Camera previous_camera_data = {};
 
@@ -897,37 +1294,34 @@ private:
   Texture hilbert_noise_lut = {};
   Texture sky_cubemap = {};
 
-  vuk::Unique<vuk::Buffer> transforms_world_buffer{};
-  vuk::Unique<vuk::Buffer> transforms_previous_buffer{};
-  vuk::Unique<vuk::Buffer> mesh_instances_buffer{};
-  vuk::Unique<vuk::Buffer> skinning_transforms_buffer{};
+  BufferID transforms_world_buffer = BufferID::Invalid;
+  BufferID transforms_previous_buffer = BufferID::Invalid;
+  BufferID mesh_instances_buffer = BufferID::Invalid;
+  BufferID skinning_transforms_buffer = BufferID::Invalid;
   // in the same quantized format as the bind pose, so every downstream consumer works by pointer
   // swap alone
-  vuk::Unique<vuk::Buffer> skinned_vertices_buffer{};
-  vuk::Unique<vuk::Buffer> meshes_buffer{};
-  vuk::Unique<vuk::Buffer> blas_addresses_buffer{};
-  // one entry per skinned instance rather than per mesh, because ten characters sharing a model
-  // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
-  // outlive a scene dirty flag that never fires
-  std::vector<u64> skinned_blas_addresses = {};
-  vuk::Unique<vuk::Buffer> skinned_blas_addresses_buffer{};
+  BufferID skinned_vertices_buffer = BufferID::Invalid;
+  BufferID meshes_buffer = BufferID::Invalid;
+  BufferID blas_addresses_buffer = BufferID::Invalid;
+  BufferID skinned_blas_addresses_buffer = BufferID::Invalid;
   SkinnedBLASPool skinned_blas_pool{};
   SceneTLAS scene_tlas{};
   // kept across frames to reuse its capacity
   std::vector<DebugRenderer::Vertex> debug_vertices = {};
-  vuk::Unique<vuk::Buffer> lights_buffer{};
-  vuk::Unique<vuk::Buffer> meshlet_instance_visibility_mask_buffer{};
-  vuk::Unique<vuk::Buffer> terrain_patch_visibility_mask_buffer{};
+  BufferID lights_buffer = BufferID::Invalid;
+  BufferID meshlet_instance_visibility_mask_buffer = BufferID::Invalid;
+  BufferID terrain_patch_visibility_mask_buffer = BufferID::Invalid;
   u32 terrain_patch_visibility_patch_count = 0;
-  vuk::Unique<vuk::Buffer> exposure_buffer{};
+  BufferID exposure_buffer = BufferID::Invalid;
+  BufferID placeholder_buffer = BufferID::Invalid;
 
-  vuk::Unique<vuk::Buffer> particle_buffer{};
-  vuk::Unique<vuk::Buffer> particle_alive_list_a{};
-  vuk::Unique<vuk::Buffer> particle_alive_list_b{};
-  vuk::Unique<vuk::Buffer> particle_dead_list{};
-  vuk::Unique<vuk::Buffer> particle_dead_counts{};
-  vuk::Unique<vuk::Buffer> particle_counters{};
-  vuk::Unique<vuk::Buffer> particle_sort_keys{};
+  BufferID particle_buffer = BufferID::Invalid;
+  BufferID particle_alive_list_a = BufferID::Invalid;
+  BufferID particle_alive_list_b = BufferID::Invalid;
+  BufferID particle_dead_list = BufferID::Invalid;
+  BufferID particle_dead_counts = BufferID::Invalid;
+  BufferID particle_counters = BufferID::Invalid;
+  BufferID particle_sort_keys = BufferID::Invalid;
   u32 particle_pool_capacity = 0;
   bool particle_pool_ping = false;
 
@@ -935,14 +1329,10 @@ private:
   u64 ddgi_atlas_layout_key = 0;
   bool ddgi_history_valid = false;
   bool ddgi_distance_culling_enabled = true;
-  vuk::Unique<vuk::Image> ddgi_irradiance{};
-  vuk::Unique<vuk::ImageView> ddgi_irradiance_view{};
-  vuk::ImageAttachment ddgi_irradiance_attachment = {};
-  vuk::Unique<vuk::Buffer> ddgi_probe_states{};
-  vuk::Unique<vuk::Buffer> ddgi_probe_update_list{};
-  vuk::Unique<vuk::Image> ddgi_distance{};
-  vuk::Unique<vuk::ImageView> ddgi_distance_view{};
-  vuk::ImageAttachment ddgi_distance_attachment = {};
+  Texture ddgi_irradiance = {};
+  Texture ddgi_distance = {};
+  BufferID ddgi_probe_states = BufferID::Invalid;
+  BufferID ddgi_probe_update_list = BufferID::Invalid;
 
   // FSR3 history. the ping-pong pairs alternate on `fsr3_history_ping` each frame; sizes are keyed
   // on `fsr3_render_size` / `fsr3_display_size` so a resize reallocates and forces a history reset
@@ -954,17 +1344,10 @@ private:
   glm::uvec2 fsr3_previous_render_size = {};
   glm::uvec2 fsr3_previous_display_size = {};
   glm::vec2 fsr3_previous_jitter = {};
-  struct FSR3History {
-    vuk::Unique<vuk::Image> image{};
-    vuk::Unique<vuk::ImageView> view{};
-    vuk::ImageAttachment attachment = {};
-    // how the frame that wrote it left it, which is what acquire_ia needs next frame
-    vuk::Access last_access = vuk::eNone;
-  };
-  std::array<FSR3History, 2> fsr3_internal_upscaled_color{};
-  std::array<FSR3History, 2> fsr3_accumulation{};
-  std::array<FSR3History, 2> fsr3_luma{};
-  std::array<FSR3History, 2> fsr3_luma_history{};
+  std::array<Texture, 2> fsr3_internal_upscaled_color{};
+  std::array<Texture, 2> fsr3_accumulation{};
+  std::array<Texture, 2> fsr3_luma{};
+  std::array<Texture, 2> fsr3_luma_history{};
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};
@@ -974,9 +1357,7 @@ private:
   bool directional_vsm_cache_valid = false;
   std::array<ShadowSlotState, GPU::MAX_SHADOW_POINT_LIGHTS> shadow_point_slots = {};
   std::array<ShadowSlotState, GPU::MAX_SHADOW_SPOT_LIGHTS> shadow_spot_slots = {};
-  vuk::Unique<vuk::Image> vsm_physical_page_table{};
-  vuk::Unique<vuk::ImageView> vsm_physical_page_table_f32_view{};
-  vuk::Unique<vuk::ImageView> vsm_physical_page_table_u32_view{};
-  vuk::ImageAttachment vsm_physical_page_table_attachment = {};
+  // one image read as both float and uint, through views the program makes per binding
+  Texture vsm_physical_page_table = {};
 };
 } // namespace ox

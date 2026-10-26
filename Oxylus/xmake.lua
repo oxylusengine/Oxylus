@@ -60,6 +60,29 @@ target("Oxylus")
 
     on_config(function (target)
         target:add("includedirs", path.join(target:autogendir(), "version"))
+
+        -- the rmlui package lists its libs in whatever order its install dir gives, and GNU ld needs the
+        -- bindings ahead of the core
+        local rmlui = target:pkg("rmlui")
+        if rmlui then
+            local bindings = {"rmlui_lua", "rmlui_debugger"}
+            local links = table.wrap(rmlui:get("links"))
+            local ordered = {}
+            for _, link in ipairs(bindings) do
+                if table.contains(links, link) then
+                    table.insert(ordered, link)
+                end
+            end
+
+            for _, link in ipairs(links) do
+                if not table.contains(bindings, link) then
+                    table.insert(ordered, link)
+                end
+            end
+
+            rmlui:set("links", ordered)
+        end
+
         if (target:has_tool("cxx", "msvc", "cl")) then
             target:add("defines", "OX_COMPILER_MSVC=1", { force = true, public = true })
             target:add("cxflags", "/arch:AVX2 /permissive- /EHsc /bigobj -wd4100 /Zc:preprocessor", { public = true })
@@ -91,7 +114,7 @@ target("Oxylus")
         "flecs",
         "imgui",
         "vk-bootstrap",
-        "vuk",
+        "vulkan-headers",
         "unordered_dense",
         "svector",
         "tracy",
@@ -106,6 +129,7 @@ target("Oxylus")
         "loguru",
         "simdjson",
         "rmlui",
+        "vir",
         "zstd",
         {public = true})
 

@@ -122,7 +122,7 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   }
 }
 
-auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
+auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 

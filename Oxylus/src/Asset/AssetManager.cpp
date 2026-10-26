@@ -3,12 +3,11 @@
 #include <ankerl/svector.h>
 #include <array>
 #include <atomic>
-#include <vuk/Types.hpp>
-#include <vuk/vsl/Core.hpp>
 #include <zpp_bits.h>
 
 #include "Asset/AssetManifest.hpp"
 #include "Core/App.hpp"
+#include "Core/Base.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
@@ -123,6 +122,12 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.source_index.clear();
   self.pending_load_info.clear();
   self.dirty_materials.clear();
+  for (usize index = 0; index < self.model_map.capacity(); index++) {
+    if (auto* model = self.model_map.slot_from_index(index)) {
+      model->destroy_gpu_resources(App::get_rendercontext());
+    }
+  }
+
   self.model_map.reset();
   self.texture_map.reset();
   self.material_map.reset();

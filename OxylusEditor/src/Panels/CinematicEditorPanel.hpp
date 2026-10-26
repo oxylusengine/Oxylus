@@ -45,7 +45,7 @@ public:
   ~CinematicEditorPanel();
 
   auto on_update(this CinematicEditorPanel& self) -> void;
-  auto on_render(this CinematicEditorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this CinematicEditorPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   auto open_asset(this CinematicEditorPanel& self, const UUID& uuid) -> void;
 

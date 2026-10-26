@@ -3,26 +3,36 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/mat3x3.hpp>
 #include <utility>
-#include <vuk/runtime/CommandBuffer.hpp>
+#include <vir/RenderGraph.hpp>
 
 #include "Asset/AssetManager.hpp"
 #include "Asset/ParticleEmitterProgram.hpp"
 #include "Core/App.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Utils/VukCommon.hpp"
+#include "Render/Utils/PushConstants.hpp"
 #include "Scene/Scene.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
-constexpr static auto PARTICLE_BLEND_STATE = vuk::PipelineColorBlendAttachmentState{
-  .blendEnable = true,
-  .srcColorBlendFactor = vuk::BlendFactor::eOne,
-  .dstColorBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
-  .colorBlendOp = vuk::BlendOp::eAdd,
-  .srcAlphaBlendFactor = vuk::BlendFactor::eOne,
-  .dstAlphaBlendFactor = vuk::BlendFactor::eOneMinusSrcAlpha,
-  .alphaBlendOp = vuk::BlendOp::eAdd,
+constexpr static auto PARTICLE_BLEND_STATE = vir::ColorBlendAttachmentState{
+  .is_blend_enabled = true,
+  .src_color_blend_factor = VK_BLEND_FACTOR_ONE,
+  .dst_color_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+  .color_blend_op = VK_BLEND_OP_ADD,
+  .src_alpha_blend_factor = VK_BLEND_FACTOR_ONE,
+  .dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+  .alpha_blend_op = VK_BLEND_OP_ADD,
 };
+
+using ParticleInitPush = PushConstants<u32>;
+using ParticleEmitPush = PushConstants<u32, u32>;
+using ParticleDrawArgsPush = PushConstants<u32>;
+
+constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
 auto next_power_of_two(u32 value) -> u32 {
   auto result = 1_u32;
@@ -60,7 +70,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
   auto& asset_man = App::mod<AssetManager>();
   auto& render_context = *self.renderer.render_context;
-  auto& prepared = self.prepared_frame;
+  auto& data = self.frame_data;
 
   auto snapshots = std::vector<ParticleAssetSnapshot>{};
   auto snapshot_of = ankerl::unordered_dense::map<UUID, u32>{};
@@ -113,15 +123,15 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
             snapshot.gradients = system->gradients;
           }
 
-          snapshot.instruction_offset = static_cast<u32>(prepared.particle_instructions.size());
-          snapshot.constant_offset = static_cast<u32>(prepared.particle_constants.size());
-          prepared.particle_instructions.insert(
-            prepared.particle_instructions.end(),
+          snapshot.instruction_offset = static_cast<u32>(data.particle_instructions.size());
+          snapshot.constant_offset = static_cast<u32>(data.particle_constants.size());
+          data.particle_instructions.insert(
+            data.particle_instructions.end(),
             system->programs.instructions.begin(),
             system->programs.instructions.end()
           );
-          prepared.particle_constants.insert(
-            prepared.particle_constants.end(),
+          data.particle_constants.insert(
+            data.particle_constants.end(),
             system->programs.constants.begin(),
             system->programs.constants.end()
           );
@@ -224,7 +234,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         flags |= GPU::ParticleEmitterFlags::DepthCollision;
       }
 
-      const auto emitter_index = static_cast<u32>(prepared.particle_emitters.size());
+      const auto emitter_index = static_cast<u32>(data.particle_emitters.size());
 
       if (snapshot.render.render_mode == ParticleRenderMode::Mesh && snapshot.render.mesh) {
         auto mesh_draw = ParticleMeshDraw{.emitter_index = emitter_index};
@@ -232,18 +242,18 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         {
           auto model = asset_man.get_model(snapshot.render.mesh);
           if (
-            model && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() && model->gpu_mesh_buffers[0] &&
-            model->is_mesh_ready(0)
+            model && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() &&
+            model->gpu_mesh_buffers[0] != BufferID::Invalid && model->is_mesh_ready(0)
           ) {
             const auto& range = model->lod0_index_ranges[0];
-            const auto& buffer = *model->gpu_mesh_buffers[0];
+            const auto buffer = render_context.buffer(model->gpu_mesh_buffers[0]);
             if (range.count > 0 && range.device_address >= buffer.device_address) {
               mesh_draw.gpu_mesh = model->gpu_meshes[0];
               mesh_draw.index_count = range.count;
-              mesh_draw.index_buffer = buffer.subrange(
-                range.device_address - buffer.device_address,
-                static_cast<u64>(range.count) * sizeof(Model::Index)
-              );
+              mesh_draw.index_buffer = buffer;
+              mesh_draw.index_buffer.offset += range.device_address - buffer.device_address;
+              mesh_draw.index_buffer.device_address = range.device_address;
+              mesh_draw.index_buffer.size = static_cast<u64>(range.count) * sizeof(Model::Index);
               valid_mesh = true;
             }
           }
@@ -251,7 +261,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
         if (valid_mesh) {
           flags |= GPU::ParticleEmitterFlags::MeshRenderer;
-          prepared.particle_mesh_draws.emplace_back(mesh_draw);
+          data.particle_mesh_draws.emplace_back(mesh_draw);
         }
       }
 
@@ -277,7 +287,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         .pool_offset = state->pool_offset,
         .capacity = capacity,
         .spawn_count = spawn_count,
-        .spawn_offset = prepared.particle_total_spawn,
+        .spawn_offset = data.particle_total_spawn,
         .spawn_program_offset = snapshot.instruction_offset,
         .spawn_program_count = snapshot.spawn_count,
         .update_program_offset = snapshot.instruction_offset + snapshot.spawn_count,
@@ -305,24 +315,24 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
       std::ranges::copy(user_params, gpu_emitter.user_params);
 
-      prepared.particle_total_spawn += spawn_count;
-      prepared.particle_sort_enabled = prepared.particle_sort_enabled || snapshot.render.sort;
-      prepared.particle_emitters.emplace_back(gpu_emitter);
+      data.particle_total_spawn += spawn_count;
+      data.particle_sort_enabled = data.particle_sort_enabled || snapshot.render.sort;
+      data.particle_emitters.emplace_back(gpu_emitter);
     });
 
-  if (prepared.particle_emitters.empty()) {
+  if (data.particle_emitters.empty()) {
     return;
   }
 
-  if (prepared.particle_instructions.empty()) {
-    prepared.particle_instructions.emplace_back();
+  if (data.particle_instructions.empty()) {
+    data.particle_instructions.emplace_back();
   }
-  if (prepared.particle_constants.empty()) {
-    prepared.particle_constants.emplace_back(0.0f);
+  if (data.particle_constants.empty()) {
+    data.particle_constants.emplace_back(0.0f);
   }
 
-  prepared.particle_total_capacity = pool_offset;
-  prepared.particle_sort_enabled = prepared.particle_sort_enabled && sort_enabled;
+  data.particle_total_capacity = pool_offset;
+  data.particle_sort_enabled = data.particle_sort_enabled && sort_enabled;
 
   if (pool_offset != self.particle_pool_capacity) {
     layout_changed = true;
@@ -330,532 +340,481 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
 
   const auto sorted_count = next_power_of_two(std::max(pool_offset, GPU::PARTICLE_SORT_GROUP));
 
-  self.particle_buffer = render_context.resize_buffer(
-    std::move(self.particle_buffer),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(pool_offset) * sizeof(GPU::Particle)
+  const auto resize = [&](BufferID& id, u64 size, std::string_view name) {
+    if (const auto resized = render_context.resize_buffer(id, size, name); !resized) {
+      OX_LOG_ERROR("failed to allocate {}", name);
+    }
+  };
+  resize(self.particle_buffer, static_cast<u64>(pool_offset) * sizeof(GPU::Particle), "particles");
+  resize(self.particle_alive_list_a, static_cast<u64>(pool_offset) * sizeof(u32), "particle alive list a");
+  resize(self.particle_alive_list_b, static_cast<u64>(pool_offset) * sizeof(u32), "particle alive list b");
+  resize(self.particle_dead_list, static_cast<u64>(pool_offset) * sizeof(u32), "particle dead list");
+  resize(
+    self.particle_dead_counts,
+    static_cast<u64>(data.particle_emitters.size()) * sizeof(u32),
+    "particle dead counts"
   );
-  self.particle_alive_list_a = render_context.resize_buffer(
-    std::move(self.particle_alive_list_a),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(pool_offset) * sizeof(u32)
-  );
-  self.particle_alive_list_b = render_context.resize_buffer(
-    std::move(self.particle_alive_list_b),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(pool_offset) * sizeof(u32)
-  );
-  self.particle_dead_list = render_context.resize_buffer(
-    std::move(self.particle_dead_list),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(pool_offset) * sizeof(u32)
-  );
-  self.particle_dead_counts = render_context.resize_buffer(
-    std::move(self.particle_dead_counts),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(prepared.particle_emitters.size()) * sizeof(u32)
-  );
-  self.particle_counters = render_context.resize_buffer(
-    std::move(self.particle_counters),
-    vuk::MemoryUsage::eGPUonly,
-    sizeof(GPU::ParticleCounters)
-  );
-  self.particle_sort_keys = render_context.resize_buffer(
-    std::move(self.particle_sort_keys),
-    vuk::MemoryUsage::eGPUonly,
-    static_cast<u64>(sorted_count) * sizeof(GPU::ParticleSortKey)
-  );
+  resize(self.particle_counters, sizeof(GPU::ParticleCounters), "particle counters");
+  resize(self.particle_sort_keys, static_cast<u64>(sorted_count) * sizeof(GPU::ParticleSortKey), "particle sort keys");
 
+  data.particle_meshes.resize(std::max<usize>(data.particle_mesh_draws.size(), 1));
+  data.particle_index_counts.resize(std::max<usize>(data.particle_mesh_draws.size(), 1));
+  for (usize i = 0; i < data.particle_mesh_draws.size(); i++) {
+    data.particle_meshes[i] = data.particle_mesh_draws[i].gpu_mesh;
+    data.particle_index_counts[i] = data.particle_mesh_draws[i].index_count;
+  }
+
+  data.particle_ping = self.particle_pool_ping;
+  self.particle_pool_ping = !self.particle_pool_ping;
   self.particle_pool_capacity = pool_offset;
-  prepared.particle_sorted_count = sorted_count;
-  prepared.particle_pool_reset = layout_changed;
+  data.particle_sorted_count = sorted_count;
+  data.particle_pool_reset = layout_changed;
 }
 
-auto RendererInstance::simulate_particles(this RendererInstance& self, ParticleContext& context) -> void {
+auto RendererInstance::bind_particle_variables(
+  this const RendererInstance& self, vir::Program& program, const ParticleVariables& variables
+) -> void {
   ZoneScoped;
+
+  if (!self.frame_params.shape.has_particles) {
+    return;
+  }
+
+  auto& render_context = *self.renderer.render_context;
+  const auto& data = self.frame_data;
+  program.set(variables.particles, render_context.buffer(self.particle_buffer));
+  program.set(variables.dead_list, render_context.buffer(self.particle_dead_list));
+  program.set(variables.dead_counts, render_context.buffer(self.particle_dead_counts));
+  program.set(variables.counters, render_context.buffer(self.particle_counters));
+  program.set(variables.sort_keys, render_context.buffer(self.particle_sort_keys));
+  const auto is_ping = data.particle_ping;
+  program.set(
+    variables.alive_in,
+    render_context.buffer(!is_ping ? self.particle_alive_list_a : self.particle_alive_list_b)
+  );
+  program.set(
+    variables.alive_out,
+    render_context.buffer(is_ping ? self.particle_alive_list_a : self.particle_alive_list_b)
+  );
+
+  program.set(variables.total_capacity, data.particle_total_capacity);
+  program.set(variables.total_spawn, data.particle_total_spawn);
+  program.set(variables.is_pool_reset, data.particle_pool_reset);
+  program.set_bytes(variables.init_push, ParticleInitPush(data.particle_total_capacity));
+  program.set_bytes(
+    variables.emit_push,
+    ParticleEmitPush(data.particle_total_spawn, static_cast<u32>(data.particle_emitters.size()))
+  );
+  program.set_bytes(
+    variables.mesh_draw_push,
+    ParticleDrawArgsPush(std::min(static_cast<u32>(data.particle_mesh_draws.size()), ParticleContext::MAX_MESH_DRAWS))
+  );
+}
+
+auto RendererInstance::simulate_particles(
+  this RendererInstance& self, vir::Module& module, FrameRecording& recording, ParticleContext& context
+) -> void {
+  ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& values = recording.values;
   memory::ScopedStack stack;
 
   auto& render_context = *self.renderer.render_context;
+  auto& variables = prepared.particle;
+  variables.index_counts = module.declare_buffer_var("particle index counts", vir::Access::None);
+  variables.particles = module.declare_buffer_var("particles", vir::Access::ComputeRW);
+  variables.dead_list = module.declare_buffer_var("particle dead list", vir::Access::ComputeRW);
+  variables.dead_counts = module.declare_buffer_var("particle dead counts", vir::Access::ComputeRW);
+  variables.counters = module.declare_buffer_var("particle counters", vir::Access::ComputeRW);
+  variables.sort_keys = module.declare_buffer_var("particle sort keys", vir::Access::ComputeRW);
+  variables.alive_in = module.declare_buffer_var("particle alive in", vir::Access::ComputeRW);
+  variables.alive_out = module.declare_buffer_var("particle alive out", vir::Access::ComputeRW);
+  variables.total_capacity = module.declare_u32_var("particle capacity", 0);
+  variables.total_spawn = module.declare_u32_var("particle spawn", 0);
+  variables.is_pool_reset = module.declare_bool_var("particle pool reset", false);
+  variables.init_push = module.declare_bytes_var("particle init push", sizeof(ParticleInitPush));
+  variables.emit_push = module.declare_bytes_var("particle emit push", sizeof(ParticleEmitPush));
+  variables.mesh_draw_push = module.declare_bytes_var("particle build draw args push", sizeof(ParticleDrawArgsPush));
 
-  auto& alive_in = self.particle_pool_ping ? self.particle_alive_list_b : self.particle_alive_list_a;
-  auto& alive_out = self.particle_pool_ping ? self.particle_alive_list_a : self.particle_alive_list_b;
+  auto particles = variables.particles;
+  auto dead_list = variables.dead_list;
+  auto dead_counts = variables.dead_counts;
+  auto counters = variables.counters;
+  auto sort_keys = variables.sort_keys;
+  auto alive_in = variables.alive_in;
+  auto alive_out = variables.alive_out;
 
-  auto particles_buffer = vuk::acquire_buf("particles", *self.particle_buffer, vuk::eMemoryRead);
-  auto dead_list_buffer = vuk::acquire_buf("particle dead list", *self.particle_dead_list, vuk::eMemoryRead);
-  auto alive_in_buffer = vuk::acquire_buf("particle alive in", *alive_in, vuk::eMemoryRead);
-  auto alive_out_buffer = vuk::acquire_buf("particle alive out", *alive_out, vuk::eNone);
-  auto sort_keys_buffer = vuk::acquire_buf("particle sort keys", *self.particle_sort_keys, vuk::eNone);
+  const auto total_capacity = variables.total_capacity;
+  const auto total_spawn = variables.total_spawn;
 
-  auto dead_counts_buffer = vuk::Value<vuk::Buffer>{};
-  auto counters_buffer = vuk::Value<vuk::Buffer>{};
+  // a pool whose layout changed starts over, every slot dead and every counter zeroed
+  const auto write_initial_counts = module.declare_callback_var(
+    "particle initial counts",
+    [&self, dead_counts, counters](vir::Recorder& recorder) -> void {
+      memory::ScopedStack callback_stack;
+      const auto& emitters = self.frame_data.particle_emitters;
+      auto initial = callback_stack.alloc<u32>(std::max<usize>(emitters.size(), 1));
+      initial[0] = 0;
+      for (usize i = 0; i < emitters.size(); i++) {
+        initial[i] = emitters[i].capacity;
+      }
 
-  if (context.needs_init) {
-    auto dead_counts = stack.alloc<u32>(context.emitter_count);
-    for (auto i = 0_u32; i < context.emitter_count; i++) {
-      dead_counts[i] = self.prepared_frame.particle_emitters[i].capacity;
+      const auto zeroed = GPU::ParticleCounters{};
+      recorder
+        .update_buffer(
+          recorder.buffer(dead_counts),
+          std::span(reinterpret_cast<const u8*>(initial.data()), initial.size_bytes())
+        )
+        .update_buffer(recorder.buffer(counters), std::span(reinterpret_cast<const u8*>(&zeroed), sizeof(zeroed)));
     }
+  );
+  std::tie(dead_list, particles, dead_counts, counters) = std::tuple_cat(module.set_condition(
+    variables.is_pool_reset,
+    [&](vir::Module& arm) {
+      const auto [counts, zeroed] = //
+        arm.begin_compute({{dead_counts, vir::Access::Clear}, {counters, vir::Access::Clear}})
+          .with_name("particle initial counts")
+          .record_from(write_initial_counts)
+          .end_compute();
 
-    auto counters = stack.alloc<GPU::ParticleCounters>(1);
-    counters[0] = {};
-
-    dead_counts_buffer = render_context.upload_staging(dead_counts, *self.particle_dead_counts);
-    counters_buffer = render_context.upload_staging(counters, *self.particle_counters);
-
-    auto init_pass = vuk::make_pass(
-      "particle init",
-      [total_capacity = context.total_capacity](
-        vuk::CommandBuffer& cmd_list, //
-        VUK_BA(vuk::eComputeWrite) dead_list,
-        VUK_BA(vuk::eComputeWrite) particles
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("particle_init")
+      const auto [initial_dead_list, initial_particles] =
+        arm.begin_compute({{dead_list, vir::Access::ComputeWrite}, {particles, vir::Access::ComputeWrite}})
+          .with_name("particle init")
+          .bind_compute_pipeline(render_context.pipeline("particle_init"))
           .bind_buffer(0, 0, dead_list)
           .bind_buffer(0, 1, particles)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(total_capacity))
-          .dispatch_invocations(total_capacity);
+          .push_constants_from(variables.init_push)
+          .dispatch_invocations(total_capacity, 1, 1)
+          .end_compute();
+      return std::array{initial_dead_list, initial_particles, counts, zeroed};
+    },
+    [&](vir::Module&) { return std::array{dead_list, particles, dead_counts, counters}; }
+  ));
 
-        return std::make_tuple(dead_list, particles);
-      }
-    );
+  counters = //
+    module.begin_compute({{counters, vir::Access::ComputeRW}})
+      .with_name("particle prepare")
+      .bind_compute_pipeline(render_context.pipeline("particle_prepare"))
+      .bind_buffer(0, 0, counters)
+      .dispatch(1, 1, 1)
+      .end_compute()[0];
 
-    std::tie(dead_list_buffer, particles_buffer) = init_pass(std::move(dead_list_buffer), std::move(particles_buffer));
-  } else {
-    dead_counts_buffer = vuk::acquire_buf("particle dead counts", *self.particle_dead_counts, vuk::eMemoryRead);
-    counters_buffer = vuk::acquire_buf("particle counters", *self.particle_counters, vuk::eMemoryRead);
-  }
-
-  auto prepare_pass = vuk::make_pass(
-    "particle prepare",
-    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) counters) {
-      cmd_list //
-        .bind_compute_pipeline("particle_prepare")
-        .bind_buffer(0, 0, counters)
-        .dispatch(1);
-
-      return counters;
-    }
+  std::tie(
+    particles,
+    dead_list,
+    dead_counts,
+    alive_in,
+    counters,
+    context.emitters_buffer,
+    context.program_buffer,
+    context.constants_buffer
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{particles, vir::Access::ComputeRW},
+         {dead_list, vir::Access::ComputeRW},
+         {dead_counts, vir::Access::ComputeRW},
+         {alive_in, vir::Access::ComputeRW},
+         {counters, vir::Access::ComputeRW},
+         {context.emitters_buffer, vir::Access::ComputeRead},
+         {context.program_buffer, vir::Access::ComputeRead},
+         {context.constants_buffer, vir::Access::ComputeRead}}
+      )
+      .with_name("particle emit")
+      .bind_compute_pipeline(render_context.pipeline("particle_emit"))
+      .bind_buffer(0, 0, particles)
+      .bind_buffer(0, 1, dead_list)
+      .bind_buffer(0, 2, dead_counts)
+      .bind_buffer(0, 3, alive_in)
+      .bind_buffer(0, 4, counters)
+      .bind_buffer(0, 5, context.emitters_buffer)
+      .bind_buffer(0, 6, context.program_buffer)
+      .bind_buffer(0, 7, context.constants_buffer)
+      .push_constants_from(variables.emit_push)
+      .dispatch_invocations(total_spawn, 1, 1)
+      .end_compute()
   );
 
-  counters_buffer = prepare_pass(std::move(counters_buffer));
-
-  if (context.total_spawn > 0) {
-    auto emit_pass = vuk::make_pass(
-      "particle emit",
-      [total_spawn = context.total_spawn, emitter_count = context.emitter_count](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eComputeRW) particles,
-        VUK_BA(vuk::eComputeRW) dead_list,
-        VUK_BA(vuk::eComputeRW) dead_counts,
-        VUK_BA(vuk::eComputeRW) alive_list,
-        VUK_BA(vuk::eComputeRW) counters,
-        VUK_BA(vuk::eComputeRead) emitters,
-        VUK_BA(vuk::eComputeRead) program,
-        VUK_BA(vuk::eComputeRead) constants
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("particle_emit")
-          .bind_buffer(0, 0, particles)
-          .bind_buffer(0, 1, dead_list)
-          .bind_buffer(0, 2, dead_counts)
-          .bind_buffer(0, 3, alive_list)
-          .bind_buffer(0, 4, counters)
-          .bind_buffer(0, 5, emitters)
-          .bind_buffer(0, 6, program)
-          .bind_buffer(0, 7, constants)
-          .bind_persistent(1, App::get_rendercontext().get_descriptor_set())
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(total_spawn, emitter_count))
-          .dispatch_invocations(total_spawn);
-
-        return std::make_tuple(particles, dead_list, dead_counts, alive_list, counters, emitters, program, constants);
-      }
-    );
-
-    std::tie(
-      particles_buffer,
-      dead_list_buffer,
-      dead_counts_buffer,
-      alive_in_buffer,
-      counters_buffer,
-      context.emitters_buffer,
-      context.program_buffer,
-      context.constants_buffer
-    ) =
-      emit_pass(
-        std::move(particles_buffer),
-        std::move(dead_list_buffer),
-        std::move(dead_counts_buffer),
-        std::move(alive_in_buffer),
-        std::move(counters_buffer),
-        std::move(context.emitters_buffer),
-        std::move(context.program_buffer),
-        std::move(context.constants_buffer)
-      );
-  }
-
-  auto simulate_args_buffer = render_context.scratch_buffer<vuk::DispatchIndirectCommand>({.x = 0, .y = 1, .z = 1});
-
-  auto build_args_pass = vuk::make_pass(
-    "particle build dispatch args",
-    [](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRead) counters, VUK_BA(vuk::eComputeWrite) simulate_args) {
-      cmd_list //
-        .bind_compute_pipeline("particle_build_dispatch_args")
-        .bind_buffer(0, 0, counters)
-        .bind_buffer(0, 1, simulate_args)
-        .dispatch(1);
-
-      return std::make_tuple(counters, simulate_args);
-    }
+  const auto simulate_args_value = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
+  auto simulate_args = module.transient_buffer({
+    .size = sizeof(simulate_args_value),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "particle simulate args",
+  });
+  simulate_args = module.update_buffer(
+    simulate_args,
+    std::span{reinterpret_cast<const u8*>(&simulate_args_value), sizeof(simulate_args_value)}
   );
-
-  std::tie(counters_buffer, simulate_args_buffer) = build_args_pass(
-    std::move(counters_buffer),
-    std::move(simulate_args_buffer)
-  );
-
-  auto simulate_pass = vuk::make_pass(
-    "particle simulate",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) simulate_args,
-      VUK_BA(vuk::eComputeRW) particles,
-      VUK_BA(vuk::eComputeRead) alive_list_in,
-      VUK_BA(vuk::eComputeWrite) alive_list_out,
-      VUK_BA(vuk::eComputeRW) dead_list,
-      VUK_BA(vuk::eComputeRW) dead_counts,
-      VUK_BA(vuk::eComputeRW) counters,
-      VUK_BA(vuk::eComputeRead) emitters,
-      VUK_BA(vuk::eComputeRead) program,
-      VUK_BA(vuk::eComputeRead) constants,
-      VUK_BA(vuk::eComputeWrite) sort_keys,
-      VUK_BA(vuk::eComputeRead) camera,
-      VUK_IA(vuk::eComputeSampled) depth
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("particle_simulate")
-        .bind_buffer(0, 0, particles)
-        .bind_buffer(0, 1, alive_list_in)
-        .bind_buffer(0, 2, alive_list_out)
-        .bind_buffer(0, 3, dead_list)
-        .bind_buffer(0, 4, dead_counts)
-        .bind_buffer(0, 5, counters)
-        .bind_buffer(0, 6, emitters)
-        .bind_buffer(0, 7, program)
-        .bind_buffer(0, 8, constants)
-        .bind_buffer(0, 9, sort_keys)
-        .bind_buffer(0, 10, camera)
-        .bind_image(0, 11, depth)
-        .bind_persistent(1, App::get_rendercontext().get_descriptor_set())
-        .dispatch_indirect(simulate_args);
-
-      return std::make_tuple(
-        particles,
-        alive_list_in,
-        alive_list_out,
-        dead_list,
-        dead_counts,
-        counters,
-        emitters,
-        program,
-        constants,
-        sort_keys,
-        camera,
-        depth
-      );
-    }
+  std::tie(counters, simulate_args) = std::tuple_cat(
+    module.begin_compute({{counters, vir::Access::ComputeRead}, {simulate_args, vir::Access::ComputeWrite}})
+      .with_name("particle build dispatch args")
+      .bind_compute_pipeline(render_context.pipeline("particle_build_dispatch_args"))
+      .bind_buffer(0, 0, counters)
+      .bind_buffer(0, 1, simulate_args)
+      .dispatch(1, 1, 1)
+      .end_compute()
   );
 
   std::tie(
-    particles_buffer,
-    alive_in_buffer,
-    alive_out_buffer,
-    dead_list_buffer,
-    dead_counts_buffer,
-    counters_buffer,
+    std::ignore,
+    particles,
+    alive_in,
+    alive_out,
+    dead_list,
+    dead_counts,
+    counters,
     context.emitters_buffer,
     context.program_buffer,
     context.constants_buffer,
-    sort_keys_buffer,
-    context.camera_buffer,
+    sort_keys,
+    values.camera,
     context.depth_attachment
-  ) =
-    simulate_pass(
-      std::move(simulate_args_buffer),
-      std::move(particles_buffer),
-      std::move(alive_in_buffer),
-      std::move(alive_out_buffer),
-      std::move(dead_list_buffer),
-      std::move(dead_counts_buffer),
-      std::move(counters_buffer),
-      std::move(context.emitters_buffer),
-      std::move(context.program_buffer),
-      std::move(context.constants_buffer),
-      std::move(sort_keys_buffer),
-      std::move(context.camera_buffer),
-      std::move(context.depth_attachment)
-    );
-
-  // --- Bitonic sort ---
-  const auto sorted_count = context.sorted_count;
-
-  auto sort_local_pass = vuk::make_pass(
-    "particle sort local",
-    [sorted_count](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRW) sort_keys,
-      VUK_BA(vuk::eComputeRead) counters
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("particle_sort_local")
-        .bind_buffer(0, 0, sort_keys)
-        .bind_buffer(0, 1, counters)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sorted_count))
-        .dispatch_invocations(sorted_count);
-
-      return std::make_tuple(sort_keys, counters);
-    }
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{simulate_args, vir::Access::IndirectRead},
+         {particles, vir::Access::ComputeRW},
+         {alive_in, vir::Access::ComputeRead},
+         {alive_out, vir::Access::ComputeWrite},
+         {dead_list, vir::Access::ComputeRW},
+         {dead_counts, vir::Access::ComputeRW},
+         {counters, vir::Access::ComputeRW},
+         {context.emitters_buffer, vir::Access::ComputeRead},
+         {context.program_buffer, vir::Access::ComputeRead},
+         {context.constants_buffer, vir::Access::ComputeRead},
+         {sort_keys, vir::Access::ComputeWrite},
+         {values.camera, vir::Access::ComputeUniformRead},
+         {context.depth_attachment, vir::Access::ComputeSampled}}
+      )
+      .with_name("particle simulate")
+      .bind_compute_pipeline(render_context.pipeline("particle_simulate"))
+      .bind_buffer(0, 0, particles)
+      .bind_buffer(0, 1, alive_in)
+      .bind_buffer(0, 2, alive_out)
+      .bind_buffer(0, 3, dead_list)
+      .bind_buffer(0, 4, dead_counts)
+      .bind_buffer(0, 5, counters)
+      .bind_buffer(0, 6, context.emitters_buffer)
+      .bind_buffer(0, 7, context.program_buffer)
+      .bind_buffer(0, 8, context.constants_buffer)
+      .bind_buffer(0, 9, sort_keys)
+      .bind_buffer(0, 10, values.camera)
+      .bind_image(0, 11, context.depth_attachment)
+      .dispatch_indirect(simulate_args)
+      .end_compute()
   );
 
-  std::tie(sort_keys_buffer, counters_buffer) = sort_local_pass(
-    std::move(sort_keys_buffer),
-    std::move(counters_buffer)
+  // the pool size is part of the frame shape, so the sort can be unrolled here
+  const auto sorted_count = recording.shape.particle_sorted_count;
+  std::tie(sort_keys, counters) = std::tuple_cat(
+    module.begin_compute({{sort_keys, vir::Access::ComputeRW}, {counters, vir::Access::ComputeRead}})
+      .with_name("particle sort local")
+      .bind_compute_pipeline(render_context.pipeline("particle_sort_local"))
+      .bind_buffer(0, 0, sort_keys)
+      .bind_buffer(0, 1, counters)
+      .push_constants(PushConstants(sorted_count))
+      .dispatch_invocations(sorted_count, 1, 1)
+      .end_compute()
   );
 
-  if (context.sort_enabled) {
+  if (recording.shape.is_particle_sort) {
     for (auto k = GPU::PARTICLE_SORT_GROUP * 2; k <= sorted_count; k <<= 1) {
       for (auto j = k >> 1; j >= GPU::PARTICLE_SORT_GROUP; j >>= 1) {
-        auto step_pass = vuk::make_pass(
-          stack.format("particle sort {}/{}", k, j),
-          [sorted_count, k, j](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) sort_keys) {
-            cmd_list //
-              .bind_compute_pipeline("particle_sort_step")
-              .bind_buffer(0, 0, sort_keys)
-              .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sorted_count, k, j))
-              .dispatch_invocations(sorted_count);
-
-            return sort_keys;
-          }
-        );
-
-        sort_keys_buffer = step_pass(std::move(sort_keys_buffer));
+        sort_keys = //
+          module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
+            .with_name(stack.format("particle sort {}/{}", k, j))
+            .bind_compute_pipeline(render_context.pipeline("particle_sort_step"))
+            .bind_buffer(0, 0, sort_keys)
+            .push_constants(PushConstants(sorted_count, k, j))
+            .dispatch_invocations(sorted_count, 1, 1)
+            .end_compute()[0];
       }
 
-      auto merge_pass = vuk::make_pass(
-        stack.format("particle sort merge {}", k),
-        [sorted_count, k](vuk::CommandBuffer& cmd_list, VUK_BA(vuk::eComputeRW) sort_keys) {
-          cmd_list //
-            .bind_compute_pipeline("particle_sort_merge")
-            .bind_buffer(0, 0, sort_keys)
-            .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(sorted_count, k))
-            .dispatch_invocations(sorted_count);
-
-          return sort_keys;
-        }
-      );
-
-      sort_keys_buffer = merge_pass(std::move(sort_keys_buffer));
+      sort_keys = //
+        module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
+          .with_name(stack.format("particle sort merge {}", k))
+          .bind_compute_pipeline(render_context.pipeline("particle_sort_merge"))
+          .bind_buffer(0, 0, sort_keys)
+          .push_constants(PushConstants(sorted_count, k))
+          .dispatch_invocations(sorted_count, 1, 1)
+          .end_compute()[0];
     }
   }
 
-  auto draw_cmd_buffer = render_context.scratch_buffer<vuk::DrawIndirectCommand>(
-    {.vertexCount = 6, .instanceCount = 0, .firstVertex = 0, .firstInstance = 0}
+  const auto
+    draw_command = VkDrawIndirectCommand{.vertexCount = 6, .instanceCount = 0, .firstVertex = 0, .firstInstance = 0};
+  context.draw_cmd_buffer = module.transient_buffer({
+    .size = sizeof(draw_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "particle draw command",
+  });
+  context.draw_cmd_buffer = module.update_buffer(
+    context.draw_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&draw_command), sizeof(draw_command)}
+  );
+  auto index_counts = variables.index_counts;
+  context.draw_indexed_cmd_buffer = module.transient_buffer({
+    .size = sizeof(VkDrawIndexedIndirectCommand) * ParticleContext::MAX_MESH_DRAWS,
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "particle draw indexed commands",
+  });
+  std::tie(counters, context.draw_cmd_buffer, context.draw_indexed_cmd_buffer, std::ignore) = std::tuple_cat(
+    module
+      .begin_compute(
+        {{counters, vir::Access::ComputeRead},
+         {context.draw_cmd_buffer, vir::Access::ComputeWrite},
+         {context.draw_indexed_cmd_buffer, vir::Access::ComputeWrite},
+         {index_counts, vir::Access::ComputeRead}}
+      )
+      .with_name("particle build draw args")
+      .bind_compute_pipeline(render_context.pipeline("particle_build_draw_args"))
+      .bind_buffer(0, 0, counters)
+      .bind_buffer(0, 1, context.draw_cmd_buffer)
+      .bind_buffer(0, 2, context.draw_indexed_cmd_buffer)
+      .bind_buffer(0, 3, index_counts)
+      .push_constants_from(variables.mesh_draw_push)
+      .dispatch(1, 1, 1)
+      .end_compute()
   );
 
-  const auto mesh_draw_count = static_cast<u32>(context.mesh_draws.size());
-  auto draw_indexed_cmd_buffer = render_context.alloc_transient_buffer(
-    vuk::MemoryUsage::eGPUonly,
-    sizeof(vuk::DrawIndexedIndirectCommand) * std::max(mesh_draw_count, 1_u32)
-  );
+  // the draws only read the particles and their order, everything else is done for this frame
+  module.export_to(alive_in, vir::Access::ComputeRW);
+  module.export_to(alive_out, vir::Access::ComputeRW);
+  module.export_to(dead_list, vir::Access::ComputeRW);
+  module.export_to(dead_counts, vir::Access::ComputeRW);
+  module.export_to(counters, vir::Access::ComputeRW);
 
-  auto mesh_index_counts = stack.alloc<u32>(std::max(mesh_draw_count, 1_u32));
-  mesh_index_counts[0] = 0;
-  for (auto i = 0_u32; i < mesh_draw_count; i++) {
-    mesh_index_counts[i] = context.mesh_draws[i].index_count;
-  }
-  auto mesh_index_counts_buffer = render_context.scratch_buffer_span(mesh_index_counts);
-
-  auto build_draw_args_pass = vuk::make_pass(
-    "particle build draw args",
-    [mesh_draw_count](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) counters,
-      VUK_BA(vuk::eComputeWrite) draw_cmd,
-      VUK_BA(vuk::eComputeWrite) draw_indexed_cmd,
-      VUK_BA(vuk::eComputeRead) index_counts
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("particle_build_draw_args")
-        .bind_buffer(0, 0, counters)
-        .bind_buffer(0, 1, draw_cmd)
-        .bind_buffer(0, 2, draw_indexed_cmd)
-        .bind_buffer(0, 3, index_counts)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(mesh_draw_count))
-        .dispatch(1);
-
-      return std::make_tuple(counters, draw_cmd, draw_indexed_cmd, index_counts);
-    }
-  );
-
-  std::tie(counters_buffer, draw_cmd_buffer, draw_indexed_cmd_buffer, mesh_index_counts_buffer) = build_draw_args_pass(
-    std::move(counters_buffer),
-    std::move(draw_cmd_buffer),
-    std::move(draw_indexed_cmd_buffer),
-    std::move(mesh_index_counts_buffer)
-  );
-
-  self.particle_pool_ping = !self.particle_pool_ping;
-
-  context.particles_buffer = std::move(particles_buffer);
-  context.sort_keys_buffer = std::move(sort_keys_buffer);
-  context.draw_cmd_buffer = std::move(draw_cmd_buffer);
-  context.draw_indexed_cmd_buffer = std::move(draw_indexed_cmd_buffer);
+  context.particles_buffer = particles;
+  context.sort_keys_buffer = sort_keys;
 }
 
 auto RendererInstance::draw_particles(
-  this RendererInstance& self, ParticleContext& context, vuk::Value<vuk::ImageAttachment>&& dst_attachment
-) -> vuk::Value<vuk::ImageAttachment> {
+  this RendererInstance& self,
+  vir::Module& module,
+  FrameRecording& recording,
+  ParticleContext& context,
+  vir::ValueID dst
+) -> vir::ValueID {
   ZoneScoped;
-  memory::ScopedStack stack;
+  auto& prepared = recording.prepared;
+  auto& values = recording.values;
 
-  auto billboard_pass = vuk::make_pass(
-    "particle billboards",
-    [](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) draw_cmd,
-      VUK_BA(vuk::eVertexRead) sort_keys,
-      VUK_BA(vuk::eVertexRead) particles,
-      VUK_BA(vuk::eVertexRead) emitters,
-      VUK_BA(vuk::eVertexRead) camera,
-      VUK_BA(vuk::eFragmentRead) materials,
-      VUK_IA(vuk::eFragmentSampled) depth,
-      VUK_IA(vuk::eColorRW) dst,
-      VUK_IA(vuk::eColorRW) reactive
-    ) {
-      cmd_list //
-        .bind_graphics_pipeline("particle_billboard")
-        .set_rasterization({.cullMode = vuk::CullModeFlagBits::eNone})
-        .set_depth_stencil({})
-        .set_color_blend(dst, PARTICLE_BLEND_STATE)
-        .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
-        .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-        .set_viewport(0, vuk::Rect2D::framebuffer())
-        .set_scissor(0, vuk::Rect2D::framebuffer())
-        .bind_buffer(0, 0, sort_keys)
-        .bind_buffer(0, 1, particles)
-        .bind_buffer(0, 2, emitters)
-        .bind_buffer(0, 3, camera)
-        .bind_image(0, 4, depth)
-        .bind_persistent(1, App::get_rendercontext().get_descriptor_set())
-        .push_constants(vuk::ShaderStageFlagBits::eFragment, 0, PushConstants(materials->device_address))
-        .draw_indirect(1, draw_cmd);
-
-      return std::make_tuple(sort_keys, particles, emitters, camera, materials, depth, dst, reactive);
-    }
-  );
+  auto& render_context = *self.renderer.render_context;
+  auto& variables = prepared.particle;
+  variables.meshes = module.declare_buffer_var("particle meshes", vir::Access::None);
 
   std::tie(
+    dst,
+    context.reactive_mask_attachment,
+    std::ignore,
     context.sort_keys_buffer,
     context.particles_buffer,
     context.emitters_buffer,
-    context.camera_buffer,
-    context.materials_buffer,
-    context.depth_attachment,
-    dst_attachment,
-    context.reactive_mask_attachment
-  ) =
-    billboard_pass(
-      std::move(context.draw_cmd_buffer),
-      std::move(context.sort_keys_buffer),
-      std::move(context.particles_buffer),
-      std::move(context.emitters_buffer),
-      std::move(context.camera_buffer),
-      std::move(context.materials_buffer),
-      std::move(context.depth_attachment),
-      std::move(dst_attachment),
-      std::move(context.reactive_mask_attachment)
-    );
+    values.camera,
+    values.materials,
+    context.depth_attachment
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{dst, vir::Access::ColorRW},
+         {context.reactive_mask_attachment, vir::Access::ColorRW},
+         {context.draw_cmd_buffer, vir::Access::IndirectRead},
+         {context.sort_keys_buffer, vir::Access::VertexRead},
+         {context.particles_buffer, vir::Access::VertexRead},
+         {context.emitters_buffer, vir::Access::VertexRead},
+         {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
+         {values.materials, vir::Access::FragmentRead},
+         {context.depth_attachment, vir::Access::FragmentSampled}}
+      )
+      .with_name("particle billboards")
+      .bind_graphics_pipeline(render_context.pipeline("particle_billboard"))
+      .set_color_blend(0, PARTICLE_BLEND_STATE)
+      .set_color_blend(1, reactive_mask_blend_state())
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, context.sort_keys_buffer)
+      .bind_buffer(0, 1, context.particles_buffer)
+      .bind_buffer(0, 2, context.emitters_buffer)
+      .bind_buffer(0, 3, values.camera)
+      .bind_image(0, 4, context.depth_attachment)
+      .push_constant_address(0, values.materials)
+      .draw_indirect(context.draw_cmd_buffer, 1)
+      .end_rendering()
+  );
 
-  for (auto draw_index = 0_u32; draw_index < context.mesh_draws.size(); draw_index++) {
-    const auto& mesh_draw = context.mesh_draws[draw_index];
-    if (mesh_draw.index_count == 0) {
-      continue;
-    }
+  // how many emitters draw a mesh, and which, changes every frame
+  auto meshes = prepared.particle.meshes;
+  const auto materials = values.materials;
+  const auto draw_commands = context.draw_indexed_cmd_buffer;
+  const auto mesh_draws = module.declare_callback_var(
+    "particle meshes",
+    [&self, materials, meshes, draw_commands](vir::Recorder& recorder) -> void {
+      const auto& draws = self.frame_data.particle_mesh_draws;
+      const auto materials_address = recorder.buffer(materials).device_address;
+      const auto meshes_buffer = recorder.buffer(meshes);
+      const auto commands = recorder.buffer(draw_commands);
+      for (auto draw_index = 0_u32; draw_index < draws.size(); draw_index++) {
+        const auto& draw = draws[draw_index];
+        if (draw.index_count == 0 || draw_index >= ParticleContext::MAX_MESH_DRAWS) {
+          continue;
+        }
 
-    auto mesh_buffer = self.renderer.render_context->scratch_buffer(mesh_draw.gpu_mesh);
-
-    auto mesh_pass = vuk::make_pass(
-      stack.format("particle mesh {}", mesh_draw.emitter_index),
-      [emitter_index = mesh_draw.emitter_index, index_buffer = mesh_draw.index_buffer, draw_index](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eIndirectRead) draw_cmd,
-        VUK_BA(vuk::eVertexRead) sort_keys,
-        VUK_BA(vuk::eVertexRead) particles,
-        VUK_BA(vuk::eVertexRead) emitters,
-        VUK_BA(vuk::eVertexRead) camera,
-        VUK_BA(vuk::eVertexRead) mesh,
-        VUK_BA(vuk::eFragmentRead) materials,
-        VUK_IA(vuk::eFragmentSampled) depth,
-        VUK_IA(vuk::eColorRW) dst,
-        VUK_IA(vuk::eColorRW) reactive
-      ) {
-        cmd_list //
-          .bind_graphics_pipeline("particle_mesh")
-          .set_rasterization({.cullMode = vuk::CullModeFlagBits::eBack})
-          .set_depth_stencil({})
-          .set_color_blend(dst, PARTICLE_BLEND_STATE)
-          .set_color_blend(reactive, REACTIVE_MASK_BLEND_STATE)
-          .set_dynamic_state(vuk::DynamicStateFlagBits::eViewport | vuk::DynamicStateFlagBits::eScissor)
-          .set_viewport(0, vuk::Rect2D::framebuffer())
-          .set_scissor(0, vuk::Rect2D::framebuffer())
-          .bind_buffer(0, 0, sort_keys)
-          .bind_buffer(0, 1, particles)
-          .bind_buffer(0, 2, emitters)
-          .bind_buffer(0, 3, camera)
-          .bind_image(0, 4, depth)
-          .bind_persistent(1, App::get_rendercontext().get_descriptor_set())
-          .bind_index_buffer(index_buffer, vuk::IndexType::eUint32)
-          .push_constants(
-            vuk::ShaderStageFlagBits::eVertex | vuk::ShaderStageFlagBits::eFragment,
-            0,
-            PushConstants(materials->device_address, mesh->device_address, emitter_index)
-          )
-          .draw_indexed_indirect(
-            1,
-            draw_cmd
-              ->subrange(draw_index * sizeof(vuk::DrawIndexedIndirectCommand), sizeof(vuk::DrawIndexedIndirectCommand))
-          );
-
-        return std::make_tuple(draw_cmd, sort_keys, particles, emitters, camera, mesh, materials, depth, dst, reactive);
+        recorder.bind_index_buffer(draw.index_buffer, VK_INDEX_TYPE_UINT32)
+          .push_constants(PushConstants(
+            materials_address,
+            meshes_buffer.device_address + draw_index * sizeof(GPU::Mesh),
+            draw.emitter_index
+          ))
+          .draw_indexed_indirect(commands, draw_index * sizeof(VkDrawIndexedIndirectCommand), 1);
       }
-    );
+    }
+  );
+  std::tie(
+    dst,
+    context.reactive_mask_attachment,
+    context.draw_indexed_cmd_buffer,
+    context.sort_keys_buffer,
+    context.particles_buffer,
+    context.emitters_buffer,
+    values.camera,
+    std::ignore,
+    values.materials,
+    context.depth_attachment
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{dst, vir::Access::ColorRW},
+         {context.reactive_mask_attachment, vir::Access::ColorRW},
+         {context.draw_indexed_cmd_buffer, vir::Access::IndirectRead},
+         {context.sort_keys_buffer, vir::Access::VertexRead},
+         {context.particles_buffer, vir::Access::VertexRead},
+         {context.emitters_buffer, vir::Access::VertexRead},
+         {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
+         {meshes, vir::Access::VertexRead},
+         {values.materials, vir::Access::FragmentRead},
+         {context.depth_attachment, vir::Access::FragmentSampled}}
+      )
+      .with_name("particle meshes")
+      .bind_graphics_pipeline(render_context.pipeline("particle_mesh"))
+      .set_rasterization({.cull_mode = VK_CULL_MODE_BACK_BIT})
+      .set_color_blend(0, PARTICLE_BLEND_STATE)
+      .set_color_blend(1, reactive_mask_blend_state())
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, context.sort_keys_buffer)
+      .bind_buffer(0, 1, context.particles_buffer)
+      .bind_buffer(0, 2, context.emitters_buffer)
+      .bind_buffer(0, 3, values.camera)
+      .bind_image(0, 4, context.depth_attachment)
+      .record_from(mesh_draws)
+      .end_rendering()
+  );
 
-    auto mesh_value = vuk::Value<vuk::Buffer>{};
-    std::tie(
-      context.draw_indexed_cmd_buffer,
-      context.sort_keys_buffer,
-      context.particles_buffer,
-      context.emitters_buffer,
-      context.camera_buffer,
-      mesh_value,
-      context.materials_buffer,
-      context.depth_attachment,
-      dst_attachment,
-      context.reactive_mask_attachment
-    ) =
-      mesh_pass(
-        std::move(context.draw_indexed_cmd_buffer),
-        std::move(context.sort_keys_buffer),
-        std::move(context.particles_buffer),
-        std::move(context.emitters_buffer),
-        std::move(context.camera_buffer),
-        std::move(mesh_buffer),
-        std::move(context.materials_buffer),
-        std::move(context.depth_attachment),
-        std::move(dst_attachment),
-        std::move(context.reactive_mask_attachment)
-      );
-  }
-
-  return dst_attachment;
+  module.export_to(context.particles_buffer, vir::Access::ComputeRW);
+  module.export_to(context.sort_keys_buffer, vir::Access::ComputeRW);
+  return dst;
 }
 } // namespace ox

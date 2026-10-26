@@ -275,7 +275,7 @@ InspectorPanel::InspectorPanel() : EditorPanelState("Inspector", ICON_MDI_INFORM
   });
 }
 
-void InspectorPanel::on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) {
+void InspectorPanel::on_render(this InspectorPanel& self, const SwapchainInfo& swapchain_info) {
   auto& editor = App::mod<Editor>();
   self.scene_ = editor.get_selected_scene();
 

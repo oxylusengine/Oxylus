@@ -1,5 +1,6 @@
 #include "ContentPanel.hpp"
 
+#include <FileWatch.hpp>
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -12,7 +13,7 @@
 #include <imspinner.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <mutex>
-#include <vuk/runtime/vk/AllocatorHelpers.hpp>
+#include <vir/Types.hpp>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
@@ -797,12 +798,14 @@ ContentPanel::ContentPanel() : EditorPanelState("Contents", ICON_MDI_FOLDER_STAR
   u8 white_texture_data[16 * 16 * 4];
   memset(white_texture_data, 0xff, 16 * 16 * 4);
   white_texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Unorm,
-    .extent = vuk::Extent3D{.width = 16u, .height = 16u, .depth = 1u},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Unorm,
+    .extent = {.width = 16, .height = 16, .depth = 1},
+    .usage = vir::ImageUsageFlags::Sampled,
   });
-  white_texture.upload(std::span(white_texture_data), vuk::eFragmentSampled);
+  white_texture.upload(std::span(white_texture_data), vir::Access::FragmentSampled);
 }
+
+ContentPanel::~ContentPanel() = default;
 
 void ContentPanel::init(this ContentPanel& self) {
   auto& vfs = App::get_vfs();
@@ -835,7 +838,7 @@ void ContentPanel::on_update(this ContentPanel& self) {
   self.elapsed_time_ += static_cast<float>(App::get_timestep());
 }
 
-void ContentPanel::on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) {
+void ContentPanel::on_render(this ContentPanel& self, const SwapchainInfo& swapchain_info) {
   constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar;
 
   constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ContextMenuInBody;

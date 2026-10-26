@@ -9,12 +9,12 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <implot.h>
-#include <vuk/vsl/Core.hpp>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
+#include "Render/RenderContext.hpp"
 #include "Core/Input.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
@@ -1741,7 +1741,7 @@ auto ParticleEditorPanel::draw_shape_overlay(
   draw_list->PopClipRect();
 }
 
-auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk::ImageAttachment& swapchain_attachment)
+auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info)
   -> void {
   ZoneScoped;
 
@@ -1754,22 +1754,9 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
     std::max(available.y - UI::scale(64.0f), minimum_preview_size),
   };
 
-  auto attachment_info = swapchain_attachment;
-  attachment_info.extent = vuk::Extent3D{
-    static_cast<u32>(self.preview_size.x),
-    static_cast<u32>(self.preview_size.y),
-    1u,
-  };
-
-  auto attachment = vuk::declare_ia("particle preview", attachment_info);
-  attachment = vuk::clear_image(
-    std::move(attachment),
-    vuk::ClearColor(
-      self.preview_background.r,
-      self.preview_background.g,
-      self.preview_background.b,
-      self.preview_background.a
-    )
+  const auto& preview_image = self.preview_target_texture.ensure(
+    {static_cast<u32>(self.preview_size.x), static_cast<u32>(self.preview_size.y)},
+    swapchain_info.format
   );
 
   const auto orbit = glm::vec3(
@@ -1805,21 +1792,24 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
 
   if (self.preview_grid_enabled) {
     if (auto* renderer_instance = self.preview_scene->get_renderer_instance(); renderer_instance != nullptr) {
-      add_editor_grid_stage(*renderer_instance, PARTICLE_PREVIEW_GRID_DISTANCE);
+      add_editor_grid_stage(*renderer_instance, [] { return PARTICLE_PREVIEW_GRID_DISTANCE; });
     }
   }
 
-  auto image = self.preview_scene->render(
-    std::move(attachment),
+  if (const auto rendered = self.preview_scene->render(
+        preview_image.attachment_info(),
     glm::ivec2(0),
     glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
     glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
     false
-  );
+      );
+      !rendered) {
+    OX_LOG_ERROR("failed to render the preview ({})", std::to_underlying(rendered.error()));
+  }
 
   const auto image_size = ImVec2(self.preview_size.x, self.preview_size.y);
   const auto image_cursor = ImGui::GetCursorPos();
-  UI::image(std::move(image), image_size);
+  UI::image(preview_image.view(), image_size);
 
   // An image is not an interactive item, so a drag over it would reach ImGui as a window move. The
   // invisible button claims the mouse for the orbit instead.
@@ -1880,7 +1870,7 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const vuk
   ImGui::Text("Pool capacity: %u", alive_particles);
 }
 
-auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::ImageAttachment swapchain_attachment)
+auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info)
   -> void {
   ZoneScoped;
 
@@ -1965,7 +1955,7 @@ auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const vuk::I
     ImGuiChildFlags_Borders,
     ImGuiWindowFlags_NoScrollWithMouse
   );
-  self.draw_preview(swapchain_attachment);
+  self.draw_preview(swapchain_info);
   ImGui::EndChild();
 
   drag_splitter("##preview_splitter", self.inspector_width);

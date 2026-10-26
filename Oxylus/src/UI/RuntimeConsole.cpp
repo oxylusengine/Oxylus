@@ -1,9 +1,10 @@
-﻿#include "UI/RuntimeConsole.hpp"
+#include "UI/RuntimeConsole.hpp"
 
 #include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
 #include "Core/Input.hpp"
+#include "Render/RenderContext.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
 

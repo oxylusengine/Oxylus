@@ -10,7 +10,10 @@
 #include <glm/gtx/quaternion.hpp>
 #include <limits>
 #include <numbers>
-#include <vuk/vsl/Core.hpp>
+#include <vir/Allocator.hpp>
+#include <vir/Context.hpp>
+#include <vir/Module.hpp>
+#include <vir/Types.hpp>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
@@ -479,7 +482,8 @@ auto ThumbnailManager::release_asset(this ThumbnailManager& self, const UUID& uu
 auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
   ZoneScoped;
 
-  if (!App::get_rendercontext().frame_allocator.has_value()) {
+  // renders need a frame to allocate from, which the editor has started by now
+  if (App::get_rendercontext().frame == nullptr) {
     return;
   }
 
@@ -556,11 +560,11 @@ auto ThumbnailManager::store_thumbnail(
   ZoneScoped;
 
   auto thumbnail_texture = Texture::create({
-    .format = vuk::Format::eR8G8B8A8Srgb,
-    .extent = vuk::Extent3D{THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
-    .usage = vuk::ImageUsageFlagBits::eSampled,
+    .format = vir::Format::RGBA8Srgb,
+    .extent = {THUMBNAIL_SIZE, THUMBNAIL_SIZE, 1},
+    .usage = vir::ImageUsageFlags::Sampled,
   });
-  thumbnail_texture.upload(pixels, vuk::eFragmentSampled);
+  thumbnail_texture.upload(pixels, vir::Access::FragmentSampled);
 
   auto lock = std::unique_lock(self.thumbnail_mutex);
   if (self.superseded_jobs.contains(cache_key)) {
@@ -1454,21 +1458,15 @@ auto ThumbnailManager::render_scene(this ThumbnailManager& self, Scene& scene, u
   }
 
   auto& render_context = App::get_rendercontext();
-
-  auto thumbnail_image = vuk::declare_ia(
-    "thumbnail_image",
-    {
-      .image_type = vuk::ImageType::e2D,
-      .extent = vuk::Extent3D{size, size, 1u},
-      .format = vuk::Format::eR8G8B8A8Srgb,
-      .sample_count = vuk::Samples::e1,
-      .base_level = 0,
-      .level_count = 1,
-      .base_layer = 0,
-      .layer_count = 1,
-    }
-  );
-  thumbnail_image = vuk::clear_image(std::move(thumbnail_image), vuk::Transparent<f32>);
+  const auto thumbnail = Texture::create({
+    .format = vir::Format::RGBA8Srgb,
+    .extent = {size, size, 1u},
+    .usage = vir::ImageUsageFlags::ColorAttachment | vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::TransferSrc |
+             vir::ImageUsageFlags::TransferDst,
+  });
+  if (!thumbnail.clear(vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f), vir::Access::FragmentSampled)) {
+    return nullopt;
+  }
 
   scene.runtime_update(App::get_timestep());
 
@@ -1476,25 +1474,48 @@ auto ThumbnailManager::render_scene(this ThumbnailManager& self, Scene& scene, u
   // but this path drives the renderer instance directly.
   scene.prepare_render();
 
-  auto scene_view_image = renderer_instance->render(
-    std::move(thumbnail_image),
+  const auto rendered = renderer_instance->render(
+    thumbnail.attachment_info(),
     {},
     glm::ivec2(size),
     glm::ivec2(size),
     scene.renderer_cvar
   );
-
-  const auto buffer_size = static_cast<usize>(size) * size * 4; // RGBA8
-  auto readback_buffer = render_context.alloc_transient_buffer(vuk::MemoryUsage::eGPUtoCPU, buffer_size);
-  readback_buffer = vuk::copy(scene_view_image, readback_buffer);
-
-  {
-    auto lock = std::unique_lock(render_context.queue_mutex);
-    readback_buffer.wait(*render_context.frame_allocator, render_context.get_compiler());
+  if (!rendered) {
+    OX_LOG_ERROR("failed to render a thumbnail ({})", std::to_underlying(rendered.error()));
+    return nullopt;
   }
 
+  const auto buffer_size = static_cast<usize>(size) * size * 4; // RGBA8
+  const auto readback = render_context.persistent->allocate_buffer({
+    .size = buffer_size,
+    .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    .location = vir::MemoryLocation::GpuToCpu,
+    .name = "thumbnail readback",
+  });
+  if (!readback) {
+    return nullopt;
+  }
+
+  OX_DEFER(&) { render_context.persistent->deallocate_buffer(*readback); };
+
+  // runs after the render on the same queue, picking the image up where the render left it
+  auto module = vir::Module{};
+  const auto source = thumbnail.import(module, vir::Access::FragmentSampled);
+  const auto copied = module.copy_image_to_buffer(source, module.import_buffer(*readback, vir::Access::None));
+  module.export_to(copied, vir::Access::HostRead);
+  module.export_to(source, vir::Access::FragmentSampled);
+  if (const auto executed = render_context.execute_blocking(std::move(module)); !executed) {
+    OX_LOG_ERROR("failed to read a thumbnail back ({})", std::to_underlying(executed.error()));
+    return nullopt;
+  }
+
+  if (const auto invalidated = render_context.persistent->invalidate_buffer(*readback); !invalidated) {
+    OX_LOG_ERROR("failed to invalidate thumbnail readback ({})", std::to_underlying(invalidated.error()));
+    return nullopt;
+  }
   auto pixel_data = std::vector<u8>(buffer_size);
-  std::memcpy(pixel_data.data(), readback_buffer->mapped_ptr, buffer_size);
+  std::memcpy(pixel_data.data(), readback->mapped, buffer_size);
 
   return pixel_data;
 }

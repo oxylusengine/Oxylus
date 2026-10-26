@@ -114,7 +114,7 @@ struct WindowInfo {
 
 struct Window : Handle<Window> {
   static auto create(const WindowInfo& info) -> Window;
-  auto destroy() const -> void;
+  auto destroy(this Window& self) -> void;
 
   auto update(const Timestep& timestep) const -> void;
   auto poll(const WindowCallbacks& callbacks) const -> void;

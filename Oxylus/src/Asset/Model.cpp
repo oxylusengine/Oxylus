@@ -1,5 +1,7 @@
 #include "Asset/Model.hpp"
 
+#include "Render/RenderContext.hpp"
+
 namespace ox {
 auto Model::is_mesh_ready(this const Model& self, usize mesh_index) -> bool {
   if (mesh_index >= self.mesh_ready.size()) {
@@ -7,6 +9,23 @@ auto Model::is_mesh_ready(this const Model& self, usize mesh_index) -> bool {
   }
 
   return self.mesh_ready[mesh_index].test(std::memory_order_acquire);
+}
+
+auto Model::destroy_gpu_resources(this Model& self, RenderContext& render_context) -> void {
+  for (const auto blas : self.mesh_blases) {
+    if (blas != AccelerationStructureID::Invalid) {
+      render_context.destroy_acceleration_structure(blas);
+    }
+  }
+
+  for (const auto buffer : self.gpu_mesh_buffers) {
+    if (buffer != BufferID::Invalid) {
+      render_context.destroy_buffer(buffer);
+    }
+  }
+
+  self.mesh_blases.clear();
+  self.gpu_mesh_buffers.clear();
 }
 
 auto Model::is_fully_loaded(this Model& self) -> bool {
