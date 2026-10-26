@@ -7,10 +7,10 @@ auto EditorPanelRegistry::update_all(this EditorPanelRegistry& self) -> void {
     cb();
   }
 }
-auto EditorPanelRegistry::render_all(this EditorPanelRegistry& self, vuk::ImageAttachment attachment) -> void {
+auto EditorPanelRegistry::render_all(this EditorPanelRegistry& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
   for (auto& cb : self.render_callbacks) {
-    cb(attachment);
+    cb(swapchain_info);
   }
 }
 auto EditorPanelRegistry::draw_window_menu(this EditorPanelRegistry& self) -> void {

@@ -6,8 +6,15 @@ for _, file in ipairs(os.files("./**/Test*.cpp")) do
         set_languages("cxx23")
 
         add_deps("Oxylus")
+        if file:find("ResourceCompiler", 1, true) then
+            add_deps("ResourceCompiler")
+            add_packages("shader-slang")
+        end
 
         add_files(file)
+        if name == "TestPendingPick" then
+            add_includedirs("../../OxylusEditor/src")
+        end
 
         -- only the test targets are instrumented, the Oxylus library they link is not, so a
         -- container annotated on one side of that line and mutated on the other reads as an

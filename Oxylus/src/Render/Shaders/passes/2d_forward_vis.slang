@@ -6,6 +6,9 @@ struct PushConstants {
   Material* materials;
   Camera* camera_buffer;
   TransformWorld* transforms;
+  SpriteGPUData* sprites;
+  // first sprite of the batch being drawn, six vertices each
+  u32 sprite_offset;
 };
 [[vk::push_constant]] PushConstants C;
 
@@ -17,8 +20,9 @@ struct VOutput {
 };
 
 [[shader("vertex")]]
-VOutput vs_main(SpriteGPUData input, u32 vertex_id : SV_VertexID) {
+VOutput vs_main(u32 vertex_id : SV_VertexID) {
   VOutput output = (VOutput)0;
+  const SpriteGPUData input = C.sprites[C.sprite_offset + vertex_id / 6];
 
   const u32 flags = com::unpack_u32_low(input.flags16_distance16);
 

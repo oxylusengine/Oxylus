@@ -2,10 +2,11 @@
 
 #include <expected>
 #include <vector>
+#include <vir/Fwd.hpp>
 
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
-#include "Scene/SceneGPU.hpp"
+#include "Render/GPU/Shared.hpp"
 
 namespace ox {
 class RenderContext;
@@ -19,20 +20,64 @@ constexpr u32 TERRAIN_COLLISION_MAX_SAMPLES = 4096;
 // Rounds a requested collider resolution to a sample count Jolt accepts.
 auto terrain_collision_sample_count(u32 requested) -> u32;
 
-struct TerrainMaps {
-  vuk::Value<vuk::ImageAttachment> heightmap = {};
-  vuk::Value<vuk::ImageAttachment> ridgemap = {};
-  vuk::Value<vuk::ImageAttachment> normalmap = {};
-  vuk::Value<vuk::ImageAttachment> splatmap = {};
-  vuk::Value<vuk::ImageAttachment> patch_minmax = {};
-  vuk::Value<vuk::ImageAttachment> height_edit = {};
-  vuk::Value<vuk::ImageAttachment> splat_edit = {};
-  vuk::Value<vuk::Buffer> region = {};
+struct TerrainMapValues {
+  vir::ValueID heightmap = vir::ValueID::Invalid;
+  vir::ValueID ridgemap = vir::ValueID::Invalid;
+  vir::ValueID normalmap = vir::ValueID::Invalid;
+  vir::ValueID splatmap = vir::ValueID::Invalid;
+  vir::ValueID patch_minmax = vir::ValueID::Invalid;
+  vir::ValueID height_edit = vir::ValueID::Invalid;
+  vir::ValueID splat_edit = vir::ValueID::Invalid;
+  vir::ValueID region = vir::ValueID::Invalid;
 };
 
-auto terrain_generate_pass(TerrainMaps& maps, const GPU::TerrainGenerate& settings, glm::uvec2 dispatch_texels) -> void;
-auto terrain_derive_pass(TerrainMaps& maps, const GPU::TerrainDerive& settings, glm::uvec2 dispatch_texels) -> void;
-auto terrain_minmax_pass(TerrainMaps& maps, const GPU::TerrainMinMax& settings, glm::uvec2 dispatch_patches) -> void;
+auto record_terrain_generate(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  const GPU::TerrainGenerate& settings,
+  glm::uvec2 dispatch_texels
+) -> void;
+auto record_terrain_derive(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  const GPU::TerrainDerive& settings,
+  glm::uvec2 dispatch_texels
+) -> void;
+auto record_terrain_minmax(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  const GPU::TerrainMinMax& settings,
+  glm::uvec2 dispatch_patches
+) -> void;
+
+// the same passes for a program recorded once, with the settings and group counts in variables
+auto record_terrain_generate(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  vir::ValueID settings,
+  vir::ValueID groups_x,
+  vir::ValueID groups_y
+) -> void;
+auto record_terrain_derive(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  vir::ValueID settings,
+  vir::ValueID groups_x,
+  vir::ValueID groups_y
+) -> void;
+auto record_terrain_minmax(
+  vir::Module& module,
+  const RenderContext& render_context,
+  TerrainMapValues& maps,
+  vir::ValueID settings,
+  vir::ValueID groups_x,
+  vir::ValueID groups_y
+) -> void;
 
 struct TerrainBrush {
   bool active = false;

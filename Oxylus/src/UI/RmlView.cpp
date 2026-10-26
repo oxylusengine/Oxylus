@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Core/App.hpp"
+#include "Render/RenderContext.hpp"
 #include "UI/RmlRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "UI/UIScale.hpp"
@@ -58,15 +59,23 @@ auto RmlView::update(this RmlView& self, glm::ivec2 surface_size_) -> void {
   self.rml_context->Render();
 }
 
-auto RmlView::draw(this RmlView& self, RenderContext& context, vuk::Value<vuk::ImageAttachment> target)
-  -> vuk::Value<vuk::ImageAttachment> {
+auto RmlView::upload(this RmlView& self, RenderContext& context) -> void {
+  ZoneScoped;
+
+  if (self.rml_context) {
+    self.renderer->upload(context);
+  }
+}
+
+auto RmlView::record(this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target)
+  -> vir::ValueID {
   ZoneScoped;
 
   if (!self.rml_context) {
     return target;
   }
 
-  return self.renderer->end_frame(context, std::move(target));
+  return self.renderer->record(module, render_context, target);
 }
 
 auto RmlView::set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 size, bool keyboard_focused_) -> void {

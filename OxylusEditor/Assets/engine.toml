@@ -11,11 +11,13 @@ optimization = "default"
 name = "rmlui"
 path = "passes/rmlui.slang"
 entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
-name = "imgui_shadow"
-path = "passes/imgui_shadow.slang"
+name = "imgui"
+path = "passes/imgui.slang"
 entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
 
 [[shader_sessions.programs]]
 name = "2d_forward"
@@ -263,11 +265,6 @@ entry_points = ["ts_main", "ms_main", "fs_main"]
 requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
-name = "resolve_shadowmaps"
-path = "passes/resolve_shadowmaps.slang"
-entry_points = ["vs_main", "fs_main"]
-
-[[shader_sessions.programs]]
 name = "debug_view"
 path = "passes/debug_view.slang"
 entry_points = ["vs_main", "fs_main"]
@@ -286,11 +283,6 @@ entry_points = ["vs_main", "fs_main"]
 name = "light_grid"
 path = "passes/light_grid.slang"
 entry_points = ["cs_main"]
-
-[[shader_sessions.programs]]
-name = "pbr_apply_lights"
-path = "passes/pbr_apply_lights.slang"
-entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
 name = "hiz"
@@ -453,11 +445,6 @@ entry_points = ["cs_main"]
 name = "ddgi_debug_probes"
 path = "passes/ddgi_debug_probes.slang"
 entry_points = ["vs_main", "fs_main"]
-
-[[shader_sessions.programs]]
-name = "contact_shadows"
-path = "passes/contact_shadows.slang"
-entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
 name = "terrain_generate"

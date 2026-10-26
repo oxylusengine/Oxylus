@@ -219,12 +219,23 @@ auto Window::create(const WindowInfo& info) -> Window {
   return self;
 }
 
-auto Window::destroy() const -> void {
+auto Window::destroy(this Window& self) -> void {
   ZoneScoped;
 
-  if (!SDL_StopTextInput(impl->handle))
+  if (!self.impl) {
+    return;
+  }
+
+  if (!SDL_StopTextInput(self.impl->handle))
     LOG_SDL_ERROR(SDL_StopTextInput);
-  SDL_DestroyWindow(impl->handle);
+  for (auto* cursor : self.impl->cursors) {
+    if (cursor) {
+      SDL_DestroyCursor(cursor);
+    }
+  }
+  SDL_DestroyWindow(self.impl->handle);
+  delete self.impl;
+  self.impl = nullptr;
 }
 
 auto Window::update(const Timestep& timestep) const -> void {

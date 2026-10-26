@@ -1,22 +1,27 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <ranges>
-#include <vuk/Types.hpp>
-#include <vuk/vsl/Core.hpp>
+#include <vir/Allocator.hpp>
+#include <vir/Module.hpp>
+#include <vir/Resource.hpp>
 
 #include "Animation/AnimationClip.hpp"
 #include "Animation/Skeleton.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Render/AccelerationStructure.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/UploadBatch.hpp"
 
 namespace ox {
+// meshes are read through device addresses from any stage, so they rest at a read every stage covers
+constexpr static auto MESH_BUFFER_ACCESS = vir::Access::MemoryRead;
+
 struct UploadedMesh {
   GPU::Mesh gpu_mesh = {};
   std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
-  vuk::Unique<vuk::Buffer> buffer;
-  AccelerationStructure blas = {};
+  BufferID buffer = BufferID::Invalid;
+  AccelerationStructureID blas = AccelerationStructureID::Invalid;
 };
 
 auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch) -> UploadedMesh {
@@ -27,8 +32,28 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     return result;
   }
 
-  auto gpu_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eGPUonly, mesh.blob.size());
-  const auto gpu_mesh_bda = gpu_buffer->device_address;
+  auto usage = VkBufferUsageFlags{
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+  };
+  if (render_context.features & RenderContext::Feature::RayTracing) {
+    usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+  }
+
+  const auto buffer_id = render_context.allocate_buffer({
+    .size = mesh.blob.size(),
+    .usage = usage,
+    .location = vir::MemoryLocation::GpuOnly,
+    .alignment = 16,
+    .name = "mesh",
+  });
+  if (!buffer_id) {
+    OX_LOG_ERROR("Failed to allocate a mesh buffer ({}).", std::to_underlying(buffer_id.error()));
+    return result;
+  }
+
+  const auto gpu_buffer = render_context.buffer(*buffer_id);
+  const auto gpu_mesh_bda = gpu_buffer.device_address;
 
   auto& gpu_mesh = result.gpu_mesh;
   gpu_mesh.vertex_count = mesh.vertex_count;
@@ -56,45 +81,52 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     lod.indirect_vertex_indices += gpu_mesh_bda;
   }
 
-  auto staging_buffer = render_context.allocate_buffer_super(vuk::MemoryUsage::eCPUonly, mesh.blob.size());
-  std::memcpy(staging_buffer->mapped_ptr, mesh.blob.data(), mesh.blob.size());
+  auto staging = render_context.allocate_staging(mesh.blob);
+  if (!staging) {
+    OX_LOG_ERROR("Failed to allocate mesh staging ({}).", std::to_underlying(staging.error()));
+    render_context.destroy_buffer(*buffer_id);
+    return result;
+  }
+
   // the compiler reserves the LOD table at the blob tail but leaves it zeroed: every offset in it
   // only becomes an address once there is a buffer to add
-  std::memcpy(
-    reinterpret_cast<u8*>(staging_buffer->mapped_ptr) + mesh.lod_metadata_offset,
-    result.lods.data(),
+  const auto lod_table = std::span{
+    reinterpret_cast<const u8*>(result.lods.data()),
     gpu_mesh.lod_count * sizeof(GPU::MeshLOD)
+  };
+  const auto is_patched = staging->write_bytes(mesh.lod_metadata_offset, lod_table) &&
+                          render_context.persistent->flush_buffer(*staging, mesh.lod_metadata_offset, lod_table.size());
+  if (!is_patched) {
+    OX_LOG_ERROR("Failed to write the mesh LOD table.");
+    render_context.persistent->deallocate_buffer(*staging);
+    render_context.destroy_buffer(*buffer_id);
+    return result;
+  }
+
+  auto module = vir::Module{};
+  const auto uploaded = module.copy_buffer(
+    module.import_buffer(*staging, vir::Access::HostWrite),
+    module.import_buffer(gpu_buffer, vir::Access::None)
   );
+  module.export_to(uploaded, MESH_BUFFER_ACCESS);
+  if (const auto submitted = render_context.submit_upload(std::move(module), {*staging}, batch); !submitted) {
+    OX_LOG_ERROR("Failed to upload a mesh ({}).", std::to_underlying(submitted.error()));
+    render_context.destroy_buffer(*buffer_id);
+    return result;
+  }
 
-  auto gpu_mesh_value = vuk::discard_buf("mesh", *gpu_buffer);
-  auto staging_value = vuk::acquire_buf("mesh staging", *staging_buffer, vuk::Access::eNone);
-  auto upload = render_context.upload_staging(std::move(staging_value), std::move(gpu_mesh_value));
-
-  auto blas_scratch = vuk::Unique<vuk::Buffer>();
-  upload = build_mesh_blas(
+  result.buffer = *buffer_id;
+  result.blas = build_mesh_blas(
     render_context,
+    *buffer_id,
+    MESH_BUFFER_ACCESS,
     BLASBuildInfo{
       .vertex_positions = gpu_mesh.vertex_positions,
       .indices = result.lods[0].indices,
       .vertex_count = gpu_mesh.vertex_count,
       .index_count = result.lods[0].indices_count,
-    },
-    std::move(upload),
-    result.blas,
-    blas_scratch
+    }
   );
-
-  if (batch) {
-    auto values = std::array<vuk::UntypedValue, 1>{std::move(upload)};
-    render_context.submit_multiple(values);
-    batch->add_upload(values);
-    auto owned = std::array<vuk::Unique<vuk::Buffer>, 2>{std::move(staging_buffer), std::move(blas_scratch)};
-    batch->take_staging(owned);
-  } else {
-    render_context.wait_on(std::move(upload));
-  }
-
-  result.buffer = std::move(gpu_buffer);
 
   return result;
 }
@@ -235,8 +267,8 @@ auto AssetManager::load_model(
   model.gpu_meshes.resize(mesh_count);
   model.lod0_meshlet_counts.assign(mesh_count, 0_u32);
   model.lod0_index_ranges.resize(mesh_count);
-  model.gpu_mesh_buffers.resize(mesh_count);
-  model.mesh_blases.resize(mesh_count);
+  model.gpu_mesh_buffers.assign(mesh_count, BufferID::Invalid);
+  model.mesh_blases.assign(mesh_count, AccelerationStructureID::Invalid);
   model.collision_meshes.resize(mesh_count);
   model.mesh_ready = std::vector<std::atomic_flag>(mesh_count);
   model.pending_meshes = static_cast<u32>(mesh_count);
@@ -264,9 +296,9 @@ auto AssetManager::load_model(
         return;
       }
 
-      if (uploaded.buffer) {
-        loaded_model->gpu_mesh_buffers[mesh_index] = std::move(uploaded.buffer);
-        loaded_model->mesh_blases[mesh_index] = std::move(uploaded.blas);
+      if (uploaded.buffer != BufferID::Invalid) {
+        loaded_model->gpu_mesh_buffers[mesh_index] = uploaded.buffer;
+        loaded_model->mesh_blases[mesh_index] = uploaded.blas;
         loaded_model->gpu_meshes[mesh_index] = uploaded.gpu_mesh;
         loaded_model->collision_meshes[mesh_index] = to_collision_mesh(mesh_data);
         loaded_model->lod0_meshlet_counts[mesh_index] = uploaded.lods[0].meshlet_count;
@@ -322,6 +354,7 @@ auto AssetManager::unload_model(this AssetManager& self, const ModelID model_id)
 
   auto write_lock = std::unique_lock(self.models_mutex);
   if (auto* model = self.model_map.slot(model_id)) {
+    model->destroy_gpu_resources(App::get_rendercontext());
     *model = Model{};
   }
   self.model_map.destroy_slot(model_id);

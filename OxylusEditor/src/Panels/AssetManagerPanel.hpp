@@ -62,7 +62,7 @@ public:
   AssetManagerPanel();
 
   auto on_update(this AssetManagerPanel& self) -> void;
-  auto on_render(this AssetManagerPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this AssetManagerPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
 private:
   AssetBrowser browser = {};

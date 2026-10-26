@@ -8,7 +8,6 @@
 #include <system_error>
 #include <tracy/Tracy.hpp>
 #include <utility>
-#include <vuk/ImageAttachment.hpp>
 
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
@@ -549,7 +548,7 @@ auto ProjectPanel::draw_samples(this ProjectPanel& self) -> void {
   ImGui::EndChild();
 }
 
-auto ProjectPanel::on_render(this ProjectPanel& self, vuk::ImageAttachment) -> void {
+auto ProjectPanel::on_render(this ProjectPanel& self, const SwapchainInfo&) -> void {
   ZoneScoped;
 
   if (!ImGui::IsPopupOpen(self.id.c_str())) {

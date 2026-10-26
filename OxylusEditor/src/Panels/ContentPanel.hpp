@@ -1,18 +1,24 @@
 #pragma once
 
-#include <FileWatch.hpp>
 #include <ankerl/unordered_dense.h>
 #include <filesystem>
 #include <imgui.h>
+#include <shared_mutex>
 #include <span>
 #include <stack>
 #include <vector>
-#include <vuk/Types.hpp>
-#include <vuk/Value.hpp>
 
+#include "Asset/AssetFile.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "EditorPanelState.hpp"
+#include "Render/Fwd.hpp"
+
+// FileWatch.hpp pulls in <windows.h>, whose macros (TRANSPARENT) break vir headers that follow it
+namespace filewatch {
+template <class StringType>
+class FileWatch;
+} // namespace filewatch
 
 namespace ox {
 class Texture;
@@ -42,10 +48,11 @@ auto classify_file_type(const std::filesystem::path& path) -> FileType;
 class ContentPanel : public EditorPanelState {
 public:
   ContentPanel();
+  ~ContentPanel();
 
   auto init(this ContentPanel& self) -> void;
   auto on_update(this ContentPanel& self) -> void;
-  auto on_render(this ContentPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ContentPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
 private:
   enum class SortField : u8 {
@@ -104,7 +111,7 @@ private:
   Texture white_texture = {};
   std::filesystem::path directory_to_delete;
 
-  std::unique_ptr<filewatch::FileWatch<std::string>> filewatch = nullptr;
+  std::unique_ptr<filewatch::FileWatch<std::string>> filewatch;
 
   auto create_csharp_script(this ContentPanel& self) -> void;
 

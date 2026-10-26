@@ -1,15 +1,21 @@
-﻿#pragma once
+#pragma once
 
-#include <vuk/ImageAttachment.hpp>
-#include <vuk/RenderGraph.hpp>
-#include <vuk/Value.hpp>
-#include <vuk/runtime/vk/PipelineInstance.hpp>
-#include <vuk/runtime/vk/Query.hpp>
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <limits>
+#include <source_location>
+#include <span>
+#include <string_view>
+#include <variant>
+#include <vir/Access.hpp>
+#include <vir/Resource.hpp>
+#include <vir/Types.hpp>
 
+#include "Core/Base.hpp"
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
-#include "Render/RenderContext.hpp"
-
-using Preset = vuk::ImageAttachment::Preset;
+#include "Render/Fwd.hpp"
 
 namespace ox {
 struct UploadBatch;
@@ -19,26 +25,21 @@ enum class TextureID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
 using TextureDataSource = std::variant<std::filesystem::path, std::span<const u8>>;
 
+inline auto default_texture_sampler() -> vir::SamplerInfo {
+  return vir::SamplerInfo::linear().with_address_mode(VK_SAMPLER_ADDRESS_MODE_REPEAT);
+}
+
 struct TextureCreateInfo {
-  vuk::Format format = vuk::Format::eR8G8B8A8Srgb;
-  vuk::Extent3D extent = {};
+  vir::Format format = vir::Format::RGBA8Srgb;
+  vir::Extent3D extent = {};
   u32 layer_count = 1;
   u32 level_count = 1;
-  vuk::ImageCreateFlags image_flags = {};
-  vuk::ImageType image_type = vuk::ImageType::e2D;
-  vuk::ImageTiling tiling = vuk::ImageTiling::eOptimal;
-  vuk::ImageUsageFlags usage = {};
-  vuk::ImageViewCreateFlags image_view_flags = {};
-  vuk::ImageViewType view_type = vuk::ImageViewType::e2D;
-  vuk::ComponentMapping components = {};
-  vuk::SamplerCreateInfo sampler_info = {
-    .magFilter = vuk::Filter::eLinear,
-    .minFilter = vuk::Filter::eLinear,
-    .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-    .addressModeU = vuk::SamplerAddressMode::eRepeat,
-    .addressModeV = vuk::SamplerAddressMode::eRepeat,
-    .addressModeW = vuk::SamplerAddressMode::eRepeat,
-  };
+  vir::ImageCreateFlags image_flags = vir::ImageCreateFlags::None;
+  vir::ImageType image_type = vir::ImageType::e2D;
+  vir::ImageUsageFlags usage = vir::ImageUsageFlags::None;
+  vir::ImageViewType view_type = vir::ImageViewType::e2D;
+  vir::ComponentMapping components = {};
+  vir::SamplerInfo sampler_info = default_texture_sampler();
   UploadBatch* batch = nullptr;
 };
 
@@ -48,43 +49,31 @@ struct TextureLoadInfo {
   bool is_srgb = true;
   option<u32> target_width = nullopt;
   option<u32> target_height = nullopt;
-  vuk::SamplerCreateInfo sampler_info = {
-    .magFilter = vuk::Filter::eLinear,
-    .minFilter = vuk::Filter::eLinear,
-    .mipmapMode = vuk::SamplerMipmapMode::eLinear,
-    .addressModeU = vuk::SamplerAddressMode::eRepeat,
-    .addressModeV = vuk::SamplerAddressMode::eRepeat,
-    .addressModeW = vuk::SamplerAddressMode::eRepeat,
-  };
+  vir::SamplerInfo sampler_info = default_texture_sampler();
   UploadBatch* batch = nullptr;
 };
 
 struct TextureView {
-  vuk::ImageAttachment attachment = {};
+  vir::Extent3D extent = {};
+  vir::Format format = vir::Format::Undefined;
   ImageViewID image_view_id = ImageViewID::Invalid;
 
   operator bool() const { return image_view_id != ImageViewID::Invalid; }
 
-  auto acquire(this const TextureView& self, std::string_view name, vuk::Access last_access, OX_THISCALL)
-    -> vuk::Value<vuk::ImageAttachment>;
-  auto discard(this const TextureView& self, std::string_view name, OX_THISCALL) -> vuk::Value<vuk::ImageAttachment>;
-
-  auto get_extent() const -> const vuk::Extent3D& { return attachment.extent; }
-  auto get_format() const -> vuk::Format { return attachment.format; }
+  auto get_extent() const -> vir::Extent3D { return extent; }
+  auto get_format() const -> vir::Format { return format; }
   auto get_view_id() const -> ImageViewID { return image_view_id; }
 };
 
 class Texture {
-  vuk::ImageAttachment attachment = {};
+  vir::ImageAttachment image = {};
   ImageID image_id = ImageID::Invalid;
   ImageViewID image_view_id = ImageViewID::Invalid;
   SamplerID sampler_id = SamplerID::Invalid;
 
   Texture(
-    vuk::ImageAttachment attachment_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
+    const vir::ImageAttachment& image_, ImageID image_id_, ImageViewID image_view_id_, SamplerID sampler_id_
   ) noexcept;
-
-  auto get_name(OX_THISCALL) const -> vuk::Name;
 
 public:
   Texture() = default;
@@ -100,34 +89,29 @@ public:
   static auto create(const TextureData& data, const TextureLoadInfo& info, OX_THISCALL) -> Texture;
   auto destroy(this Texture&) -> void;
 
-  auto acquire(this const Texture&, std::string_view name, vuk::Access last_access, OX_THISCALL)
-    -> vuk::Value<vuk::ImageAttachment>;
-  auto discard(this const Texture&, std::string_view name, OX_THISCALL) -> vuk::Value<vuk::ImageAttachment>;
+  // brings the texture into a module, waiting on whatever last read it at `rests_at`
+  auto import(this const Texture& self, vir::Module& module, vir::Access rests_at) -> vir::ValueID;
+  // the same, with its contents discarded, for a module that overwrites every texel it reads
+  auto import_discarded(this const Texture& self, vir::Module& module, vir::Access rests_at) -> vir::ValueID;
+  auto clear(this const Texture& self, vir::ClearValue value, vir::Access rests_at) -> std::expected<void, VkResult>;
+  auto attachment_info(this const Texture& self) -> const vir::ImageAttachment& { return self.image; }
 
   auto upload_mips(
     this Texture&,
     std::span<const std::span<const u8>> per_mip_pixels,
-    vuk::Access release_as,
+    vir::Access release_as,
     bool generate_remaining = false,
     UploadBatch* batch = nullptr
   ) -> void;
-  auto upload_mips(
-    this Texture&,
-    std::span<const vuk::Unique<vuk::Buffer>> per_mip_buffers,
-    vuk::Access release_as,
-    bool generate_remaining = false,
-    UploadBatch* batch = nullptr
-  ) -> void;
-  auto upload(this Texture&, std::span<const u8> pixels, vuk::Access release_as, bool generate_remaining = false)
+  auto upload(this Texture&, std::span<const u8> pixels, vir::Access release_as, bool generate_remaining = false)
     -> void;
 
   auto set_name(std::string_view name, OX_THISCALL) -> void;
 
   auto view(this const Texture& self) -> TextureView;
-  auto get_image() const -> const vuk::Image;
-  auto get_image_view() const -> const vuk::ImageView;
-  auto get_extent() const -> const vuk::Extent3D&;
-  auto get_format() const -> vuk::Format;
+  auto get_extent() const -> vir::Extent3D { return image.extent; }
+  auto get_format() const -> vir::Format { return image.format; }
+  auto get_level_count() const -> u32 { return image.subresource_range.levelCount; }
   auto is_srgb() const -> bool;
   auto get_image_id() const -> ImageID;
   auto get_view_id() const -> ImageViewID;
@@ -138,7 +122,7 @@ public:
 
   operator bool() const { return image_id != ImageID::Invalid; }
 
-  static auto calculate_mip_count(const vuk::Extent3D& extent) -> u32 {
+  static auto calculate_mip_count(const vir::Extent3D& extent) -> u32 {
     return static_cast<u32>(log2f(static_cast<f32>(std::max(std::max(extent.width, extent.height), extent.depth)))) + 1;
   }
 };

@@ -3,6 +3,7 @@
 #include <fmt/std.h>
 
 #include "OS/File.hpp"
+#include "ShaderLayout.hpp"
 
 namespace ox::rc {
 static auto to_shader_stage(SlangStage stage) -> ShaderStage {
@@ -96,6 +97,7 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
     // the codegen below is safe to run concurrently, and only on a fully linked component type
     auto linked_program = Slang::ComPtr<slang::IComponentType>();
     auto stage = ShaderStage::None;
+    auto layout = vir::ShaderLayout{};
     {
       auto front_end_lock = std::unique_lock(self.front_end_mutex);
 
@@ -144,6 +146,14 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
       auto* entry_point_layout = linked_program->getLayout();
       auto* entry_point_reflection = entry_point_layout->getEntryPointByIndex(0);
       stage = to_shader_stage(entry_point_reflection->getStage());
+
+      auto reflected = reflect_shader_layout(linked_program, entry_point_name);
+      if (!reflected) {
+        diag.errors.emplace_back(fmt::format("{}: {}", ep_prefix, reflected.error()));
+        return nullopt;
+      }
+
+      layout = std::move(*reflected);
     }
 
     // Codegen
@@ -162,11 +172,13 @@ auto ShaderSession::compile_shader(this ShaderSession& self, const ShaderCompile
 
     auto spirv = std::vector<u32>(spirv_code->getBufferSize() / sizeof(u32));
     std::memcpy(spirv.data(), spirv_code->getBufferPointer(), ox::size_bytes(spirv));
+    remove_unused_bindings(layout, linked_program);
 
     results.push_back({
       .name = entry_point_name,
       .shader_stage = stage,
       .spirv = std::move(spirv),
+      .layout = std::move(layout),
     });
   }
 

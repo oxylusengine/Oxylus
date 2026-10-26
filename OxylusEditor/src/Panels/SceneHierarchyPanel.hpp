@@ -34,7 +34,7 @@ public:
   SceneHierarchyPanel();
 
   auto on_update(this SceneHierarchyPanel& self) -> void;
-  auto on_render(this SceneHierarchyPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this SceneHierarchyPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   auto set_scene(this SceneHierarchyPanel& self, EditorScene* scene) -> void;
   auto get_scene(this const SceneHierarchyPanel& self) -> EditorScene*;

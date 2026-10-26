@@ -3,7 +3,6 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <vuk/Value.hpp>
 
 #include "Asset/Texture.hpp"
 #include "Core/UUID.hpp"
@@ -194,15 +193,6 @@ public:
 
   static bool draw_vec2_control(
     const char* label, glm::vec2& values, const char* tooltip = nullptr, const float reset_value = 0.0f
-  );
-
-  static void image(
-    vuk::Value<vuk::ImageAttachment>&& attch,
-    ImVec2 size,
-    const ImVec2& uv0 = ImVec2(0, 0),
-    const ImVec2& uv1 = ImVec2(1, 1),
-    const ImVec4& tint_col = ImVec4(1, 1, 1, 1),
-    const ImVec4& border_col = ImVec4(0, 0, 0, 0)
   );
 
   // images

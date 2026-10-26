@@ -22,7 +22,7 @@ public:
   InspectorPanel();
 
   auto on_update(this InspectorPanel& self) -> void {}
-  auto on_render(this InspectorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this InspectorPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   auto handle_editor_context(this InspectorPanel& self) -> void;
 

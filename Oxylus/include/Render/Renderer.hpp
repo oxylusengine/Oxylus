@@ -2,11 +2,12 @@
 
 #include <expected>
 #include <glm/ext/vector_uint2.hpp>
-#include <vuk/Value.hpp>
-#include <vuk/runtime/vk/Descriptor.hpp>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "Core/Option.hpp"
-#include "Scene/SceneGPU.hpp"
+#include "Render/Fwd.hpp"
+#include "Render/GPU/Shared.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
@@ -18,8 +19,8 @@ class Renderer {
 public:
   constexpr static auto MODULE_NAME = "Renderer";
 
-  vuk::Unique<vuk::Buffer> quad_vertex_buffer = vuk::Unique<vuk::Buffer>();
-  vuk::Unique<vuk::Buffer> quad_index_buffer = vuk::Unique<vuk::Buffer>();
+  BufferID quad_vertex_buffer = BufferID::Invalid;
+  BufferID quad_index_buffer = BufferID::Invalid;
 
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;
@@ -27,7 +28,8 @@ public:
 
   auto new_instance(Scene& scene) -> std::unique_ptr<RendererInstance>;
 
-  auto get_materials_buffer(this Renderer& self) -> vuk::Value<vuk::Buffer>;
+  // every material the scenes draw with, resting at `vir::Access::MemoryRead` between uploads
+  BufferID materials_buffer = BufferID::Invalid;
 
   auto sync_materials(this Renderer& self) -> void;
 
@@ -39,6 +41,5 @@ private:
 
   std::vector<GPU::Material> gpu_materials = {};
   std::vector<usize> pending_material_indices = {};
-  vuk::Unique<vuk::Buffer> materials_buffer = vuk::Unique<vuk::Buffer>();
 };
 } // namespace ox

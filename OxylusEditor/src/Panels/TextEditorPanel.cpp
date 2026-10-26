@@ -12,7 +12,7 @@ TextEditorPanel::TextEditorPanel() : EditorPanelState("TextEditor", ICON_MDI_TEX
   text_editor.body_font = App::mod<Editor>().editor_theme.mono_font;
 }
 
-auto TextEditorPanel::on_render(this TextEditorPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
+auto TextEditorPanel::on_render(this TextEditorPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   self.text_editor.render(self.id.c_str(), &self.visible);

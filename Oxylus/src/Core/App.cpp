@@ -1,7 +1,10 @@
 #include "Core/App.hpp"
 
-#include <vuk/vsl/Core.hpp>
+#include <mutex>
+#include <vir/RenderGraph.hpp>
+#include <vir/Types.hpp>
 
+#include "Asset/Texture.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
@@ -10,12 +13,21 @@
 #include "Render/RenderContext.hpp"
 #include "Render/Renderer.hpp"
 #include "Render/Window.hpp"
+#include "Scene/Scene.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/UIScale.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
 namespace ox {
+struct GameFrame {
+  Texture target = {};
+  std::unique_ptr<vir::Program> program = {};
+  vir::ValueID scene_image = vir::ValueID::Invalid;
+  ImGuiVariables imgui_variables = {};
+  u64 generation = 0;
+};
+
 App* App::instance_ = nullptr;
 
 App::App(int argc, char** argv) {
@@ -28,13 +40,15 @@ App::App(int argc, char** argv) {
 
   instance_ = this;
 
-  Log::init(argc, argv);
+  static auto logging_initialized = std::once_flag{};
+  std::call_once(logging_initialized, [argc, argv]() -> void { Log::init(argc, argv); });
 
   instance_->command_line_args = AppCommandLineArgs{argc, argv};
 }
 
 App::~App() {
   is_running = false;
+  game_frame.reset();
   instance_ = nullptr;
 }
 
@@ -121,7 +135,95 @@ auto App::step(this App& self) -> void {
     self.mod<Input>().reset_pressed();
 }
 
-void App::run(this App& self) {
+auto App::render_scene(this App& self, Scene& scene, std::function<auto()->void> draw_ui)
+  -> std::expected<vir::SubmitTicket, VkResult> {
+  ZoneScoped;
+
+  if (!self.render_context || !self.window.has_value()) {
+    return std::unexpected(VK_ERROR_INITIALIZATION_FAILED);
+  }
+
+  auto& context = *self.render_context;
+  const auto frame = context.new_frame();
+  if (!frame) {
+    return std::unexpected(frame.error());
+  }
+
+  if (!self.game_frame) {
+    self.game_frame = std::make_unique<GameFrame>();
+  }
+  auto& game = *self.game_frame;
+  if (!game.target || game.generation != frame->generation) {
+    game.program.reset();
+    game.target = Texture::create({
+      .format = frame->format,
+      .extent = {frame->extent.width, frame->extent.height, 1},
+      .usage = vir::ImageUsageFlags::ColorAttachment | vir::ImageUsageFlags::Sampled |
+               vir::ImageUsageFlags::TransferSrc | vir::ImageUsageFlags::TransferDst,
+    });
+    if (!game.target) {
+      return std::unexpected(VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    }
+    const auto cleared = game.target.clear(
+      vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f),
+      vir::Access::FragmentSampled
+    );
+    if (!cleared) {
+      game.target.destroy();
+      return std::unexpected(cleared.error());
+    }
+    game.generation = frame->generation;
+  }
+
+  const auto size = glm::ivec2(frame->extent.width, frame->extent.height);
+  const auto rendered = scene.render(game.target.attachment_info(), {}, size, size, true);
+  if (!rendered) {
+    return std::unexpected(rendered.error());
+  }
+
+  auto* imgui = self.registry.has<ImGuiRenderer>() ? &self.registry.get<ImGuiRenderer>() : nullptr;
+  if (imgui) {
+    imgui->begin_frame(self.timestep.get_seconds(), self.window->get_logical_size(), self.window->get_real_size());
+    if (draw_ui) {
+      draw_ui();
+    }
+    imgui->end_frame();
+  }
+
+  if (!game.program) {
+    auto module = vir::Module{};
+    game.scene_image = module.declare_image_var("game scene", frame->format, vir::Access::FragmentSampled);
+    auto image = module.copy_image(game.scene_image, context.acquire_next_image(module));
+    module.export_to(game.scene_image, vir::Access::FragmentSampled);
+    if (imgui) {
+      image = imgui->record(module, image, game.imgui_variables);
+    }
+    module.present(image);
+    auto compiled = context.compile(std::move(module));
+    if (!compiled) {
+      return std::unexpected(compiled.error());
+    }
+    game.program = std::make_unique<vir::Program>(std::move(*compiled));
+  }
+
+  game.program->set(game.scene_image, game.target.attachment_info());
+  if (imgui) {
+    imgui->bind(*game.program, game.imgui_variables);
+  }
+
+  const auto ticket = context.execute(*game.program);
+  if (!ticket) {
+    if (ticket.error() == VK_ERROR_OUT_OF_DATE_KHR) {
+      game.program.reset();
+      context.handle_resize();
+    }
+    return std::unexpected(ticket.error());
+  }
+  context.seal_retirements(*ticket);
+  return ticket;
+}
+
+auto App::run(this App& self) -> void {
   ZoneScoped;
 
   self.init();
@@ -134,7 +236,7 @@ void App::run(this App& self) {
   self.stop();
 }
 
-void App::stop(this App& self) {
+auto App::stop(this App& self) -> void {
   ZoneScoped;
 
   self.is_running = false;
@@ -152,6 +254,8 @@ void App::stop(this App& self) {
   if (self.render_context != nullptr) {
     self.render_context->wait();
   }
+
+  self.game_frame.reset();
 
   self.registry.deinit();
   self.job_manager.wait();

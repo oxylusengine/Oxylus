@@ -1,36 +1,20 @@
 #pragma once
 
-#include <vuk/Executor.hpp>
-#include <vuk/Types.hpp>
-#include <vuk/runtime/CommandBuffer.hpp>
-#include <vuk/runtime/vk/VkQueueExecutor.hpp>
-#include <vuk/runtime/vk/VkRuntime.hpp>
-
-#define TRACY_VK_USE_SYMBOL_TABLE
-
-#include <tracy/Tracy.hpp>
-#include <tracy/TracyVulkan.hpp>
-
+#include <memory>
+#include <vir/Fwd.hpp>
 
 namespace ox {
 class RenderContext;
+struct TracyProfilerState;
 
 class TracyProfiler {
 public:
-  TracyProfiler() = default;
-  ~TracyProfiler() { destroy_context(); }
-  void init_for_vulkan(this TracyProfiler& self, RenderContext* context);
-  vuk::ProfilingCallbacks setup_vuk_callback();
-  void destroy_context();
+  std::unique_ptr<TracyProfilerState> state = {};
 
-private:
-#if TRACY_ENABLE
-  std::vector<tracy::VkCtx*> contexts;
-#endif
-  // command buffer and pool for Tracy to do init & collect
-
-  vuk::Unique<vuk::CommandPool> tracy_cpool;
-  vuk::Unique<vuk::CommandBufferAllocation> tracy_cbufai;
-  std::vector<vuk::Executor*> executors;
+  TracyProfiler();
+  ~TracyProfiler();
+  auto init_for_vulkan(this TracyProfiler& self, RenderContext& context) -> void;
+  auto callbacks(this TracyProfiler& self) -> vir::RenderGraphCallbacks;
+  auto destroy_context(this TracyProfiler& self) -> void;
 };
 } // namespace ox

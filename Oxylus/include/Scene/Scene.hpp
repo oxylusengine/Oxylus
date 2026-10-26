@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Memory/SlotMap.hpp"
+
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/Core.h>
@@ -378,14 +380,15 @@ public:
   auto create_vehicle(this Scene& self, flecs::entity entity, VehicleComponent& component) -> void;
   auto destroy_vehicle(this Scene& self, VehicleComponent& component) -> void;
 
+  // renders into `target`, which the frame leaves at `vir::Access::FragmentSampled`
   auto render(
     this Scene& self,
-    vuk::Value<vuk::ImageAttachment>&& dst_attachment,
+    const vir::ImageAttachment& target,
     glm::ivec2 viewport_origin,
     glm::ivec2 viewport_size,
     glm::ivec2 surface_size,
     bool keyboard_focused = true
-  ) -> vuk::Value<vuk::ImageAttachment>;
+  ) -> std::expected<vir::SubmitTicket, VkResult>;
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
   auto get_rml_context(this const Scene& self) -> Rml::Context*;
   auto get_rml_context_name(this const Scene& self) -> std::string_view;

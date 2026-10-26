@@ -1,9 +1,10 @@
 #pragma once
 
+#include "Render/Fwd.hpp"
+
 #include <array>
 #include <string_view>
 #include <vector>
-#include <vuk/ImageAttachment.hpp>
 
 #include "Panels/EditorPanelState.hpp"
 #include "Utils/Notification.hpp"
@@ -16,7 +17,7 @@ public:
   auto set_system(this ActivityLogPanel& self, NotificationSystem* system) -> void;
 
   auto on_update(this ActivityLogPanel& self) -> void {}
-  auto on_render(this ActivityLogPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this ActivityLogPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
 private:
   static constexpr u32 TYPE_COUNT = 4;

@@ -5,7 +5,8 @@
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
 #include <implot.h>
-#include <vuk/vsl/Core.hpp>
+#include <vir/Program.hpp>
+#include <vir/RenderGraph.hpp>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -27,12 +28,16 @@
 #include "Panels/ProjectPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/TextEditorPanel.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Command.hpp"
 
 namespace ox {
+Editor::Editor() = default;
+Editor::~Editor() = default;
+
 auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -222,8 +227,6 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
     }
   }
 
-  self.thumbnail_manager.update();
-
   self.editor_panel_registry.update_all();
 
   auto& shp = self.editor_panel_registry.get<SceneHierarchyPanel>();
@@ -237,8 +240,17 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   auto& imgui_renderer = App::mod<ImGuiRenderer>();
   auto& window = App::get_window();
 
-  auto swapchain_attachment = render_context.new_frame();
-  swapchain_attachment = vuk::clear_image(std::move(swapchain_attachment), vuk::Black<f32>);
+  const auto frame = render_context.new_frame();
+  if (!frame) {
+    // a minimized window has no swapchain to draw into
+    if (frame.error() == VK_NOT_READY) {
+      return;
+    }
+
+    OX_LOG_FATAL("failed to start frame ({})", std::to_underlying(frame.error()));
+  }
+
+  self.thumbnail_manager.update();
 
   imgui_renderer.keyboard_input_enabled = !self.main_viewport_panel.is_any_scene_playing();
 
@@ -247,25 +259,49 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
   ImGuizmo::BeginFrame();
 
-  const auto sc_info = vuk::ImageAttachment{
-    .image_type = swapchain_attachment->image_type,
-    .extent = swapchain_attachment->extent,
-    .format = swapchain_attachment->format,
-    .sample_count = swapchain_attachment->sample_count,
-    .base_level = swapchain_attachment->base_level,
-    .level_count = swapchain_attachment->level_count,
-    .base_layer = swapchain_attachment->base_layer,
-    .layer_count = swapchain_attachment->layer_count,
-  };
+  // panels render their scenes as they draw, each one ahead of this frame's UI on the same queue
+  self.render(*frame);
 
-  self.render(sc_info);
+  imgui_renderer.end_frame();
 
-  swapchain_attachment = imgui_renderer.end_frame(render_context, std::move(swapchain_attachment));
+  // the UI over the swapchain image, recorded again only when the swapchain is replaced
+  if (!self.frame_program || self.frame_program_generation != frame->generation) {
+    self.frame_program.reset();
 
-  render_context.end_frame(swapchain_attachment);
+    auto module = vir::Module{};
+    auto image = render_context.acquire_next_image(module);
+    image = module.clear(image, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
+    image = imgui_renderer.record(module, image, self.imgui_variables);
+    module.present(image);
+
+    auto compiled = render_context.compile(std::move(module));
+    if (!compiled) {
+      OX_LOG_ERROR("failed to compile the editor frame ({})", std::to_underlying(compiled.error()));
+      return;
+    }
+
+    self.frame_program = std::make_unique<vir::Program>(std::move(*compiled));
+    self.frame_program_generation = frame->generation;
+  }
+
+  imgui_renderer.bind(*self.frame_program, self.imgui_variables);
+  const auto ticket = render_context.execute(*self.frame_program);
+  if (!ticket) {
+    if (ticket.error() == VK_ERROR_OUT_OF_DATE_KHR) {
+      self.frame_program.reset();
+      render_context.handle_resize();
+      return;
+    }
+
+    OX_LOG_ERROR("failed to present the editor frame ({})", std::to_underlying(ticket.error()));
+    return;
+  }
+
+  // anything released this frame waits for everything the frame submitted
+  render_context.seal_retirements(*ticket);
 }
 
-auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_attachment) -> void {
+auto Editor::render(this Editor& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   auto& job_man = App::get_job_manager();
@@ -313,10 +349,10 @@ auto Editor::render(this Editor& self, const vuk::ImageAttachment& swapchain_att
       ImGui::DockSpace(self.dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
 
-    self.main_viewport_panel.on_render(swapchain_attachment);
+    self.main_viewport_panel.on_render(swapchain_info);
 
     if (!self.main_viewport_panel.is_fullscreen()) {
-      self.editor_panel_registry.render_all(swapchain_attachment);
+      self.editor_panel_registry.render_all(swapchain_info);
     }
 
     self.draw_menubar();
@@ -594,13 +630,15 @@ auto Editor::cook_assets_into(this Editor& self, const std::filesystem::path& fo
 
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("Cooking assets");
-  job_man.submit(Job::create([&self, ad = std::move(assets_dir), od = std::move(output_dir)]() {
-    if (!cook_project_assets(ad, od)) {
-      OX_LOG_ERROR("Cooking assets into {} failed, see the errors above.", od);
-    }
+  job_man.submit(
+    Job::create([&self, source_directory = std::move(assets_dir), output_directory = std::move(output_dir)]() -> void {
+      if (!cook_project_assets(source_directory, output_directory)) {
+        OX_LOG_ERROR("Cooking assets into {} failed, see the errors above.", output_directory);
+      }
 
-    self.cooking_assets.store(false, std::memory_order_release);
-  }));
+      self.cooking_assets.store(false, std::memory_order_release);
+    })
+  );
   job_man.pop_job_name();
 }
 

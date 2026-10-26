@@ -1,781 +1,746 @@
-#include <vuk/runtime/CommandBuffer.hpp>
+#include <vir/RenderGraph.hpp>
+#include <vir/Types.hpp>
 
-#include "Core/App.hpp"
+#include "Asset/Texture.hpp"
 #include "Core/Enum.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
-#include "Render/Utils/VukCommon.hpp"
+#include "Render/Utils/PushConstants.hpp"
+#include "Render/Utils/Samplers.hpp"
 
 namespace ox {
-auto RendererInstance::generate_hiz(this RendererInstance& self, MainGeometryContext& context) -> void {
+using CullMeshletsPush = PushConstants<GPU::CullCamera, u32>;
+
+constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+auto RendererInstance::bind_cull_variables(
+  this const RendererInstance& self, vir::Program& program, const CullVariables& variables
+) -> void {
   ZoneScoped;
 
-  auto spd_global_atomic = self.renderer.render_context->scratch_buffer<u32>(0u);
+  const auto& data = self.frame_data;
+  program.set(variables.mesh_instance_count, data.mesh_instance_count);
+  program.set_bytes(variables.camera, self.frame_params.cull_camera);
 
-  auto hiz_generate_pass = vuk::make_pass(
-    "hiz generate",
-    [](
-      vuk::CommandBuffer& cmd_list, //
-      VUK_BA(vuk::eComputeRW) spd_atomic,
-      VUK_IA(vuk::eComputeSampled) src,
-      VUK_IA(vuk::eComputeRW) dst
-    ) {
-      const auto extent = dst->extent;
-      const auto mip_count = std::min(dst->level_count, 13u);
-      const auto work_group_count = (extent.width / 64) * (extent.height / 64);
-
-      cmd_list //
-        .bind_compute_pipeline("hiz")
-        .specialize_constants(0, 1_u32)
-        .specialize_constants(1, extent.width)
-        .specialize_constants(2, extent.height)
-        .bind_buffer(0, 0, spd_atomic)
-        .bind_sampler(0, 1, vuk::NearestSamplerClamped)
-        .bind_image(0, 2, src);
-
-      for (auto i = 0_u32; i < 13; i++) {
-        cmd_list.bind_image(0, 3 + i, dst->mip(std::min(i, dst->level_count - 1)));
-      }
-
-      cmd_list //
-        .push_constants(
-          vuk::ShaderStageFlagBits::eCompute,
-          0,
-          PushConstants(mip_count, work_group_count, glm::mat2x2(1.0f))
-        )
-        .dispatch(extent.width / 64, extent.height / 64, 1);
-
-      return std::make_tuple(spd_atomic, src, dst);
-    }
-  );
-
-  auto [_atomic, depth, hiz] = hiz_generate_pass(
-    std::move(spd_global_atomic),
-    std::move(context.depth_attachment),
-    std::move(context.hiz_attachment)
-  );
-  context.depth_attachment = std::move(depth);
-  context.hiz_attachment = std::move(hiz);
-}
-
-auto RendererInstance::skin_vertices(this RendererInstance& self) -> void {
-  ZoneScoped;
-
-  auto& prepared = self.prepared_frame;
-  if (prepared.skinned_vertex_total == 0 || prepared.skin_jobs.empty()) {
-    return;
-  }
-
-  // positions and normals share one arena, and the shader writes them through two bound subranges
-  // so it never has to write through a device address
-  const auto positions_bytes = static_cast<usize>(prepared.skinned_vertex_total) * sizeof(glm::u16vec4);
-  const auto normals_bytes = static_cast<usize>(prepared.skinned_vertex_total) * sizeof(u32);
-
-  auto skin_pass = vuk::make_pass(
-    "skin vertices",
-    [jobs = prepared.skin_jobs, positions_bytes, normals_bytes](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) meshes,
-      // declared as written even though the shader only reads it: every consumer reaches the skinned
-      // vertices through the pointers in here and names only this buffer, so this edge is what
-      // orders them after the skinning, and vuk emits buffer barriers as global memory barriers
-      VUK_BA(vuk::eComputeRW) mesh_instances,
-      VUK_BA(vuk::eComputeRead) skinning_transforms,
-      VUK_BA(vuk::eComputeWrite) skinned_vertices
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("skin_vertices")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, skinning_transforms)
-        .bind_buffer(0, 3, skinned_vertices->subrange(0, positions_bytes))
-        .bind_buffer(0, 4, skinned_vertices->subrange(positions_bytes, normals_bytes));
-
-      for (const auto& job : jobs) {
-        cmd_list //
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, job)
-          .dispatch_invocations(job.vertex_count);
-      }
-
-      return std::make_tuple(meshes, mesh_instances, skinning_transforms, skinned_vertices);
-    }
-  );
-
-  std::tie(
-    prepared.meshes_buffer,
-    prepared.mesh_instances_buffer,
-    prepared.skinning_transforms_buffer,
-    prepared.skinned_vertices_buffer
-  ) =
-    skin_pass(
-      std::move(prepared.meshes_buffer),
-      std::move(prepared.mesh_instances_buffer),
-      std::move(prepared.skinning_transforms_buffer),
-      std::move(prepared.skinned_vertices_buffer)
+  if (program.has_variable(variables.shadow_camera) || program.has_variable(variables.clipmap_push)) {
+    constexpr auto clipmap_index = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT - 1;
+    const auto& clipmap = self.frame_params.vsm_directional_clipmaps[clipmap_index];
+    const auto shadow_camera = GPU::CullCamera{
+      .projection_view = clipmap.projection_view_mat,
+      .position = -self.directional_light.direction,
+      .acceptable_lod_error = self.camera_data.acceptable_lod_error,
+      .resolution = self.camera_data.resolution,
+      .near_clip = clipmap.z_near,
+      .mesh_instance_count = data.mesh_instance_count,
+    };
+    program.set_bytes(variables.shadow_camera, shadow_camera);
+    program.set_bytes(
+      variables.clipmap_push,
+      CullMeshletsPush(shadow_camera, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT)
     );
+  }
+  for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
+    if (
+      !program.has_variable(variables.pointspot_contexts[mip]) &&
+      !program.has_variable(variables.pointspot_cull_meshes_commands[mip])
+    ) {
+      continue;
+    }
+    auto context = self.frame_params.vsm_pointspot;
+    context.curr_mip = static_cast<i32>(mip);
+    program.set_bytes(variables.pointspot_contexts[mip], context);
+    program.set_bytes(
+      variables.pointspot_cull_meshes_commands[mip],
+      VkDispatchIndirectCommand{
+        .x = (context.mesh_instance_count + RMVSMContext::CULLING_MESH_COUNT - 1) / RMVSMContext::CULLING_MESH_COUNT,
+        .y = 0,
+        .z = 1,
+      }
+    );
+  }
 }
 
-auto RendererInstance::cull_geometry(this RendererInstance& self, CullGeometryContext& context) -> void {
+auto RendererInstance::generate_hiz(vir::Module& module, RenderContext& render_context, MainGeometryContext& context)
+  -> void {
   ZoneScoped;
+
+  const auto extent = *module.image_extent(context.hiz_attachment);
+  const auto level_count = std::min(Texture::calculate_mip_count(extent), 13_u32);
+  const auto counter_value = 0_u32;
+  auto counter = module.transient_buffer({
+    .size = sizeof(counter_value),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "hiz atomic",
+  });
+  counter = module.update_buffer(
+    counter,
+    std::span{reinterpret_cast<const u8*>(&counter_value), sizeof(counter_value)}
+  );
+  const auto groups_x = extent.width / 64;
+  const auto groups_y = extent.height / 64;
+  auto pass = //
+    module
+      .begin_compute({
+        {counter, vir::Access::ComputeRW},
+        {context.depth_attachment, vir::Access::ComputeSampled},
+        {context.hiz_attachment, vir::Access::ComputeRW},
+      })
+      .with_name("hiz generate")
+      .bind_compute_pipeline(render_context.pipeline("hiz"))
+      .specialize_constant(0, 1_u32)
+      .specialize_constant(1, extent.width)
+      .specialize_constant(2, extent.height)
+      .bind_buffer(0, 0, counter)
+      .bind_sampler(0, 1, render_context.cached_sampler_handle(NearestSamplerClamped))
+      .bind_image(0, 2, context.depth_attachment);
+  for (auto mip = 0_u32; mip < 13; mip++) {
+    module.bind_image(0, 3 + mip, module.mip(context.hiz_attachment, std::min(mip, level_count - 1)));
+  }
+  module.push_constants(PushConstants(level_count, groups_x * groups_y, glm::mat2(1.0f)))
+    .dispatch(groups_x, groups_y, 1);
+  const auto result = pass.end_compute();
+  context.depth_attachment = result[1];
+  context.hiz_attachment = result[2];
+}
+
+auto RendererInstance::skin_vertices(this RendererInstance& self, vir::Module& module, FrameRecording& recording)
+  -> void {
+  ZoneScoped;
+  auto& values = recording.values;
+
+  auto& render_context = *self.renderer.render_context;
+  // jobs and the arena change per frame, so the dispatches go through a callback that reads them.
+  // Positions and normals share one arena, and the shader writes them through two bound subranges
+  // so it never has to write through a device address. Where they split moves with the vertex
+  // total, which is why the callback binds them rather than the program
+  const auto arena = values.skinned_vertices;
+  const auto body = module.declare_callback_var("skin vertices", [&self, arena](vir::Recorder& recorder) -> void {
+    const auto& data = self.frame_data;
+    const auto positions_bytes = static_cast<u64>(data.skinned_vertex_total) * sizeof(glm::u16vec4);
+    const auto normals_bytes = static_cast<u64>(data.skinned_vertex_total) * sizeof(u32);
+    if (positions_bytes == 0) {
+      return;
+    }
+
+    const auto vertices = recorder.buffer(arena);
+    recorder.bind_buffer(0, 3, vertices, 0, positions_bytes)
+      .bind_buffer(0, 4, vertices, positions_bytes, normals_bytes);
+    for (const auto& job : data.skin_jobs) {
+      recorder.push_constants(job).dispatch((job.vertex_count + 63) / 64, 1, 1);
+    }
+  });
+
+  std::tie(values.meshes, values.mesh_instances, values.skinning_transforms, values.skinned_vertices) = std::tuple_cat(
+    module
+      .begin_compute(
+        {{values.meshes, vir::Access::ComputeRead},
+         // declared as written even though the shader only reads it: every consumer reaches the
+         // skinned vertices through the pointers in here and names only this buffer, so this edge is
+         // what orders them after the skinning
+         {values.mesh_instances, vir::Access::ComputeRW},
+         {values.skinning_transforms, vir::Access::ComputeRead},
+         {values.skinned_vertices, vir::Access::ComputeWrite}}
+      )
+      .with_name("skin vertices")
+      .bind_compute_pipeline(render_context.pipeline("skin_vertices"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.skinning_transforms)
+      .record_from(body)
+      .end_compute()
+  );
+}
+
+auto RendererInstance::cull_geometry(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryContext& context
+) -> void {
+  ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& values = recording.values;
   memory::ScopedStack stack;
 
   const auto cull_flags = context.cull_flags;
-  const auto& cull_camera = context.cull_camera;
+  const auto is_late = static_cast<bool>(cull_flags & GPU::CullFlag::LatePass);
+  auto& variables = prepared.cull;
+  if (variables.mesh_instance_count == vir::ValueID::Invalid) {
+    variables.mesh_instance_count = module.declare_u32_var("cull mesh instance count", 0);
+  }
+
+  if (context.use_hpb) {
+    if (variables.shadow_camera == vir::ValueID::Invalid) {
+      variables.shadow_camera = module.declare_bytes_var("vsm cull camera", sizeof(GPU::CullCamera));
+    }
+
+    if (variables.clipmap_push == vir::ValueID::Invalid) {
+      variables.clipmap_push = module.declare_bytes_var("rmvsm cull meshlets push", sizeof(CullMeshletsPush));
+    }
+
+  } else if (variables.camera == vir::ValueID::Invalid) {
+    variables.camera = module.declare_bytes_var("cull camera", sizeof(GPU::CullCamera));
+  }
+
+  const auto cull_camera = context.use_hpb ? prepared.cull.shadow_camera : prepared.cull.camera;
 
   // --- Stage 1: cull_meshes (only on the first cull of a sequence) ---
   if (context.init_cull_meshes) {
-    auto cull_meshes_pass = vuk::make_pass(
-      context.use_hiz ? "vis cull meshes" : "cull meshes",
-      [cull_camera, cull_flags](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eComputeRead) meshes,
-        VUK_BA(vuk::eComputeRead) transforms,
-        VUK_BA(vuk::eComputeRW) mesh_instances,
-        VUK_BA(vuk::eComputeRW) meshlet_instances,
-        VUK_BA(vuk::eComputeRW) visibility,
-        VUK_BA(vuk::eComputeRW) cull_meshlets_cmd
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("cull_meshes")
-          .bind_buffer(0, 0, meshes)
-          .bind_buffer(0, 1, transforms)
-          .bind_buffer(0, 2, mesh_instances)
-          .bind_buffer(0, 3, meshlet_instances)
-          .bind_buffer(0, 4, visibility)
-          .bind_buffer(0, 5, cull_meshlets_cmd)
-          .specialize_constants(0, std::to_underlying(cull_flags))
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-          .dispatch_invocations(cull_camera.mesh_instance_count);
-
-        return std::make_tuple(meshes, transforms, mesh_instances, meshlet_instances, visibility, cull_meshlets_cmd);
-      }
+    const auto visibility = GPU::MeshletInstanceVisibility{};
+    context.visibility_buffer = module.transient_buffer({
+      .size = sizeof(visibility),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "meshlet visibility",
+    });
+    context.visibility_buffer = module.update_buffer(
+      context.visibility_buffer,
+      std::span{reinterpret_cast<const u8*>(&visibility), sizeof(visibility)}
+    );
+    const auto cull_meshlets_command = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
+    context.cull_meshlets_cmd_buffer = module.transient_buffer({
+      .size = sizeof(cull_meshlets_command),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "cull meshlets command",
+    });
+    context.cull_meshlets_cmd_buffer = module.update_buffer(
+      context.cull_meshlets_cmd_buffer,
+      std::span{reinterpret_cast<const u8*>(&cull_meshlets_command), sizeof(cull_meshlets_command)}
     );
 
-    context.visibility_buffer = self.renderer.render_context->scratch_buffer<GPU::MeshletInstanceVisibility>({});
-    context.cull_meshlets_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-      {.x = 0, .y = 1, .z = 1}
-    );
     std::tie(
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.transforms_world_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
+      values.meshes,
+      values.transforms_world,
+      values.mesh_instances,
+      values.meshlet_instances,
       context.visibility_buffer,
       context.cull_meshlets_cmd_buffer
-    ) =
-      cull_meshes_pass(
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.transforms_world_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(context.visibility_buffer),
-        std::move(context.cull_meshlets_cmd_buffer)
-      );
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{values.meshes, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRW},
+           {values.meshlet_instances, vir::Access::ComputeRW},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {context.cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name(context.use_hiz ? "vis cull meshes" : "cull meshes")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshes"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.transforms_world)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshlet_instances)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, context.cull_meshlets_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_invocations(prepared.cull.mesh_instance_count, 1, 1)
+        .end_compute()
+    );
   }
 
-  if (self.prepared_frame.use_mesh_shaders) {
-    context.draw_geometry_cmd_buffer = std::move(context.cull_meshlets_cmd_buffer);
+  if (recording.shape.use_mesh_shaders) {
+    context.draw_geometry_cmd_buffer = context.cull_meshlets_cmd_buffer;
     return;
   }
 
-  // --- Stage 2: cull_meshlets (two versions due to different descriptor sets) ---
-  auto cull_triangles_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-    {.x = 0, .y = 1, .z = 1}
+  // --- Stage 2: cull_meshlets (three versions with different descriptor sets) ---
+  const auto cull_triangles_command = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
+  auto cull_triangles_cmd_buffer = module.transient_buffer({
+    .size = sizeof(cull_triangles_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "cull triangles command",
+  });
+  cull_triangles_cmd_buffer = module.update_buffer(
+    cull_triangles_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&cull_triangles_command), sizeof(cull_triangles_command)}
   );
 
   if (context.use_hiz) {
-    auto cull_meshlets_pass = vuk::make_pass(
-      stack.format("vis cull meshlets {}", cull_flags & GPU::CullFlag::LatePass ? "late" : "early"),
-      [cull_camera, cull_flags](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-        VUK_IA(vuk::eComputeSampled) hiz,
-        VUK_BA(vuk::eComputeRead) meshes,
-        VUK_BA(vuk::eComputeRead) mesh_instances,
-        VUK_BA(vuk::eComputeRead) meshlet_instances,
-        VUK_BA(vuk::eComputeRead) transforms,
-        VUK_BA(vuk::eComputeRW) visibility,
-        VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
-        VUK_BA(vuk::eComputeRW) meshlet_instance_visibility_mask,
-        VUK_BA(vuk::eComputeRW) cull_triangles_cmd
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("cull_meshlets_hiz")
-          .bind_image(0, 0, hiz)
-          .bind_buffer(0, 1, meshes)
-          .bind_buffer(0, 2, mesh_instances)
-          .bind_buffer(0, 3, meshlet_instances)
-          .bind_buffer(0, 4, transforms)
-          .bind_buffer(0, 5, visibility)
-          .bind_buffer(0, 6, visible_meshlet_instances_indices)
-          .bind_buffer(0, 7, meshlet_instance_visibility_mask)
-          .bind_buffer(0, 8, cull_triangles_cmd)
-          .specialize_constants(0, std::to_underlying(cull_flags))
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-          .dispatch_indirect(dispatch_cmd);
-
-        return std::make_tuple(
-          dispatch_cmd,
-          hiz,
-          meshes,
-          mesh_instances,
-          meshlet_instances,
-          transforms,
-          visibility,
-          visible_meshlet_instances_indices,
-          meshlet_instance_visibility_mask,
-          cull_triangles_cmd
-        );
-      }
-    );
-
     std::tie(
       context.cull_meshlets_cmd_buffer,
       context.hiz_attachment,
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_world_buffer,
+      values.meshes,
+      values.mesh_instances,
+      values.meshlet_instances,
+      values.transforms_world,
       context.visibility_buffer,
-      self.prepared_frame.visible_meshlet_instances_indices_buffer,
-      self.prepared_frame.meshlet_instance_visibility_mask_buffer,
+      values.visible_meshlet_instances_indices,
+      values.meshlet_instance_visibility_mask,
       cull_triangles_cmd_buffer
-    ) =
-      cull_meshlets_pass(
-        std::move(context.cull_meshlets_cmd_buffer),
-        std::move(context.hiz_attachment),
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_world_buffer),
-        std::move(context.visibility_buffer),
-        std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-        std::move(self.prepared_frame.meshlet_instance_visibility_mask_buffer),
-        std::move(cull_triangles_cmd_buffer)
-      );
-  } else if (context.use_hpb) {
-    auto cull_meshlets_pass = vuk::make_pass(
-      "rmvsm cull meshlets",
-      [cull_camera, clipmap_count = context.vsm_clipmap_count](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-        VUK_BA(vuk::eComputeRead) meshes,
-        VUK_BA(vuk::eComputeRead) mesh_instances,
-        VUK_BA(vuk::eComputeRead) meshlet_instances,
-        VUK_BA(vuk::eComputeRead) transforms,
-        VUK_BA(vuk::eComputeRW) visibility,
-        VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
-        VUK_BA(vuk::eComputeRW) cull_triangles_cmd,
-        VUK_IA(vuk::eComputeSampled) hpb,
-        VUK_BA(vuk::eComputeRead) clipmaps,
-        VUK_BA(vuk::eComputeRead) clipmap_dirty_flags
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("cull_meshlets_hpb")
-          .bind_buffer(0, 0, meshes)
-          .bind_buffer(0, 1, mesh_instances)
-          .bind_buffer(0, 2, meshlet_instances)
-          .bind_buffer(0, 3, transforms)
-          .bind_buffer(0, 4, visibility)
-          .bind_buffer(0, 5, visible_meshlet_instances_indices)
-          .bind_buffer(0, 6, cull_triangles_cmd)
-          .bind_image(0, 7, hpb)
-          .bind_sampler(0, 8, vuk::NearestSamplerClamped)
-          .bind_buffer(0, 9, clipmaps)
-          .bind_buffer(0, 10, clipmap_dirty_flags)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(cull_camera, clipmap_count))
-          .dispatch_indirect(dispatch_cmd);
-
-        return std::make_tuple(
-          dispatch_cmd,
-          meshes,
-          mesh_instances,
-          meshlet_instances,
-          transforms,
-          visibility,
-          visible_meshlet_instances_indices,
-          cull_triangles_cmd,
-          hpb,
-          clipmaps,
-          clipmap_dirty_flags
-        );
-      }
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {context.hiz_attachment, vir::Access::ComputeSampled},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {values.meshlet_instance_visibility_mask, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name(stack.format("vis cull meshlets {}", is_late ? "late" : "early"))
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hiz"))
+        .bind_image(0, 0, context.hiz_attachment)
+        .bind_buffer(0, 1, values.meshes)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshlet_instances)
+        .bind_buffer(0, 4, values.transforms_world)
+        .bind_buffer(0, 5, context.visibility_buffer)
+        .bind_buffer(0, 6, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 7, values.meshlet_instance_visibility_mask)
+        .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
     );
-
+  } else if (context.use_hpb) {
     std::tie(
       context.cull_meshlets_cmd_buffer,
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_world_buffer,
+      values.meshes,
+      values.mesh_instances,
+      values.meshlet_instances,
+      values.transforms_world,
       context.visibility_buffer,
-      self.prepared_frame.visible_meshlet_instances_indices_buffer,
+      values.visible_meshlet_instances_indices,
       cull_triangles_cmd_buffer,
       context.hpb_attachment,
       context.vsm_clipmaps_buffer,
       context.vsm_clipmap_dirty_flags_buffer
-    ) =
-      cull_meshlets_pass(
-        std::move(context.cull_meshlets_cmd_buffer),
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_world_buffer),
-        std::move(context.visibility_buffer),
-        std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-        std::move(cull_triangles_cmd_buffer),
-        std::move(context.hpb_attachment),
-        std::move(context.vsm_clipmaps_buffer),
-        std::move(context.vsm_clipmap_dirty_flags_buffer)
-      );
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
+           {context.hpb_attachment, vir::Access::ComputeSampled},
+           {context.vsm_clipmaps_buffer, vir::Access::ComputeRead},
+           {context.vsm_clipmap_dirty_flags_buffer, vir::Access::ComputeRead}}
+        )
+        .with_name("rmvsm cull meshlets")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hpb"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.mesh_instances)
+        .bind_buffer(0, 2, values.meshlet_instances)
+        .bind_buffer(0, 3, values.transforms_world)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 6, cull_triangles_cmd_buffer)
+        .bind_image(0, 7, context.hpb_attachment)
+        .bind_sampler(0, 8, render_context.cached_sampler_handle(NearestSamplerClamped))
+        .bind_buffer(0, 9, context.vsm_clipmaps_buffer)
+        .bind_buffer(0, 10, context.vsm_clipmap_dirty_flags_buffer)
+        .push_constants_from(prepared.cull.clipmap_push)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
+    );
   } else {
     static constexpr auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
-    auto cull_meshlets_pass = vuk::make_pass(
-      "cull meshlets",
-      [cull_camera](
-        vuk::CommandBuffer& cmd_list,
-        VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-        VUK_BA(vuk::eComputeRead) meshes,
-        VUK_BA(vuk::eComputeRead) mesh_instances,
-        VUK_BA(vuk::eComputeRead) meshlet_instances,
-        VUK_BA(vuk::eComputeRead) transforms,
-        VUK_BA(vuk::eComputeRW) visibility,
-        VUK_BA(vuk::eComputeRW) visible_meshlet_instances_indices,
-        VUK_BA(vuk::eComputeRW) cull_triangles_cmd
-      ) {
-        cmd_list //
-          .bind_compute_pipeline("cull_meshlets")
-          .bind_buffer(0, 0, meshes)
-          .bind_buffer(0, 1, mesh_instances)
-          .bind_buffer(0, 2, meshlet_instances)
-          .bind_buffer(0, 3, transforms)
-          .bind_buffer(0, 4, visibility)
-          .bind_buffer(0, 5, visible_meshlet_instances_indices)
-          .bind_buffer(0, 6, cull_triangles_cmd)
-          .specialize_constants(0, std::to_underlying(cull_meshlets_flags))
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-          .dispatch_indirect(dispatch_cmd);
-
-        return std::make_tuple(
-          dispatch_cmd,
-          meshes,
-          mesh_instances,
-          meshlet_instances,
-          transforms,
-          visibility,
-          visible_meshlet_instances_indices,
-          cull_triangles_cmd
-        );
-      }
-    );
-
     std::tie(
       context.cull_meshlets_cmd_buffer,
-      self.prepared_frame.meshes_buffer,
-      self.prepared_frame.mesh_instances_buffer,
-      self.prepared_frame.meshlet_instances_buffer,
-      self.prepared_frame.transforms_world_buffer,
+      values.meshes,
+      values.mesh_instances,
+      values.meshlet_instances,
+      values.transforms_world,
       context.visibility_buffer,
-      self.prepared_frame.visible_meshlet_instances_indices_buffer,
+      values.visible_meshlet_instances_indices,
       cull_triangles_cmd_buffer
-    ) =
-      cull_meshlets_pass(
-        std::move(context.cull_meshlets_cmd_buffer),
-        std::move(self.prepared_frame.meshes_buffer),
-        std::move(self.prepared_frame.mesh_instances_buffer),
-        std::move(self.prepared_frame.meshlet_instances_buffer),
-        std::move(self.prepared_frame.transforms_world_buffer),
-        std::move(context.visibility_buffer),
-        std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-        std::move(cull_triangles_cmd_buffer)
-      );
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name("cull meshlets")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.mesh_instances)
+        .bind_buffer(0, 2, values.meshlet_instances)
+        .bind_buffer(0, 3, values.transforms_world)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 6, cull_triangles_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_meshlets_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
+    );
   }
 
-  // --- Stage 3: cull_triangles (shared by both versions) ---
-  auto cull_triangles_pass = vuk::make_pass(
-    context.use_hiz ? stack.format("cull triangles {}", cull_flags & GPU::CullFlag::LatePass ? "late" : "early")
-                    : "cull triangles",
-    [cull_flags, cull_camera](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) cull_triangles_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) meshlet_instances,
-      VUK_BA(vuk::eComputeRead) visibility,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) visible_meshlet_instances_indices,
-      VUK_BA(vuk::eComputeRW) reordered_indices,
-      VUK_BA(vuk::eComputeRW) draw_indexed_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("cull_triangles")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, meshlet_instances)
-        .bind_buffer(0, 3, visibility)
-        .bind_buffer(0, 4, transforms)
-        .bind_buffer(0, 5, visible_meshlet_instances_indices)
-        .bind_buffer(0, 6, reordered_indices)
-        .bind_buffer(0, 7, draw_indexed_cmd)
-        .specialize_constants(0, std::to_underlying(cull_flags))
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, cull_camera)
-        .dispatch_indirect(cull_triangles_cmd);
-
-      return std::make_tuple(
-        meshes,
-        mesh_instances,
-        meshlet_instances,
-        visibility,
-        transforms,
-        visible_meshlet_instances_indices,
-        reordered_indices,
-        draw_indexed_cmd
-      );
-    }
-  );
-
-  context.draw_geometry_cmd_buffer = self.renderer.render_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>(
-    {.instanceCount = 1}
+  // --- Stage 3: cull_triangles (shared by every version) ---
+  const auto draw_geometry_command = VkDrawIndexedIndirectCommand{
+    .indexCount = 0,
+    .instanceCount = 1,
+    .firstIndex = 0,
+    .vertexOffset = 0,
+    .firstInstance = 0
+  };
+  context.draw_geometry_cmd_buffer = module.transient_buffer({
+    .size = sizeof(draw_geometry_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "draw geometry command",
+  });
+  context.draw_geometry_cmd_buffer = module.update_buffer(
+    context.draw_geometry_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&draw_geometry_command), sizeof(draw_geometry_command)}
   );
   std::tie(
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.meshlet_instances_buffer,
+    std::ignore,
+    values.meshes,
+    values.mesh_instances,
+    values.meshlet_instances,
     context.visibility_buffer,
-    self.prepared_frame.transforms_world_buffer,
-    self.prepared_frame.visible_meshlet_instances_indices_buffer,
-    self.prepared_frame.reordered_indices_buffer,
+    values.transforms_world,
+    values.visible_meshlet_instances_indices,
+    values.reordered_indices,
     context.draw_geometry_cmd_buffer
-  ) =
-    cull_triangles_pass(
-      std::move(cull_triangles_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.meshlet_instances_buffer),
-      std::move(context.visibility_buffer),
-      std::move(self.prepared_frame.transforms_world_buffer),
-      std::move(self.prepared_frame.visible_meshlet_instances_indices_buffer),
-      std::move(self.prepared_frame.reordered_indices_buffer),
-      std::move(context.draw_geometry_cmd_buffer)
-    );
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.meshlet_instances, vir::Access::ComputeRead},
+         {context.visibility_buffer, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {values.visible_meshlet_instances_indices, vir::Access::ComputeRead},
+         {values.reordered_indices, vir::Access::ComputeRW},
+         {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name(context.use_hiz ? stack.format("cull triangles {}", is_late ? "late" : "early") : "cull triangles")
+      .bind_compute_pipeline(render_context.pipeline("cull_triangles"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.meshlet_instances)
+      .bind_buffer(0, 3, context.visibility_buffer)
+      .bind_buffer(0, 4, values.transforms_world)
+      .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+      .bind_buffer(0, 6, values.reordered_indices)
+      .bind_buffer(0, 7, context.draw_geometry_cmd_buffer)
+      .specialize_constant(0, std::to_underlying(cull_flags))
+      .push_constants_from(cull_camera)
+      .dispatch_indirect(cull_triangles_cmd_buffer)
+      .end_compute()
+  );
 }
 
-auto RendererInstance::cull_geometry_pointspot(this RendererInstance& self, CullGeometryPointSpotContext& context)
-  -> void {
+auto RendererInstance::cull_geometry_pointspot(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryPointSpotContext& context
+) -> void {
   ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& values = recording.values;
 
-  auto& render_context = self.renderer.render_context;
-  const auto ps_ctx = context.ps_ctx;
+  memory::ScopedStack stack;
+  auto& variables = prepared.cull;
+  const auto mip = context.curr_mip;
+  if (variables.pointspot_contexts[mip] == vir::ValueID::Invalid) {
+    variables.pointspot_contexts[mip] = module.declare_bytes_var(
+      stack.format("pointspot cull context {}", mip),
+      sizeof(GPU::VSMPointSpotContext)
+    );
+    variables.pointspot_cull_meshes_commands[mip] = module.declare_bytes_var(
+      stack.format("vsm pointspot cull meshes command {}", mip),
+      sizeof(VkDispatchIndirectCommand)
+    );
+  }
+
+  const auto ps_ctx = prepared.cull.pointspot_contexts[context.curr_mip];
 
   if (context.init) {
-    context.vsm_meshlet_instances_buffer = render_context->alloc_transient_buffer(
-      vuk::MemoryUsage::eGPUonly,
-      RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(GPU::VSMMeshletInstance)
-    );
-    if (!self.prepared_frame.use_mesh_shaders) {
-      context.visible_indices_buffer = render_context->alloc_transient_buffer(
-        vuk::MemoryUsage::eGPUonly,
-        RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(u32)
-      );
-      context.reordered_indices_buffer = render_context->alloc_transient_buffer(
-        vuk::MemoryUsage::eGPUonly,
-        RMVSMContext::POINT_SPOT_MAX_INDEX_COUNT * sizeof(u32)
-      );
+    context.vsm_meshlet_instances_buffer = module.transient_buffer({
+      .size = std::max<u64>(RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(GPU::VSMMeshletInstance), 4),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "vsm pointspot meshlet instances",
+    });
+    if (!recording.shape.use_mesh_shaders) {
+      context.visible_indices_buffer = module.transient_buffer({
+        .size = std::max<u64>(RMVSMContext::POINT_SPOT_MAX_MESHLET_INSTANCES * sizeof(u32), 4),
+        .usage = TRANSIENT_BUFFER_USAGE,
+        .location = vir::MemoryLocation::GpuOnly,
+        .name = "vsm pointspot visible indices",
+      });
+      context.reordered_indices_buffer = module.transient_buffer({
+        .size = std::max<u64>(RMVSMContext::POINT_SPOT_MAX_INDEX_COUNT * sizeof(u32), 4),
+        .usage = TRANSIENT_BUFFER_USAGE,
+        .location = vir::MemoryLocation::GpuOnly,
+        .name = "vsm pointspot reordered indices",
+      });
     }
   }
 
-  auto vsm_meshlet_instance_count_buffer = render_context->scratch_buffer<u32>(0u);
-  auto cull_meshlets_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-    {.x = 0, .y = 1, .z = 1}
+  const auto meshlet_count = 0_u32;
+  auto vsm_meshlet_instance_count_buffer = module.transient_buffer({
+    .size = sizeof(meshlet_count),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot meshlet count",
+  });
+  vsm_meshlet_instance_count_buffer = module.update_buffer(
+    vsm_meshlet_instance_count_buffer,
+    std::span{reinterpret_cast<const u8*>(&meshlet_count), sizeof(meshlet_count)}
+  );
+  const auto cull_meshlets_command = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
+  auto cull_meshlets_cmd_buffer = module.transient_buffer({
+    .size = sizeof(cull_meshlets_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot cull meshlets command",
+  });
+  cull_meshlets_cmd_buffer = module.update_buffer(
+    cull_meshlets_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&cull_meshlets_command), sizeof(cull_meshlets_command)}
   );
 
   // compact active layers into the indirect dispatch's Y dimension
-  auto active_layers_buffer = render_context->alloc_transient_buffer(
-    vuk::MemoryUsage::eGPUonly,
-    RMVSMContext::POINT_SPOT_LAYER_COUNT * sizeof(u32)
-  );
-  auto cull_meshes_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>({
-    .x = (ps_ctx.mesh_instance_count + RMVSMContext::CULLING_MESH_COUNT - 1) / RMVSMContext::CULLING_MESH_COUNT,
-    .y = 0,
-    .z = 1,
+  auto active_layers_buffer = module.transient_buffer({
+    .size = std::max<u64>(RMVSMContext::POINT_SPOT_LAYER_COUNT * sizeof(u32), 4),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot active layers",
   });
-
-  auto build_active_layers_pass = vuk::make_pass(
-    "rmvsm pointspot build active layers",
-    [ps_ctx](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eComputeRead) views,
-      VUK_BA(vuk::eComputeRead) layer_dirty_mask,
-      VUK_BA(vuk::eComputeWrite) active_layers,
-      VUK_BA(vuk::eComputeRW) cull_meshes_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("rmvsm_pointspot_build_active_layers")
-        .bind_buffer(0, 0, views)
-        .bind_buffer(0, 1, layer_dirty_mask)
-        .bind_buffer(0, 2, active_layers)
-        .bind_buffer(0, 3, cull_meshes_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
-        .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT);
-
-      return std::make_tuple(views, layer_dirty_mask, active_layers, cull_meshes_cmd);
-    }
-  );
-
-  std::tie(context.views_buffer, context.layer_dirty_mask_buffer, active_layers_buffer, cull_meshes_cmd_buffer) =
-    build_active_layers_pass(
-      std::move(context.views_buffer),
-      std::move(context.layer_dirty_mask_buffer),
-      std::move(active_layers_buffer),
-      std::move(cull_meshes_cmd_buffer)
-    );
-
-  auto cull_meshes_pass = vuk::make_pass(
-    "rmvsm pointspot cull meshes",
-    [ps_ctx](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) views,
-      VUK_BA(vuk::eComputeRead) active_layers,
-      VUK_BA(vuk::eComputeWrite) vsm_meshlet_instances,
-      VUK_BA(vuk::eComputeRW) vsm_meshlet_instance_count,
-      VUK_BA(vuk::eComputeRW) cull_meshlets_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("rmvsm_pointspot_cull_meshes")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, transforms)
-        .bind_buffer(0, 2, mesh_instances)
-        .bind_buffer(0, 3, views)
-        .bind_buffer(0, 4, active_layers)
-        .bind_buffer(0, 5, vsm_meshlet_instances)
-        .bind_buffer(0, 6, vsm_meshlet_instance_count)
-        .bind_buffer(0, 7, cull_meshlets_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
-        .dispatch_indirect(dispatch_cmd);
-
-      return std::make_tuple(
-        meshes,
-        transforms,
-        mesh_instances,
-        views,
-        active_layers,
-        vsm_meshlet_instances,
-        vsm_meshlet_instance_count,
-        cull_meshlets_cmd
-      );
-    }
+  auto cull_meshes_cmd_buffer = module.transient_buffer({
+    .size = sizeof(VkDispatchIndirectCommand),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot cull meshes command",
+  });
+  cull_meshes_cmd_buffer = module.update_buffer_from(
+    cull_meshes_cmd_buffer,
+    prepared.cull.pointspot_cull_meshes_commands[context.curr_mip]
   );
 
   std::tie(
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.transforms_world_buffer,
-    self.prepared_frame.mesh_instances_buffer,
+    context.views_buffer,
+    context.layer_dirty_mask_buffer,
+    active_layers_buffer,
+    cull_meshes_cmd_buffer
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.views_buffer, vir::Access::ComputeRead},
+         {context.layer_dirty_mask_buffer, vir::Access::ComputeRead},
+         {active_layers_buffer, vir::Access::ComputeWrite},
+         {cull_meshes_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot build active layers")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_build_active_layers"))
+      .bind_buffer(0, 0, context.views_buffer)
+      .bind_buffer(0, 1, context.layer_dirty_mask_buffer)
+      .bind_buffer(0, 2, active_layers_buffer)
+      .bind_buffer(0, 3, cull_meshes_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT, 1, 1)
+      .end_compute()
+  );
+
+  std::tie(
+    std::ignore,
+    values.meshes,
+    values.transforms_world,
+    values.mesh_instances,
     context.views_buffer,
     active_layers_buffer,
     context.vsm_meshlet_instances_buffer,
     vsm_meshlet_instance_count_buffer,
     cull_meshlets_cmd_buffer
-  ) =
-    cull_meshes_pass(
-      std::move(cull_meshes_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.transforms_world_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(context.views_buffer),
-      std::move(active_layers_buffer),
-      std::move(context.vsm_meshlet_instances_buffer),
-      std::move(vsm_meshlet_instance_count_buffer),
-      std::move(cull_meshlets_cmd_buffer)
-    );
-
-  // each page-table mip has an independent occupancy pyramid
-  auto downsample_hpb_pass = vuk::make_pass(
-    "rmvsm pointspot downsample hpb",
-    [curr_mip = ps_ctx.curr_mip](
-      vuk::CommandBuffer& cmd_list, //
-      VUK_IA(vuk::eComputeSampled) page_table,
-      VUK_IA(vuk::eComputeRW | vuk::eComputeSampled) hpb
-    ) {
-      const auto base_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE) >> curr_mip;
-      const auto level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT - static_cast<u32>(curr_mip);
-
-      for (auto i = 0_u32; i < level_count; i++) {
-        auto src = i == 0 ? hpb->mip(0) : hpb->mip(i - 1);
-        auto dst = hpb->mip(i);
-
-        auto level_extent = vuk::Extent3D{
-          std::max(1u, base_extent >> i),
-          std::max(1u, base_extent >> i),
-          hpb->layer_count,
-        };
-
-        if (i > 0) {
-          cmd_list.image_barrier(src, vuk::eComputeWrite, vuk::eComputeSampled);
-        }
-
-        cmd_list //
-          .bind_compute_pipeline("rmvsm_pointspot_downsample_hpb")
-          .specialize_constants(0, i == 0)
-          .bind_image(0, 0, page_table)
-          .bind_image(0, 1, src)
-          .bind_image(0, 2, dst)
-          .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, PushConstants(level_extent, curr_mip))
-          .dispatch_invocations(level_extent.width, level_extent.height, level_extent.depth);
-      }
-
-      cmd_list.image_barrier(hpb, vuk::eComputeSampled, vuk::eComputeRW);
-
-      return std::make_tuple(page_table, hpb);
-    }
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_meshes_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {active_layers_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeWrite},
+         {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRW},
+         {cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull meshes")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshes"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.transforms_world)
+      .bind_buffer(0, 2, values.mesh_instances)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, active_layers_buffer)
+      .bind_buffer(0, 5, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 6, vsm_meshlet_instance_count_buffer)
+      .bind_buffer(0, 7, cull_meshlets_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_meshes_cmd_buffer)
+      .end_compute()
   );
 
-  std::tie(context.page_table_attachment, context.hpb_attachment) = downsample_hpb_pass(
-    std::move(context.page_table_attachment),
-    std::move(context.hpb_attachment)
-  );
+  // each page-table mip has an independent occupancy pyramid, built one level per pass so every
+  // level reads the one before it with the barrier the graph puts between them
+  const auto curr_mip = context.curr_mip;
+  const auto base_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE) >> curr_mip;
+  const auto level_count = RMVSMContext::POINT_SPOT_HPB_LEVEL_COUNT - curr_mip;
+  constexpr auto layer_count = RMVSMContext::POINT_SPOT_LAYER_COUNT;
+  for (auto i = 0_u32; i < level_count; i++) {
+    const auto level_extent = vir::Extent3D{
+      std::max(1u, base_extent >> i),
+      std::max(1u, base_extent >> i),
+      layer_count
+    };
+    const auto src = module.mip(context.hpb_attachment, i == 0 ? 0 : i - 1);
+    const auto dst = module.mip(context.hpb_attachment, i);
+    const auto [page_table, _src, written] = //
+      module
+        .begin_compute(
+          {{context.page_table_attachment, vir::Access::ComputeSampled},
+           {src, vir::Access::ComputeSampled},
+           {dst, vir::Access::ComputeRW}}
+        )
+        .with_name("rmvsm pointspot downsample hpb")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_downsample_hpb"))
+        .specialize_constant(0, i == 0)
+        .bind_image(0, 0, context.page_table_attachment)
+        .bind_image(0, 1, src)
+        .bind_image(0, 2, dst)
+        .push_constants(PushConstants(level_extent, curr_mip))
+        .dispatch_invocations(level_extent.width, level_extent.height, level_extent.depth)
+        .end_compute();
+    context.page_table_attachment = page_table;
+    context.hpb_attachment = module.whole(written);
+  }
 
-  if (self.prepared_frame.use_mesh_shaders) {
-    context.vsm_meshlet_instance_count_buffer = std::move(vsm_meshlet_instance_count_buffer);
-    context.draw_cmd_buffer = std::move(cull_meshlets_cmd_buffer);
+  if (recording.shape.use_mesh_shaders) {
+    context.vsm_meshlet_instance_count_buffer = vsm_meshlet_instance_count_buffer;
+    context.draw_cmd_buffer = cull_meshlets_cmd_buffer;
     return;
   }
 
-  auto cull_triangles_cmd_buffer = render_context->scratch_buffer<vuk::DispatchIndirectCommand>(
-    {.x = 0, .y = 1, .z = 1}
+  const auto cull_triangles_command = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
+  auto cull_triangles_cmd_buffer = module.transient_buffer({
+    .size = sizeof(cull_triangles_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot cull triangles command",
+  });
+  cull_triangles_cmd_buffer = module.update_buffer(
+    cull_triangles_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&cull_triangles_command), sizeof(cull_triangles_command)}
   );
-  context.draw_cmd_buffer = render_context->scratch_buffer<vuk::DrawIndexedIndirectCommand>({.instanceCount = 1});
-
-  auto cull_meshlets_pass = vuk::make_pass(
-    "rmvsm pointspot cull meshlets",
-    [ps_ctx](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) views,
-      VUK_BA(vuk::eComputeRead) vsm_meshlet_instances,
-      VUK_BA(vuk::eComputeRead) vsm_meshlet_instance_count,
-      VUK_IA(vuk::eComputeSampled) hpb,
-      VUK_BA(vuk::eComputeWrite) visible_indices,
-      VUK_BA(vuk::eComputeRW) cull_triangles_cmd
-    ) {
-      bind_vsm_pointspot_spec_constants(cmd_list.bind_compute_pipeline("rmvsm_pointspot_cull_meshlets"))
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, transforms)
-        .bind_buffer(0, 3, views)
-        .bind_buffer(0, 4, vsm_meshlet_instances)
-        .bind_buffer(0, 5, vsm_meshlet_instance_count)
-        .bind_image(0, 6, hpb)
-        .bind_buffer(0, 7, visible_indices)
-        .bind_buffer(0, 8, cull_triangles_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
-        .dispatch_indirect(dispatch_cmd);
-
-      return std::make_tuple(
-        meshes,
-        mesh_instances,
-        transforms,
-        views,
-        vsm_meshlet_instances,
-        vsm_meshlet_instance_count,
-        hpb,
-        visible_indices,
-        cull_triangles_cmd
-      );
-    }
+  const auto draw_command = VkDrawIndexedIndirectCommand{
+    .indexCount = 0,
+    .instanceCount = 1,
+    .firstIndex = 0,
+    .vertexOffset = 0,
+    .firstInstance = 0
+  };
+  context.draw_cmd_buffer = module.transient_buffer({
+    .size = sizeof(draw_command),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "vsm pointspot draw command",
+  });
+  context.draw_cmd_buffer = module.update_buffer(
+    context.draw_cmd_buffer,
+    std::span{reinterpret_cast<const u8*>(&draw_command), sizeof(draw_command)}
   );
 
+  auto cull_pass = //
+    module
+      .begin_compute(
+        {{cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
+         {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRead},
+         {context.hpb_attachment, vir::Access::ComputeSampled},
+         {context.visible_indices_buffer, vir::Access::ComputeWrite},
+         {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull meshlets")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshlets"));
   std::tie(
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.transforms_world_buffer,
+    std::ignore,
+    values.meshes,
+    values.mesh_instances,
+    values.transforms_world,
     context.views_buffer,
     context.vsm_meshlet_instances_buffer,
     vsm_meshlet_instance_count_buffer,
     context.hpb_attachment,
     context.visible_indices_buffer,
     cull_triangles_cmd_buffer
-  ) =
-    cull_meshlets_pass(
-      std::move(cull_meshlets_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.transforms_world_buffer),
-      std::move(context.views_buffer),
-      std::move(context.vsm_meshlet_instances_buffer),
-      std::move(vsm_meshlet_instance_count_buffer),
-      std::move(context.hpb_attachment),
-      std::move(context.visible_indices_buffer),
-      std::move(cull_triangles_cmd_buffer)
-    );
-
-  auto cull_triangles_pass = vuk::make_pass(
-    "rmvsm pointspot cull triangles",
-    [ps_ctx](
-      vuk::CommandBuffer& cmd_list,
-      VUK_BA(vuk::eIndirectRead) dispatch_cmd,
-      VUK_BA(vuk::eComputeRead) meshes,
-      VUK_BA(vuk::eComputeRead) mesh_instances,
-      VUK_BA(vuk::eComputeRead) transforms,
-      VUK_BA(vuk::eComputeRead) views,
-      VUK_BA(vuk::eComputeRead) vsm_meshlet_instances,
-      VUK_BA(vuk::eComputeRead) visible_indices,
-      VUK_BA(vuk::eComputeWrite) reordered_indices,
-      VUK_BA(vuk::eComputeRW) draw_cmd
-    ) {
-      cmd_list //
-        .bind_compute_pipeline("rmvsm_pointspot_cull_triangles")
-        .bind_buffer(0, 0, meshes)
-        .bind_buffer(0, 1, mesh_instances)
-        .bind_buffer(0, 2, transforms)
-        .bind_buffer(0, 3, views)
-        .bind_buffer(0, 4, vsm_meshlet_instances)
-        .bind_buffer(0, 5, visible_indices)
-        .bind_buffer(0, 6, reordered_indices)
-        .bind_buffer(0, 7, draw_cmd)
-        .push_constants(vuk::ShaderStageFlagBits::eCompute, 0, ps_ctx)
-        .dispatch_indirect(dispatch_cmd);
-
-      return std::make_tuple(
-        meshes,
-        mesh_instances,
-        transforms,
-        views,
-        vsm_meshlet_instances,
-        visible_indices,
-        reordered_indices,
-        draw_cmd
-      );
-    }
+  ) = std::tuple_cat( //
+    bind_vsm_pointspot_spec_constants(cull_pass)
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.transforms_world)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 5, vsm_meshlet_instance_count_buffer)
+      .bind_image(0, 6, context.hpb_attachment)
+      .bind_buffer(0, 7, context.visible_indices_buffer)
+      .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_meshlets_cmd_buffer)
+      .end_compute()
   );
 
   std::tie(
-    self.prepared_frame.meshes_buffer,
-    self.prepared_frame.mesh_instances_buffer,
-    self.prepared_frame.transforms_world_buffer,
+    std::ignore,
+    values.meshes,
+    values.mesh_instances,
+    values.transforms_world,
     context.views_buffer,
     context.vsm_meshlet_instances_buffer,
     context.visible_indices_buffer,
     context.reordered_indices_buffer,
     context.draw_cmd_buffer
-  ) =
-    cull_triangles_pass(
-      std::move(cull_triangles_cmd_buffer),
-      std::move(self.prepared_frame.meshes_buffer),
-      std::move(self.prepared_frame.mesh_instances_buffer),
-      std::move(self.prepared_frame.transforms_world_buffer),
-      std::move(context.views_buffer),
-      std::move(context.vsm_meshlet_instances_buffer),
-      std::move(context.visible_indices_buffer),
-      std::move(context.reordered_indices_buffer),
-      std::move(context.draw_cmd_buffer)
-    );
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
+         {context.visible_indices_buffer, vir::Access::ComputeRead},
+         {context.reordered_indices_buffer, vir::Access::ComputeWrite},
+         {context.draw_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull triangles")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_triangles"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.transforms_world)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 5, context.visible_indices_buffer)
+      .bind_buffer(0, 6, context.reordered_indices_buffer)
+      .bind_buffer(0, 7, context.draw_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_triangles_cmd_buffer)
+      .end_compute()
+  );
 }
-
 } // namespace ox

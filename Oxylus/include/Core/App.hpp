@@ -5,13 +5,15 @@
 #include "Core/JobManager.hpp"
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
-#include "Render/RenderContext.hpp"
+#include "Render/Fwd.hpp"
 #include "Render/Window.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace ox {
 class ImGuiLayer;
 class RenderContext;
+class Scene;
+struct GameFrame;
 
 struct WindowResizeEvent {
   u32 width = 0;
@@ -30,6 +32,8 @@ public:
 
   auto init(this App& self) -> void;
   auto step(this App& self) -> void;
+  auto render_scene(this App& self, Scene& scene, std::function<auto()->void> draw_ui = {})
+    -> std::expected<vir::SubmitTicket, VkResult>;
   auto run(this App& self) -> void;
   auto stop(this App& self) -> void;
   auto should_stop(this App& self) -> void;
@@ -107,7 +111,8 @@ private:
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;
 
-  std::unique_ptr<RenderContext> render_context = nullptr;
+  std::unique_ptr<RenderContext> render_context;
+  std::unique_ptr<GameFrame> game_frame;
   option<Window> window = nullopt;
 
   VFS vfs = {};

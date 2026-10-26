@@ -1,8 +1,9 @@
 #pragma once
 
+#include "Render/Fwd.hpp"
+
 #include <filesystem>
 #include <string>
-#include <vuk/ImageAttachment.hpp>
 
 #include "EditorPanelState.hpp"
 
@@ -12,7 +13,7 @@ public:
   LoadingPanel();
 
   auto on_update(this LoadingPanel& self) -> void;
-  auto on_render(this LoadingPanel& self, vuk::ImageAttachment swapchain_attachment) -> void;
+  auto on_render(this LoadingPanel& self, const SwapchainInfo& swapchain_info) -> void;
 
   // Takes over from the project selector. The heavy part of the load runs a frame later, from
   // `on_update`, so the modal is already on screen before the directory walk blocks the thread.

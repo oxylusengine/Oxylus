@@ -9,6 +9,7 @@
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
 #include "Editor.hpp"
+#include "Render/RenderContext.hpp"
 #include "UI/UI.hpp"
 #include "UI/UIScale.hpp"
 
@@ -181,7 +182,7 @@ auto EditorSettingsPanel::draw_keybinds_tab() -> void {
   ImGui::EndChild();
 }
 
-auto EditorSettingsPanel::on_render(this EditorSettingsPanel& self, vuk::ImageAttachment swapchain_attachment) -> void {
+auto EditorSettingsPanel::on_render(this EditorSettingsPanel& self, const SwapchainInfo& swapchain_info) -> void {
   constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
                                             ImGuiWindowFlags_NoResize;
   if (self.on_begin(window_flags)) {
