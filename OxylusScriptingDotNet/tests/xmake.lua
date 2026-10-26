@@ -35,6 +35,7 @@ for _, file in ipairs(os.files(path.join(os.scriptdir(), "**Test*.cpp"))) do
         })
 
         add_packages("gtest")
+        add_defines("OX_ENGINE_DIR=\"" .. path.translate(path.join(os.scriptdir(), "..", "..")):gsub("\\", "/") .. "\"")
 
         if is_plat("windows") then
             add_ldflags("/subsystem:console")

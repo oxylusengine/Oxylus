@@ -744,6 +744,25 @@ public sealed class UiCacheProbe : EntityBehaviour
     }
 }
 
+public sealed class UiFontProbe : EntityBehaviour
+{
+    public override void OnStart()
+    {
+        try
+        {
+            Ui.LoadFontFace("Fonts/missing.ttf");
+            Log.Info("ui missing font loaded");
+        }
+        catch (InvalidOperationException)
+        {
+            Log.Info("ui missing font threw");
+        }
+
+        Ui.LoadFontFace("Fonts/probe.ttf");
+        Log.Info("ui font loaded");
+    }
+}
+
 public sealed class AppProbe : EntityBehaviour
 {
     public override void OnStart()

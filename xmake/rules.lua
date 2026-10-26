@@ -206,7 +206,9 @@ end)
 -- Publishes a game's C# scripts with NativeAOT into `<targetdir>/<output_dir>` (default "scripts") and installs them
 -- next to the game, one native library with no .NET runtime behind it. NativeAOT can't cross compile between operating
 -- systems, so each platform publishes its own. `source_roots` are walked for the C# that decides whether to publish
--- again, the generated component mirrors always count. The target depends on OxylusManaged, which writes those
+-- again, the generated component mirrors always count. `properties` are MSBuild properties as "Name=Value", each
+-- expanded with vformat so $(builddir) and friends work, a game points OxylusSdkDir and OxylusAssetDir this way. The
+-- target depends on OxylusManaged, which writes those
 rule("ox.publish_csharp")
 after_build(function(target)
   import("core.project.depend")
@@ -224,18 +226,23 @@ after_build(function(target)
   end
   table.sort(sources)
 
+  local properties = {}
+  for _, property in ipairs(target:extraconf("rules", "ox.publish_csharp", "properties") or {}) do
+    table.insert(properties, "-p:" .. vformat(property))
+  end
+
   depend.on_changed(function()
     cprint("${color.build.object}publishing C# %s with NativeAOT", path.filename(project))
-    dotnet.publish_aot(target, project, output_dir, {
+    dotnet.publish_aot(target, project, output_dir, table.join({
       -- a game needs no culture data or exception message resources, and trades size for speed
       "-p:InvariantGlobalization=true",
       "-p:UseSystemResourceKeys=true",
       "-p:OptimizationPreference=Speed",
-    })
+    }, properties))
   end, {
     dependfile = target:dependfile("ox.publish_csharp"),
     files = sources,
-    values = table.join({ output_dir }, sources),
+    values = table.join({ output_dir }, properties, sources),
     changed = not os.isdir(output_dir),
   })
 end)

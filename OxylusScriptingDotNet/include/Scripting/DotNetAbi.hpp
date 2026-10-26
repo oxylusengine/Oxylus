@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 9u
+#define OX_DOTNET_ABI_VERSION 10u
 
 struct ecs_world_t;
 
@@ -584,6 +584,8 @@ struct OxNativeApi {
   // RmlUi in the world's scene context. Elements are handles that go stale, never dangle, once RmlUi drops the
   // element, and a stale one returns NotFound. `path` is relative to ASSETS_DIR
   auto (*ui_load_document)(ecs_world_t* world, OxStringView path, u64* document) -> OxStatus = nullptr;
+  // `path` is relative to ASSETS_DIR
+  auto (*ui_load_font_face)(OxStringView path, bool is_fallback) -> OxStatus = nullptr;
   auto (*ui_document)(u64 document, OxUiDocumentCommand command) -> OxStatus = nullptr;
   auto (*ui_query)(u64 element, OxStringView selector, u64* found) -> OxStatus = nullptr;
   auto (*ui_set_inner_rml)(u64 element, OxStringView rml) -> OxStatus = nullptr;
