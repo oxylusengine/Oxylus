@@ -178,6 +178,13 @@ static auto ui_load_document(ecs_world_t* world, OxStringView path, u64* documen
   return OxStatus::Ok;
 }
 
+static auto ui_load_font_face(OxStringView path, bool is_fallback) -> OxStatus {
+  ZoneScoped;
+
+  const auto virtual_path = (std::filesystem::path(VFS::ASSETS_DIR) / to_view(path)).generic_string();
+  return Rml::LoadFontFace(virtual_path, is_fallback) ? OxStatus::Ok : OxStatus::NotFound;
+}
+
 static auto ui_document(u64 document, OxUiDocumentCommand command) -> OxStatus {
   auto* element = element_of(document);
   auto* rml_document = element ? element->GetOwnerDocument() : nullptr;
@@ -472,6 +479,7 @@ static auto ui_clear_template_cache() -> void { Rml::Factory::ClearTemplateCache
 
 auto fill_ui_api(OxNativeApi& api) -> void {
   api.ui_load_document = ui_load_document;
+  api.ui_load_font_face = ui_load_font_face;
   api.ui_document = ui_document;
   api.ui_query = ui_query;
   api.ui_set_inner_rml = ui_set_inner_rml;

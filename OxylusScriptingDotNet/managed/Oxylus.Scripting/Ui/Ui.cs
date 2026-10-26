@@ -32,6 +32,19 @@ public static unsafe class Ui
         return new UiDocument(document);
     }
 
+    // `path` is relative to the game's assets, "Fonts/FiraSans-Regular.ttf". A fallback face covers glyphs the other
+    // faces lack
+    public static void LoadFontFace(string path, bool isFallback = false)
+    {
+        var bytes = Encoding.UTF8.GetBytes(path);
+        fixed (byte* data = bytes)
+        {
+            Check(
+                Runtime.Native.UiLoadFontFace(new StringView(data, bytes.Length), isFallback),
+                $"Couldn't load font face {path}, does the file exist and is it a font?");
+        }
+    }
+
     // a data model the documents loaded after it can bind to with data-model="name"
     public static UiDataModel CreateDataModel(World world, string name)
     {

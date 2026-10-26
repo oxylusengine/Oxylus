@@ -61,6 +61,11 @@ protected:
 </rml>
 )rml";
     document.close();
+
+    const auto font = std::filesystem::path(OX_ENGINE_DIR) / "OxylusEditor" / "Assets" / "Fonts" /
+                      "FiraSans-Regular.ttf";
+    std::filesystem::create_directories(root / "Fonts");
+    std::filesystem::copy_file(font, root / "Fonts" / "probe.ttf", std::filesystem::copy_options::overwrite_existing);
     ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
 
     files.vfs = &ox::App::get_vfs();
@@ -176,4 +181,12 @@ TEST_F(DotNetUiTest, ClearsTheStyleSheetAndTemplateCaches) {
   frame();
   ASSERT_NE(element("title"), nullptr) << logs_text();
   EXPECT_EQ(element("title")->GetInnerRML(), "Hello");
+}
+
+TEST_F(DotNetUiTest, LoadsAFontFaceAndRejectsAMissingOne) {
+  world.entity().set(ox::ScriptComponent{.type_name = "SmokeGame.UiFontProbe"});
+  scripting.start_world(world.c_ptr());
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "ui missing font threw"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "ui missing font loaded"), 0);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "ui font loaded"), 1) << logs_text();
 }
