@@ -48,6 +48,8 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
     .init(self.system, "editor.content_type_filter", "content panel asset type filter bitmask", 0);
   self.cvar_show_style_editor.init(self.system, "ui.imgui_style_editor", "show imgui style editor", 0);
   self.cvar_show_imgui_demo.init(self.system, "ui.imgui_demo", "show imgui demo window", 0);
+  self.cvar_external_editor
+    .init(self.system, "editor.external_editor", "command that opens scripts, empty uses the system default", "");
 }
 
 auto EditorCVar::load(this EditorCVar& self) -> void {
@@ -96,6 +98,8 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
   // the content panel masks this down to the bits it knows about
   if (auto v = config["content_type_filter"].as_integer())
     self.cvar_content_type_filter.set(static_cast<i32>(v->get()));
+  if (auto v = config["external_editor"].as_string())
+    self.cvar_external_editor.set(std::string(v->get()));
 
   return;
 }
@@ -126,6 +130,7 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"content_sort_field", self.cvar_content_sort_field.get()},
        {"content_sort_ascending", self.cvar_content_sort_ascending.as_bool()},
        {"content_type_filter", self.cvar_content_type_filter.get()},
+       {"external_editor", self.cvar_external_editor.get()},
      }}
   };
 

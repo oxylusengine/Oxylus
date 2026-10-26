@@ -10,6 +10,7 @@
 #include <regex>
 #include <system_error>
 
+#include "Core/UUID.hpp"
 #include "DotNetHosts.hpp"
 
 namespace ox {
@@ -134,6 +135,55 @@ auto write_scripts_props(
   );
 
   return write_file(scripts_dir / "Oxylus.props", content);
+}
+
+auto write_scripts_solution(const std::filesystem::path& project_dir, const std::filesystem::path& csproj)
+  -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  auto error = std::error_code();
+  for (const auto& entry : std::filesystem::directory_iterator(project_dir, error)) {
+    const auto extension = entry.path().extension();
+    if (extension == ".sln" || extension == ".slnx") {
+      return {};
+    }
+  }
+
+  if (error) {
+    return std::unexpected(fmt::format("Couldn't read {}: {}", to_utf8(project_dir), error.message()));
+  }
+
+  auto relative_csproj = to_utf8(std::filesystem::relative(csproj, project_dir).lexically_normal());
+  std::ranges::replace(relative_csproj, '/', '\\');
+  auto guid = UUID::generate_random().str();
+  std::ranges::transform(guid, guid.begin(), [](c8 c) { return static_cast<c8>(std::toupper(static_cast<u8>(c))); });
+
+  // scripts live in the asset directory, outside the csproj's folder, so an LSP starting from one walks up to this
+  const auto content = fmt::format(
+    "Microsoft Visual Studio Solution File, Format Version 12.00\r\n"
+    "# Visual Studio Version 17\r\n"
+    "VisualStudioVersion = 17.0.31903.59\r\n"
+    "MinimumVisualStudioVersion = 10.0.40219.1\r\n"
+    "Project(\"{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}\") = \"{0}\", \"{1}\", \"{{{2}}}\"\r\n"
+    "EndProject\r\n"
+    "Global\r\n"
+    "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\r\n"
+    "\t\tDebug|Any CPU = Debug|Any CPU\r\n"
+    "\t\tRelease|Any CPU = Release|Any CPU\r\n"
+    "\tEndGlobalSection\r\n"
+    "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution\r\n"
+    "\t\t{{{2}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU\r\n"
+    "\t\t{{{2}}}.Debug|Any CPU.Build.0 = Debug|Any CPU\r\n"
+    "\t\t{{{2}}}.Release|Any CPU.ActiveCfg = Release|Any CPU\r\n"
+    "\t\t{{{2}}}.Release|Any CPU.Build.0 = Release|Any CPU\r\n"
+    "\tEndGlobalSection\r\n"
+    "EndGlobal\r\n",
+    to_utf8(csproj.stem()),
+    relative_csproj,
+    guid
+  );
+
+  return write_file(project_dir / csproj.stem().concat(".sln"), content);
 }
 
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)

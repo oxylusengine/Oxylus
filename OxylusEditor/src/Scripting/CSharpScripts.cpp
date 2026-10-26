@@ -117,6 +117,10 @@ auto CSharpScripts::open(this CSharpScripts& self, Project& project) -> void {
     OX_LOG_ERROR("{}", written.error());
   }
 
+  if (auto written = write_scripts_solution(project_dir, self.csproj_); !written) {
+    OX_LOG_ERROR("{}", written.error());
+  }
+
   const auto on_change = [&self](const std::string& path, filewatch::Event) {
     if (is_script_source(path)) {
       self.is_dirty_.store(true, std::memory_order_relaxed);

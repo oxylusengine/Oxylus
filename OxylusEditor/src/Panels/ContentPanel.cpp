@@ -29,6 +29,7 @@
 #include "ParticleEditorPanel.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
+#include "Utils/ExternalEditor.hpp"
 #ifdef OX_DOTNET
 #include "Scripting/DotNetProject.hpp"
 #endif
@@ -585,7 +586,7 @@ static void open_file(const std::filesystem::path& path) {
       case FileType::Texture: break;
       case FileType::Shader : [[fallthrough]];
       case FileType::CSharp : {
-        os::open_file_externally(path);
+        open_in_external_editor(path);
         break;
       }
       case ox::FileType::Material  : break;
@@ -1905,7 +1906,7 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
     if (is_dir) {
       dir_to_open = context.string();
     } else {
-      os::open_file_externally(context);
+      open_file(context);
     }
   }
   if (is_dir) {

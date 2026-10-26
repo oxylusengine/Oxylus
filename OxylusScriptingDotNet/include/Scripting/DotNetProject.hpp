@@ -47,6 +47,10 @@ auto write_scripts_props(
   const std::filesystem::path& scripts_dir, const std::filesystem::path& sdk_dir, const std::filesystem::path& asset_dir
 ) -> std::expected<void, std::string>;
 
+// writes <project_dir>/<csproj stem>.sln unless the directory already has a solution, which the developer owns
+auto write_scripts_solution(const std::filesystem::path& project_dir, const std::filesystem::path& csproj)
+  -> std::expected<void, std::string>;
+
 // the dll a build of `csproj` into `output_dir` produces
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)
   -> std::filesystem::path;
