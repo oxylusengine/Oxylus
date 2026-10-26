@@ -1745,6 +1745,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     ImGui::OpenPopup("New C# Script");
 
   if (ImGui::BeginPopupModal("New C# Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    const auto is_scene = self.new_script_kind == CSharpScriptKind::SceneBehaviour;
+    ImGui::TextUnformatted(
+      is_scene ? "SceneBehaviour, runs once per scene that lists it" : "EntityBehaviour, runs on an entity"
+    );
     UI::begin_properties(UI::default_properties_flags, true, 0.5f);
     UI::input_text("Class name", &self.new_script_name);
     UI::end_properties();
@@ -1793,7 +1797,7 @@ auto ContentPanel::create_csharp_script(this ContentPanel& self) -> void {
     return;
   }
 
-  file << csharp_behaviour_template(scripts_project.stem().string(), class_name);
+  file << csharp_script_template(self.new_script_kind, scripts_project.stem().string(), class_name);
   file.close();
 
   OX_LOG_INFO("Created new C# script {}", class_name);
@@ -1934,9 +1938,22 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
       }
 #ifdef OX_DOTNET
       const auto& scripts_project = App::mod<Editor>().active_project->get_config().scripts_project;
-      if (!scripts_project.empty() && ImGui::MenuItem("C# Script")) {
-        self.new_script_name.clear();
-        self.should_open_new_script_popup = true;
+      if (!scripts_project.empty() && ImGui::BeginMenu("C# Script")) {
+        const auto open_popup = [&self](CSharpScriptKind kind) {
+          self.new_script_name.clear();
+          self.new_script_kind = kind;
+          self.should_open_new_script_popup = true;
+        };
+
+        if (ImGui::MenuItem("Entity Behaviour")) {
+          open_popup(CSharpScriptKind::EntityBehaviour);
+        }
+
+        if (ImGui::MenuItem("Scene Behaviour")) {
+          open_popup(CSharpScriptKind::SceneBehaviour);
+        }
+
+        ImGui::EndMenu();
       }
 #endif
       ImGui::EndMenu();

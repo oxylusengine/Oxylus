@@ -55,7 +55,14 @@ auto write_scripts_solution(const std::filesystem::path& project_dir, const std:
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)
   -> std::filesystem::path;
 
-auto csharp_behaviour_template(std::string_view namespace_name, std::string_view class_name) -> std::string;
+enum class CSharpScriptKind : u8 {
+  EntityBehaviour,
+  SceneBehaviour,
+};
+
+// a new script deriving from the kind's base class, with the hooks one usually starts from
+auto csharp_script_template(CSharpScriptKind kind, std::string_view namespace_name, std::string_view class_name)
+  -> std::string;
 
 auto parse_msbuild_output(std::string_view output) -> std::vector<DotNetDiagnostic>;
 

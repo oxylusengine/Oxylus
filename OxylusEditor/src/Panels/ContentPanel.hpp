@@ -21,6 +21,10 @@ class FileWatch;
 } // namespace filewatch
 
 namespace ox {
+#ifdef OX_DOTNET
+enum class CSharpScriptKind : u8;
+#endif
+
 class Texture;
 
 enum class FileType {
@@ -96,6 +100,9 @@ private:
   std::string new_asset_name = {};
   bool should_open_new_asset_popup = false;
   std::string new_script_name = {};
+#ifdef OX_DOTNET
+  CSharpScriptKind new_script_kind = {};
+#endif
   bool should_open_new_script_popup = false;
   std::filesystem::path new_folder_parent;
   std::string new_folder_name = {};

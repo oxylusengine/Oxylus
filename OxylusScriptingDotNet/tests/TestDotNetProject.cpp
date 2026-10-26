@@ -81,10 +81,13 @@ protected:
 
 TEST_F(DotNetProjectBuildTest, BuildsAndLoadsAGeneratedProject) {
   EXPECT_EQ(csproj.filename(), "TestGame.csproj");
-  write_text(root / "Assets" / "Behaviours" / "Mover.cs", ox::csharp_behaviour_template("TestGame", "Mover"));
+  write_text(
+    root / "Assets" / "Behaviours" / "Mover.cs",
+    ox::csharp_script_template(ox::CSharpScriptKind::EntityBehaviour, "TestGame", "Mover")
+  );
   write_text(
     root / "Scripts" / "Level.cs",
-    "namespace TestGame;\n\npublic sealed class Level : Oxylus.SceneBehaviour\n{\n}\n"
+    ox::csharp_script_template(ox::CSharpScriptKind::SceneBehaviour, "TestGame", "Level")
   );
 
   const auto result = ox::build_scripts_project(csproj, output_dir());

@@ -192,9 +192,12 @@ auto scripts_assembly_path(const std::filesystem::path& csproj, const std::files
   return output_dir / csproj.stem().concat(".dll");
 }
 
-auto csharp_behaviour_template(std::string_view namespace_name, std::string_view class_name) -> std::string {
-  return fmt::format(
-    R"(using Oxylus;
+auto csharp_script_template(CSharpScriptKind kind, std::string_view namespace_name, std::string_view class_name)
+  -> std::string {
+  switch (kind) {
+    case CSharpScriptKind::EntityBehaviour:
+      return fmt::format(
+        R"(using Oxylus;
 
 namespace {0};
 
@@ -209,9 +212,36 @@ public sealed class {1} : EntityBehaviour
     }}
 }}
 )",
-    namespace_name,
-    class_name
-  );
+        namespace_name,
+        class_name
+      );
+    case CSharpScriptKind::SceneBehaviour:
+      return fmt::format(
+        R"(using Oxylus;
+
+namespace {0};
+
+public sealed class {1} : SceneBehaviour
+{{
+    public override void OnStart()
+    {{
+    }}
+
+    public override void OnUpdate(float deltaTime)
+    {{
+    }}
+
+    public override void OnStop()
+    {{
+    }}
+}}
+)",
+        namespace_name,
+        class_name
+      );
+  }
+
+  return {};
 }
 
 auto parse_msbuild_output(std::string_view output) -> std::vector<DotNetDiagnostic> {
