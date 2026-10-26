@@ -57,10 +57,10 @@ target("Oxylus")
         target:add("includedirs", path.join(target:autogendir(), "version"))
 
         -- the rmlui package lists its libs in whatever order its install dir gives, and GNU ld needs the
-        -- bindings ahead of the core
+        -- debugger ahead of the core
         local rmlui = target:pkg("rmlui")
         if rmlui then
-            local bindings = {"rmlui_lua", "rmlui_debugger"}
+            local bindings = {"rmlui_debugger"}
             local links = table.wrap(rmlui:get("links"))
             local ordered = {}
             for _, link in ipairs(bindings) do

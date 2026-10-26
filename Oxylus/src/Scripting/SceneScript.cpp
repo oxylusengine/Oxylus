@@ -1,7 +1,7 @@
 #include "Scripting/SceneScript.hpp"
 
-#include <vuk/Types.hpp>
+#include <vir/Types.hpp>
 
 namespace ox {
-auto SceneScript::on_scene_render(Scene*, vuk::Extent3D) -> void {}
+auto SceneScript::on_scene_render(Scene*, vir::Extent3D) -> void {}
 } // namespace ox

@@ -14,7 +14,7 @@ namespace JPH {
 class BodyID;
 } // namespace JPH
 
-namespace vuk {
+namespace vir {
 struct Extent3D;
 }
 
@@ -59,8 +59,8 @@ public:
   virtual auto on_scene_update(Scene*, f32) -> void {}
   // once per physics step, before it, with the fixed step length
   virtual auto on_scene_fixed_update(Scene*, f32) -> void {}
-  // defined out of line, a default body would need vuk::Extent3D complete in every includer
-  virtual auto on_scene_render(Scene*, vuk::Extent3D) -> void;
+  // defined out of line, a default body would need vir::Extent3D complete in every includer
+  virtual auto on_scene_render(Scene*, vir::Extent3D) -> void;
 
   // contacts buffered during a physics step and handed over on the main thread after it
   virtual auto on_contacts(Scene*, std::span<const PhysicsContact>) -> void {}

@@ -337,7 +337,7 @@ introducing a PCH.
   strong ID enums, small POD structs, and opaque C typedefs (`typedef struct _ENetHost ENetHost;`)
   with no third-party include in sight. Add one when a module starts leaking its heavy header to
   name a handle.
-- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, ImGui, sol2, flecs,
+- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, ImGui, flecs,
   simdjson. Existing heavy includes such as the Jolt headers in `Scene/Scene.hpp` are debt,
   not a precedent to copy. Render headers should use `Render/Fwd.hpp` and `<vir/Fwd.hpp>`
   for IDs and opaque graph types. Include recording and execution headers at their use sites.

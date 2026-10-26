@@ -1,9 +1,12 @@
 #include <SDL3/SDL_filesystem.h>
 #include <filesystem>
 #include <flecs.h>
-#include <vuk/vsl/Core.hpp>
+#include <utility>
+#include <vir/Module.hpp>
+#include <vir/Program.hpp>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/Texture.hpp"
 #include "Core/App.hpp"
 #include "Core/DefaultModules.hpp"
 #include "Core/VFS.hpp"
@@ -37,6 +40,11 @@ struct SmokeGame {
   // what a script asked to load with Scene.Load, swapped in before the next frame runs
   option<UUID> requested_scene = nullopt;
   HandlerId scene_load_handler = {};
+  // what the scene renders into, and the program that copies it onto the swapchain image, both made again whenever
+  // the swapchain is replaced
+  Texture target = {};
+  std::unique_ptr<vir::Program> frame_program = nullptr;
+  u64 frame_program_generation = 0;
 
   // stays a failure when init doesn't get far enough for deinit to run
   static inline auto exit_code = 1;
@@ -79,6 +87,8 @@ struct SmokeGame {
 
     // before DotNetScripting deinits, the scene's scripts live in it
     self.scene.reset();
+    self.frame_program.reset();
+    self.target = {};
     return {};
   }
 
@@ -91,22 +101,86 @@ struct SmokeGame {
 
     self.scene->runtime_update(timestep);
 
-    auto& render_context = App::get_rendercontext();
-    auto swapchain = render_context.new_frame();
-    swapchain = vuk::clear_image(std::move(swapchain), vuk::Black<f32>);
-    // a minimized window has nothing to draw into
-    const auto extent = swapchain->extent;
-    if (extent.width > 0 && extent.height > 0) {
-      const auto size = glm::ivec2(static_cast<i32>(extent.width), static_cast<i32>(extent.height));
-      swapchain = self.scene->render(std::move(swapchain), {0, 0}, size, size);
-    }
-
-    render_context.end_frame(std::move(swapchain));
+    self.render_frame();
 
     self.frame++;
     if (self.is_smoke_test && self.frame >= SMOKE_TEST_FRAMES) {
       App::get()->should_stop();
     }
+  }
+
+  auto render_frame(this SmokeGame& self) -> void {
+    ZoneScoped;
+
+    auto& render_context = App::get_rendercontext();
+    const auto frame = render_context.new_frame();
+    if (!frame) {
+      // a minimized window has no swapchain to draw into
+      if (frame.error() != VK_NOT_READY) {
+        OX_LOG_ERROR("Couldn't start a frame ({})", std::to_underlying(frame.error()));
+      }
+
+      return;
+    }
+
+    if ((!self.frame_program || self.frame_program_generation != frame->generation) && !self.prepare_frame(*frame)) {
+      return;
+    }
+
+    const auto size = glm::ivec2(static_cast<i32>(frame->extent.width), static_cast<i32>(frame->extent.height));
+    if (const auto rendered = self.scene->render(self.target.attachment_info(), {0, 0}, size, size); !rendered) {
+      OX_LOG_ERROR("Couldn't render the scene ({})", std::to_underlying(rendered.error()));
+      return;
+    }
+
+    const auto ticket = render_context.execute(*self.frame_program);
+    if (!ticket) {
+      if (ticket.error() == VK_ERROR_OUT_OF_DATE_KHR) {
+        self.frame_program.reset();
+        render_context.handle_resize();
+        return;
+      }
+
+      OX_LOG_ERROR("Couldn't present the frame ({})", std::to_underlying(ticket.error()));
+      return;
+    }
+
+    // anything released this frame waits for everything the frame submitted
+    render_context.seal_retirements(*ticket);
+  }
+
+  auto prepare_frame(this SmokeGame& self, const SwapchainInfo& swapchain) -> bool {
+    ZoneScoped;
+
+    auto& render_context = App::get_rendercontext();
+    self.frame_program.reset();
+    self.target = Texture::create({
+      .format = swapchain.format,
+      .extent = vir::Extent3D{swapchain.extent.width, swapchain.extent.height, 1},
+      .usage = vir::ImageUsageFlags::ColorAttachment | vir::ImageUsageFlags::Sampled |
+               vir::ImageUsageFlags::TransferSrc | vir::ImageUsageFlags::TransferDst,
+    });
+    // the program reads it at rest, so it has to be there before the scene first draws into it
+    const auto black = vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f);
+    if (const auto cleared = self.target.clear(black, vir::Access::FragmentSampled); !cleared) {
+      OX_LOG_ERROR("Couldn't clear the scene's target ({})", std::to_underlying(cleared.error()));
+      return false;
+    }
+
+    auto module = vir::Module{};
+    auto image = render_context.acquire_next_image(module);
+    image = module.blit(self.target.import(module, vir::Access::FragmentSampled), image);
+    module.present(image);
+
+    auto compiled = render_context.compile(std::move(module));
+    if (!compiled) {
+      OX_LOG_ERROR("Couldn't compile the frame ({})", std::to_underlying(compiled.error()));
+      return false;
+    }
+
+    self.frame_program = std::make_unique<vir::Program>(std::move(*compiled));
+    self.frame_program_generation = swapchain.generation;
+    return true;
   }
 
   // the next scene loads before the current one goes, so the assets both use stay loaded through the swap

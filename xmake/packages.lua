@@ -76,8 +76,6 @@ packages = {
     },
   },
   ["tracy " .. tracy_version] = { configs = tracy_configs },
-  ["lua " .. lua_version] = {},
-  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense " .. unordered_dense_version] = {},
   ["svector " .. svector_version] = {},
   ["plf_colony v7.41"] = {},

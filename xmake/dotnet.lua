@@ -85,10 +85,16 @@ local function configuration()
 end
 
 -- NativeAOT finds its linker through vcvarsall, which comes back empty under xmake's environment, so on windows it is
--- handed the MSVC environment xmake already detected and told to use the tools on PATH. Elsewhere it links with a
--- `clang` it looks for on PATH, which a versioned install like clang-23 doesn't provide, so it gets the compiler this
--- build uses, and no symbol stripping, which would want an objcopy as well
+-- handed the MSVC environment xmake already detected and told to use the tools on PATH. On macOS it gets Apple's clang,
+-- which finds the SDK the Swift and framework libraries live in on its own, where a homebrew LLVM on PATH doesn't and
+-- takes flags Apple's linker rejects. Elsewhere it links with a `clang` it looks for on PATH, which a versioned
+-- install like clang-23 doesn't provide, so it gets the compiler this build uses. No symbol stripping off windows,
+-- which would want an objcopy as well
 local function aot_linker(target)
+  if target:is_plat("macosx") then
+    return nil, { "-p:CppCompilerAndLinker=/usr/bin/clang", "-p:StripSymbols=false" }
+  end
+
   if not target:is_plat("windows") then
     local cc = target:tool("cc")
     return nil, { "-p:CppCompilerAndLinker=" .. cc, "-p:StripSymbols=false" }
@@ -120,7 +126,8 @@ function publish_aot(target, project, output_dir, properties)
     os.vrunv(
       "dotnet",
       table.join(
-        { "publish", project, "-c", "Release", "-r", rid(target), "-o", output_dir, "--nologo", "-v", "q" },
+        -- minimal rather than quiet, so a failed native link shows what the linker said and not only its command line
+        { "publish", project, "-c", "Release", "-r", rid(target), "-o", output_dir, "--nologo", "-v", "m" },
         artifacts_properties(),
         extra_args,
         properties or {})

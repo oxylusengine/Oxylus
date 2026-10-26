@@ -1,7 +1,7 @@
 #include "Scripting/ManagedSceneScript.hpp"
 
 #include <fmt/format.h>
-#include <vuk/Types.hpp>
+#include <vir/Types.hpp>
 
 #include "DotNetHosts.hpp"
 #include "Scene/Components.hpp"
@@ -78,7 +78,7 @@ public:
     }
   }
 
-  auto on_scene_render(Scene*, vuk::Extent3D extent) -> void override {
+  auto on_scene_render(Scene*, vir::Extent3D extent) -> void override {
     if (module_.is_loaded()) {
       module_.managed_api.world_render(world_, extent.width, extent.height);
     }
