@@ -40,8 +40,7 @@ TEST(EngineShaders, EveryPipelineLayoutIsConsistentAcrossItsStages) {
         auto layout = entry_point.layout;
         for (auto& binding : layout.bindings) {
           EXPECT_TRUE(
-            binding.set == 0 || (binding.set == 1 && (pipeline->required_features & ShaderFeatureFlag::Bindless)) ||
-            (binding.set == 2 && pipeline->module_name == "resolve_shadowmaps")
+            binding.set == 0 || (binding.set == 1 && (pipeline->required_features & ShaderFeatureFlag::Bindless))
           ) << "unexpected descriptor set "
             << binding.set << " at binding " << binding.binding;
           binding.access = vir::descriptor_access(binding.usage, binding.stages);

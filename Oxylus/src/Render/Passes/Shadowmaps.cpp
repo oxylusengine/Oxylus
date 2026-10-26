@@ -16,7 +16,6 @@ using PointSpotViews = std::array<GPU::VSMPointSpotView, RMVSMContext::POINT_SPO
 using ClipmapScrollDeltas = std::array<glm::ivec2, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT>;
 using PointSpotMovedPush = PushConstants<glm::uvec2, glm::uvec2>;
 using PointSpotMarkPush = PushConstants<GPU::VSMPointSpotContext, glm::vec3>;
-using ContactShadowsPush = PushConstants<glm::vec3, u32, f32, f32>;
 
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
@@ -243,13 +242,6 @@ auto RendererInstance::bind_shadow_variables(
     program.set_bytes(variables.clipmap_context, clipmap_context);
   }
 
-  if (program.has_variable(variables.resolve_context)) {
-    auto resolve_context = params.vsm;
-    resolve_context.depth_extent = {};
-    resolve_context.curr_clipmap_index = 0;
-    program.set_bytes(variables.resolve_context, resolve_context);
-  }
-
   if (program.has_variable(variables.pointspot_moved_lights) || program.has_variable(variables.pointspot_mark_push)) {
     const auto moved_point = data.moved_point_light_mask;
     const auto moved_spot = data.moved_spot_light_mask;
@@ -267,19 +259,6 @@ auto RendererInstance::bind_shadow_variables(
   program.set(variables.pointspot_removed_count, static_cast<u32>(data.removed_mesh_bounds.size()));
   program.set(variables.dirty_count, params.vsm_sun_moved ? 0 : static_cast<u32>(data.dirty_mesh_instances.size()));
   program.set(variables.removed_count, params.vsm_sun_moved ? 0 : static_cast<u32>(data.removed_mesh_bounds.size()));
-
-  if (program.has_variable(variables.contact_push)) {
-    const auto& cvar = *params.cvar;
-    program.set_bytes(
-      variables.contact_push,
-      ContactShadowsPush(
-        self.directional_light.direction,
-        static_cast<u32>(cvar.cvar_contact_shadows_steps.get()),
-        cvar.cvar_contact_shadows_thickness.get(),
-        cvar.cvar_contact_shadows_length.get()
-      )
-    );
-  }
 }
 
 auto RendererInstance::draw_virtual_shadowmap(
@@ -1213,52 +1192,5 @@ auto RendererInstance::draw_virtual_shadowmap(
     context.pointspot_layer_dirty_mask_buffer = cull_context.layer_dirty_mask_buffer;
     context.pointspot_page_table_attachment = cull_context.page_table_attachment;
   }
-}
-
-auto RendererInstance::resolve_shadowmap(
-  this RendererInstance& self, vir::Module& module, FrameRecording& recording, ShadowResolveContext& context
-) -> void {
-  ZoneScoped;
-  auto& prepared = recording.prepared;
-  auto& values = recording.values;
-
-  auto& render_context = *self.renderer.render_context;
-  auto& variables = prepared.shadow;
-  variables.resolve_context = module.declare_bytes_var("vsm resolve context", sizeof(GPU::VSMContext));
-
-  std::tie(
-    context.shadows_attachment,
-    values.camera,
-    context.depth_attachment,
-    context.normal_attachment,
-    context.directional_clipmaps_buffer,
-    context.virtual_page_table_attachment,
-    context.physical_page_table_attachment
-  ) = std::tuple_cat( //
-    module
-      .begin_rendering(
-        {{context.shadows_attachment, vir::Access::ColorRW},
-         {values.camera, vir::Access::FragmentUniformRead},
-         {context.depth_attachment, vir::Access::FragmentSampled},
-         {context.normal_attachment, vir::Access::FragmentSampled},
-         {context.directional_clipmaps_buffer, vir::Access::FragmentRead},
-         {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
-         {context.physical_page_table_attachment, vir::Access::FragmentSampled}}
-      )
-      .with_name("resolve shadows")
-      .bind_graphics_pipeline(render_context.pipeline("resolve_shadowmaps"))
-      .set_color_blend(0, vir::ColorBlendAttachmentState{.color_write_mask = VK_COLOR_COMPONENT_R_BIT})
-      .set_viewport(0, vir::Rect2D::framebuffer())
-      .set_scissor(0, vir::Rect2D::framebuffer())
-      .bind_buffer(0, 0, values.camera)
-      .bind_image(0, 1, context.depth_attachment)
-      .bind_image(0, 2, context.normal_attachment)
-      .bind_buffer(2, 0, context.directional_clipmaps_buffer)
-      .bind_image(2, 1, context.virtual_page_table_attachment)
-      .bind_image(2, 2, context.physical_page_table_attachment)
-      .push_constants_from(prepared.shadow.resolve_context)
-      .draw(3, 1)
-      .end_rendering()
-  );
 }
 } // namespace ox

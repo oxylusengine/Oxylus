@@ -1583,8 +1583,6 @@ auto RendererInstance::record_frame(
 ) -> void {
   ZoneScoped;
 
-  using ContactShadowsPush = PushConstants<glm::vec3, u32, f32, f32>;
-
   auto& render_context = *self.renderer.render_context;
   const auto& data = self.frame_data;
   const auto render_extent = vir::Extent3D{shape.render_size.x, shape.render_size.y, 1};
@@ -1776,11 +1774,6 @@ auto RendererInstance::record_frame(
     );
   }
 
-  auto shadows_attachment = module.transient_image(
-    {.extent = render_extent, .format = vir::Format::RG8Unorm, .name = "shadows"}
-  );
-
-  shadows_attachment = module.clear(shadows_attachment, white);
   auto albedo_attachment = module.transient_image(
     {.extent = render_extent, .format = vir::Format::RGBA8Srgb, .name = "albedo"}
   );
@@ -2025,45 +2018,7 @@ auto RendererInstance::record_frame(
       vsm_virtual_page_table_attachment = rmvsm_context.virtual_page_table_attachment;
       vsm_physical_pages_attachment = rmvsm_context.physical_page_table_attachment;
       vsm_directional_clipmaps_buffer = rmvsm_context.directional_clipmaps_buffer;
-
-      if (shape.has_directional_shadows) {
-        auto shadow_resolve_context = ShadowResolveContext{
-          .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
-          .depth_attachment = depth_attachment,
-          .normal_attachment = normal_attachment,
-          .virtual_page_table_attachment = vsm_virtual_page_table_attachment,
-          .physical_page_table_attachment = vsm_physical_pages_attachment,
-          .shadows_attachment = shadows_attachment,
-        };
-        self.resolve_shadowmap(module, recording, shadow_resolve_context);
-        depth_attachment = shadow_resolve_context.depth_attachment;
-        normal_attachment = shadow_resolve_context.normal_attachment;
-        shadows_attachment = shadow_resolve_context.shadows_attachment;
-        vsm_virtual_page_table_attachment = shadow_resolve_context.virtual_page_table_attachment;
-        vsm_directional_clipmaps_buffer = shadow_resolve_context.directional_clipmaps_buffer;
-        vsm_physical_pages_attachment = shadow_resolve_context.physical_page_table_attachment;
-      }
     }
-
-    prepared.shadow.contact_push = module.declare_bytes_var("contact shadows push", sizeof(ContactShadowsPush));
-    std::tie(shadows_attachment, depth_attachment, values.camera) = std::tuple_cat(
-      module
-        .begin_compute(
-          {{shadows_attachment, vir::Access::ComputeRW},
-           {depth_attachment, vir::Access::ComputeSampled},
-           {values.camera, vir::Access::ComputeUniformRead}}
-        )
-        .with_name("contact shadows")
-        .bind_compute_pipeline(render_context.pipeline("contact_shadows"))
-        .bind_image(0, 0, depth_attachment)
-        .bind_image(0, 1, shadows_attachment)
-        .bind_buffer(0, 2, values.camera)
-        .bind_sampler(0, 3, render_context.cached_sampler_handle(NearestSamplerClamped))
-        .bind_sampler(0, 4, render_context.cached_sampler_handle(LinearSamplerClamped))
-        .push_constants_from(prepared.shadow.contact_push)
-        .dispatch_invocations_per_pixel(shadows_attachment)
-        .end_compute()
-    );
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
@@ -2124,6 +2079,16 @@ auto RendererInstance::record_frame(
       .name = "vsm pointspot views",
     });
     pointspot_views_buffer = module.fill_buffer(pointspot_views_buffer, 0);
+  }
+
+  if (vsm_directional_clipmaps_buffer == vir::ValueID::Invalid) {
+    vsm_directional_clipmaps_buffer = module.transient_buffer({
+      .size = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT * sizeof(GPU::VirtualClipmap),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "vsm directional clipmaps",
+    });
+    vsm_directional_clipmaps_buffer = module.fill_buffer(vsm_directional_clipmaps_buffer, 0);
   }
 
   // --- DDGI tracing ---
@@ -2192,12 +2157,12 @@ auto RendererInstance::record_frame(
     .emissive_attachment = emissive_attachment,
     .metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment,
     .ambient_occlusion_attachment = ambient_occlusion_attachment,
-    .shadows_attachment = shadows_attachment,
     .light_grid_buffer = light_grid_buffer,
     .pointspot_views_buffer = pointspot_views_buffer,
     .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
     .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
     .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+    .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
   };
   final_attachment = self.apply_pbr(module, recording, pbr_context, final_attachment);
   sky_transmittance_lut_attachment = pbr_context.sky_transmittance_lut_attachment;
@@ -2213,6 +2178,7 @@ auto RendererInstance::record_frame(
   vsm_pointspot_page_table_attachment = pbr_context.pointspot_page_table_attachment;
   vsm_physical_pages_attachment = pbr_context.vsm_physical_pages_attachment;
   vsm_virtual_page_table_attachment = pbr_context.vsm_page_table_attachment;
+  vsm_directional_clipmaps_buffer = pbr_context.directional_clipmaps_buffer;
 
   if (shape.has_ddgi) {
     auto ddgi_apply_context = DDGIApplyContext{
@@ -2480,15 +2446,6 @@ auto RendererInstance::record_frame(
   }
 
   if (shape.is_debugging && shape.debug_view != GPU::DebugView::DDGIProbes && shape.has_meshes) {
-    if (vsm_directional_clipmaps_buffer == vir::ValueID::Invalid) {
-      vsm_directional_clipmaps_buffer = module.transient_buffer({
-        .size = RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT * sizeof(GPU::VirtualClipmap),
-        .usage = TRANSIENT_BUFFER_USAGE,
-        .location = vir::MemoryLocation::GpuOnly,
-        .name = "vsm directional clipmaps",
-      });
-      vsm_directional_clipmaps_buffer = module.fill_buffer(vsm_directional_clipmaps_buffer, 0);
-    }
     auto debug_context = DebugContext{
       .vsm_clipmaps_buffer = vsm_directional_clipmaps_buffer,
       .visbuffer_attachment = visbuffer_attachment,

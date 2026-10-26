@@ -548,6 +548,19 @@ struct VSMContext {
   f32x3 directional_light_dir = {};
 };
 
+struct PBRLighting {
+  VSMContext vsm = {};
+  f32x3 sun_direction = {};
+  f32 sun_intensity = 0.0f;
+  f32x3 base_ambient_color = {};
+  u32 light_count = 0;
+  f32x3 light_grid_origin = {};
+  u32 vsm_mip_bias_min = 0;
+  u32 contact_shadow_steps = 0;
+  f32 contact_shadow_thickness = 0.0f;
+  f32 contact_shadow_length = 0.0f;
+};
+
 struct VirtualClipmap {
   mat4 projection_view_mat = {};
   i32x2 page_offset = {};

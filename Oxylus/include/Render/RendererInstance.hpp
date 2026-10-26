@@ -540,16 +540,6 @@ auto bind_vsm_pointspot_spec_constants(Pass pass) -> Pass {
   return pass;
 }
 
-struct ShadowResolveContext {
-  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
-  vir::ValueID depth_attachment = vir::ValueID::Invalid;
-  vir::ValueID normal_attachment = vir::ValueID::Invalid;
-  vir::ValueID virtual_page_table_attachment = vir::ValueID::Invalid;
-  vir::ValueID physical_page_table_attachment = vir::ValueID::Invalid;
-
-  vir::ValueID shadows_attachment = vir::ValueID::Invalid;
-};
-
 struct AtmosphereContext {
   vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
   vir::ValueID sky_multiscatter_lut_attachment = vir::ValueID::Invalid;
@@ -584,7 +574,6 @@ struct PBRContext {
   vir::ValueID emissive_attachment = vir::ValueID::Invalid;
   vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
   vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
-  vir::ValueID shadows_attachment = vir::ValueID::Invalid;
 
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
 
@@ -592,6 +581,7 @@ struct PBRContext {
   vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
   vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
   vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -756,7 +746,6 @@ struct ShadowVariables {
   vir::ValueID context = vir::ValueID::Invalid;
   vir::ValueID pointspot_context = vir::ValueID::Invalid;
   vir::ValueID clipmap_context = vir::ValueID::Invalid;
-  vir::ValueID resolve_context = vir::ValueID::Invalid;
   vir::ValueID directional_clipmaps = vir::ValueID::Invalid;
   vir::ValueID pointspot_views = vir::ValueID::Invalid;
   vir::ValueID clipmap_scroll_deltas = vir::ValueID::Invalid;
@@ -767,7 +756,6 @@ struct ShadowVariables {
   vir::ValueID pointspot_removed_count = vir::ValueID::Invalid;
   vir::ValueID dirty_count = vir::ValueID::Invalid;
   vir::ValueID removed_count = vir::ValueID::Invalid;
-  vir::ValueID contact_push = vir::ValueID::Invalid;
 };
 
 struct PBRVariables {
@@ -779,8 +767,7 @@ struct PBRVariables {
   vir::ValueID vbgtao_settings = vir::ValueID::Invalid;
   vir::ValueID vbgtao_denoise_push = vir::ValueID::Invalid;
   vir::ValueID rtao_push = vir::ValueID::Invalid;
-  vir::ValueID sun_push = vir::ValueID::Invalid;
-  vir::ValueID lights_push = vir::ValueID::Invalid;
+  vir::ValueID lighting = vir::ValueID::Invalid;
   vir::ValueID sky = vir::ValueID::Invalid;
 };
 
@@ -1090,9 +1077,6 @@ public:
   ) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
-  ) -> void;
-  auto resolve_shadowmap(
-    this RendererInstance& self, vir::Module& module, FrameRecording& recording, ShadowResolveContext& context
   ) -> void;
   // the host side of the shadow maps, once per frame before the program updates
   auto prepare_virtual_shadowmap(this RendererInstance& self) -> void;

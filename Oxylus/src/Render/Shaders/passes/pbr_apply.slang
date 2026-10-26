@@ -6,21 +6,12 @@ import scene;
 
 #include <fullscreen.slang>
 
-[[vk::constant_id(0)]] const u32 scene_flags = 0;
-[[vk::binding(0)]] Sampler linear_clamp_sampler;
-[[vk::binding(1)]] Sampler linear_repeat_sampler;
-[[vk::binding(2)]] Texture2D<f32x4> sky_transmittance_lut;
-[[vk::binding(3)]] Texture3D<f32x4> sky_aerial_perspective_lut;
-[[vk::binding(4)]] TextureCube<f32x4> sky_cubemap;
-[[vk::binding(5)]] Texture2D<f32x4> sky_view_lut;
-[[vk::binding(6)]] Texture2D<f32> depth_image;
-[[vk::binding(7)]] Texture2D<f32x4> albedo_image;
-[[vk::binding(8)]] Texture2D<f32x4> normal_image;
-[[vk::binding(9)]] Texture2D<f32x3> emissive_image;
-[[vk::binding(10)]] Texture2D<f32x2> metallic_roughness_image;
-[[vk::binding(11)]] Texture2D<f32> gtao_image;
-[[vk::binding(12)]] Texture2D<f32x2> shadows_image;
-[[vk::binding(13)]] ConstantBuffer<Camera> camera;
+#include <pbr_apply_common.slang>
+
+[[vk::binding(13)]] Texture2D<f32x4> sky_transmittance_lut;
+[[vk::binding(14)]] Texture3D<f32x4> sky_aerial_perspective_lut;
+[[vk::binding(15)]] TextureCube<f32x4> sky_cubemap;
+[[vk::binding(16)]] Texture2D<f32x4> sky_view_lut;
 
 func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
     let min_cos_theta = cos(radius * PI / 180.0);
@@ -40,9 +31,11 @@ func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
 func fs_main(
   VertexOutput input,
   uniform Atmosphere *atmosphere,
-  uniform f32x3 L,
-  uniform f32 Li,
-  uniform f32x3 base_ambient_color,
+  uniform PBRLighting *lighting,
+  uniform Light *lights,
+  uniform u32x4 *light_grid,
+  uniform VSMPointSpotView *vsm_pointspot_views,
+  uniform VirtualClipmap *vsm_clipmaps,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -72,6 +65,10 @@ func fs_main(
     let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
     let world_position = world_position_h.xyz / world_position_h.w;
 
+    let L = lighting.sun_direction;
+    let Li = lighting.sun_intensity;
+    let base_ambient_color = lighting.base_ambient_color;
+
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
     let V = normalize(camera.position.xyz - world_position);
@@ -79,11 +76,6 @@ func fs_main(
     let R = reflect(-V, N);
     let NoV = abs(dot(N, V)) + 1e-5;
     let NoL = max(dot(N, L), 0.0);
-
-    let shadow_visibility = shadows_image.Load(pixel_pos);
-    let directional_shadow = has_directional_light ? shadow_visibility.x : 1.0f;
-    let contact_shadow = ((scene_flags & SceneFlags::HasContactShadows) != 0) ? shadow_visibility.y : 1.0f;
-    let visibility = directional_shadow * contact_shadow;
 
     var indirect_illuminance = f32x3(0.0);
     var direct_illuminance = f32x3(0.0);
@@ -161,10 +153,16 @@ func fs_main(
 
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
+        let visibility = sun_visibility(
+            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light, *lighting, vsm_clipmaps);
         let result = BRDF(V, N, L, albedo_color, roughness, metallic);
         material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
     }
 
-    let final_color = material_surface_color + indirect_illuminance + emission + aerial_perspective_contribution;
+    let point_spot_color = point_spot_lighting(
+        input.tex_coord, u32x2(input.position.xy), depth, world_position, N, V, smooth_normal, albedo_color, roughness, metallic,
+        *lighting, lights, light_grid, vsm_pointspot_views);
+
+    let final_color = material_surface_color + indirect_illuminance + emission + aerial_perspective_contribution + point_spot_color;
     return f32x4(final_color, 1.0);
 }

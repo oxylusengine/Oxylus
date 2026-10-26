@@ -19,8 +19,6 @@ using SkyAerialPush = PushConstants<glm::vec3, f32>;
 using VBGTAOPrefilterPush = PushConstants<vir::Extent3D, glm::vec2>;
 using VBGTAODenoisePush = PushConstants<glm::ivec2, GPU::VBGTAOSettings>;
 using RTAOPush = PushConstants<u32, f32, f32, u32>;
-using PBRSunPush = PushConstants<glm::vec3, f32, glm::vec3>;
-using PBRLightsPush = PushConstants<u32, glm::vec3, u32>;
 
 auto RendererInstance::bind_atmosphere_variables(
   this const RendererInstance& self, vir::Program& program, const PBRVariables& variables
@@ -436,14 +434,22 @@ auto RendererInstance::bind_pbr_variables(
   this const RendererInstance& self, vir::Program& program, const PBRVariables& variables
 ) -> void {
   ZoneScoped;
-  program.set_bytes(
-    variables.sun_push,
-    PBRSunPush(self.directional_light.direction, self.directional_light.intensity, glm::vec3(0.02f, 0.03f, 0.04f))
-  );
-  program.set_bytes(
-    variables.lights_push,
-    PBRLightsPush(static_cast<u32>(self.scene.lights.size()), self.light_grid_origin, 0_u32)
-  );
+  const auto& cvar = *self.frame_params.cvar;
+  auto lighting = GPU::PBRLighting{
+    .vsm = self.frame_params.vsm,
+    .sun_direction = self.directional_light.direction,
+    .sun_intensity = self.directional_light.intensity,
+    .base_ambient_color = glm::vec3(0.02f, 0.03f, 0.04f),
+    .light_count = static_cast<u32>(self.scene.lights.size()),
+    .light_grid_origin = self.light_grid_origin,
+    .vsm_mip_bias_min = 0,
+    .contact_shadow_steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get()),
+    .contact_shadow_thickness = cvar.cvar_contact_shadows_thickness.get(),
+    .contact_shadow_length = cvar.cvar_contact_shadows_length.get(),
+  };
+  lighting.vsm.depth_extent = {};
+  lighting.vsm.curr_clipmap_index = 0;
+  program.set_bytes(variables.lighting, lighting);
   program.set_bytes(variables.sky, self.sky_data);
 }
 
@@ -456,31 +462,27 @@ auto RendererInstance::apply_pbr(
 
   auto& render_context = *self.renderer.render_context;
   auto& variables = prepared.pbr;
-  variables.sun_push = module.declare_bytes_var("pbr apply push", sizeof(PBRSunPush));
-  variables.lights_push = module.declare_bytes_var("pbr apply lights push", sizeof(PBRLightsPush));
+  variables.lighting = module.declare_bytes_var("pbr lighting", sizeof(GPU::PBRLighting));
   variables.sky = module.declare_bytes_var("sky", sizeof(GPU::Sky));
 
   const auto scene_flags = std::to_underlying(self.gpu_scene_flags);
+  const auto has_directional_shadows = static_cast<u32>(
+    recording.shape.has_directional_shadows && recording.shape.has_meshes
+  );
   const auto linear_clamped = render_context.cached_sampler_handle(LinearSamplerClamped);
   const auto linear_repeated = render_context.cached_sampler_handle(LinearSamplerRepeated);
+  const auto nearest_clamped = render_context.cached_sampler_handle(NearestSamplerClamped);
+
+  auto lighting = module.transient_buffer({
+    .size = sizeof(GPU::PBRLighting),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "pbr lighting",
+  });
+  lighting = module.update_buffer_from(lighting, variables.lighting);
 
   if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) {
-    std::tie(
-      dst,
-      context.sky_transmittance_lut_attachment,
-      context.sky_aerial_perspective_lut_attachment,
-      context.sky_view_lut_attachment,
-      context.sky_cubemap_attachment,
-      context.depth_attachment,
-      context.albedo_attachment,
-      context.normal_attachment,
-      context.emissive_attachment,
-      context.metallic_roughness_occlusion_attachment,
-      context.ambient_occlusion_attachment,
-      context.shadows_attachment,
-      values.camera,
-      values.atmosphere
-    ) = std::tuple_cat( //
+    auto pbr_pass = //
       module
         .begin_rendering(
           {{dst, vir::Access::ColorWrite},
@@ -494,31 +496,70 @@ auto RendererInstance::apply_pbr(
            {context.emissive_attachment, vir::Access::FragmentSampled},
            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
-           {context.shadows_attachment, vir::Access::FragmentSampled},
+           {context.vsm_page_table_attachment, vir::Access::FragmentSampled},
+           {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
+           {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
            {values.camera, vir::Access::FragmentUniformRead},
-           {values.atmosphere, vir::Access::FragmentRead}}
+           {values.atmosphere, vir::Access::FragmentRead},
+           {lighting, vir::Access::FragmentRead},
+           {values.lights, vir::Access::FragmentRead},
+           {context.light_grid_buffer, vir::Access::FragmentRead},
+           {context.pointspot_views_buffer, vir::Access::FragmentRead},
+           {context.directional_clipmaps_buffer, vir::Access::FragmentRead}}
         )
         .with_name("pbr apply")
-        .bind_graphics_pipeline(render_context.pipeline("pbr_apply"))
+        .bind_graphics_pipeline(render_context.pipeline("pbr_apply"));
+    std::tie(
+      dst,
+      context.sky_transmittance_lut_attachment,
+      context.sky_aerial_perspective_lut_attachment,
+      context.sky_view_lut_attachment,
+      context.sky_cubemap_attachment,
+      context.depth_attachment,
+      context.albedo_attachment,
+      context.normal_attachment,
+      context.emissive_attachment,
+      context.metallic_roughness_occlusion_attachment,
+      context.ambient_occlusion_attachment,
+      context.vsm_page_table_attachment,
+      context.pointspot_page_table_attachment,
+      context.vsm_physical_pages_attachment,
+      values.camera,
+      values.atmosphere,
+      lighting,
+      values.lights,
+      context.light_grid_buffer,
+      context.pointspot_views_buffer,
+      context.directional_clipmaps_buffer
+    ) = std::tuple_cat( //
+      bind_vsm_pointspot_spec_constants(pbr_pass)
         .set_viewport(0, vir::Rect2D::framebuffer())
         .set_scissor(0, vir::Rect2D::framebuffer())
         .bind_sampler(0, 0, linear_clamped)
         .bind_sampler(0, 1, linear_repeated)
-        .bind_image(0, 2, context.sky_transmittance_lut_attachment)
-        .bind_image(0, 3, context.sky_aerial_perspective_lut_attachment)
-        .bind_image(0, 4, context.sky_cubemap_attachment)
-        .bind_image(0, 5, context.sky_view_lut_attachment)
-        .bind_image(0, 6, context.depth_attachment)
-        .bind_image(0, 7, context.albedo_attachment)
-        .bind_image(0, 8, context.normal_attachment)
-        .bind_image(0, 9, context.emissive_attachment)
-        .bind_image(0, 10, context.metallic_roughness_occlusion_attachment)
-        .bind_image(0, 11, context.ambient_occlusion_attachment)
-        .bind_image(0, 12, context.shadows_attachment)
-        .bind_buffer(0, 13, values.camera)
+        .bind_sampler(0, 2, nearest_clamped)
+        .bind_image(0, 3, context.depth_attachment)
+        .bind_image(0, 4, context.albedo_attachment)
+        .bind_image(0, 5, context.normal_attachment)
+        .bind_image(0, 6, context.emissive_attachment)
+        .bind_image(0, 7, context.metallic_roughness_occlusion_attachment)
+        .bind_image(0, 8, context.ambient_occlusion_attachment)
+        .bind_buffer(0, 9, values.camera)
+        .bind_image(0, 10, context.vsm_page_table_attachment)
+        .bind_image(0, 11, context.pointspot_page_table_attachment)
+        .bind_image(0, 12, context.vsm_physical_pages_attachment)
+        .bind_image(0, 13, context.sky_transmittance_lut_attachment)
+        .bind_image(0, 14, context.sky_aerial_perspective_lut_attachment)
+        .bind_image(0, 15, context.sky_cubemap_attachment)
+        .bind_image(0, 16, context.sky_view_lut_attachment)
         .push_constant_address(0, values.atmosphere)
-        .push_constants_from_at(8, variables.sun_push)
+        .push_constant_address(8, lighting)
+        .push_constant_address(16, values.lights)
+        .push_constant_address(24, context.light_grid_buffer)
+        .push_constant_address(32, context.pointspot_views_buffer)
+        .push_constant_address(40, context.directional_clipmaps_buffer)
         .specialize_constant(0, scene_flags)
+        .specialize_constant(1, has_directional_shadows)
         .draw(3, 1)
         .end_rendering()
     );
@@ -530,18 +571,7 @@ auto RendererInstance::apply_pbr(
       .name = "sky",
     });
     sky = module.update_buffer_from(sky, variables.sky);
-    std::tie(
-      dst,
-      context.depth_attachment,
-      context.albedo_attachment,
-      context.normal_attachment,
-      context.emissive_attachment,
-      context.metallic_roughness_occlusion_attachment,
-      context.ambient_occlusion_attachment,
-      context.shadows_attachment,
-      values.camera,
-      std::ignore
-    ) = std::tuple_cat( //
+    auto pbr_pass = //
       module
         .begin_rendering(
           {{dst, vir::Access::ColorWrite},
@@ -551,89 +581,66 @@ auto RendererInstance::apply_pbr(
            {context.emissive_attachment, vir::Access::FragmentSampled},
            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
-           {context.shadows_attachment, vir::Access::FragmentSampled},
+           {context.vsm_page_table_attachment, vir::Access::FragmentSampled},
+           {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
+           {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
            {values.camera, vir::Access::FragmentUniformRead},
-           {sky, vir::Access::FragmentRead}}
+           {sky, vir::Access::FragmentRead},
+           {lighting, vir::Access::FragmentRead},
+           {values.lights, vir::Access::FragmentRead},
+           {context.light_grid_buffer, vir::Access::FragmentRead},
+           {context.pointspot_views_buffer, vir::Access::FragmentRead},
+           {context.directional_clipmaps_buffer, vir::Access::FragmentRead}}
         )
         .with_name("pbr apply")
-        .bind_graphics_pipeline(render_context.pipeline("pbr_apply_no_atmos"))
+        .bind_graphics_pipeline(render_context.pipeline("pbr_apply_no_atmos"));
+    std::tie(
+      dst,
+      context.depth_attachment,
+      context.albedo_attachment,
+      context.normal_attachment,
+      context.emissive_attachment,
+      context.metallic_roughness_occlusion_attachment,
+      context.ambient_occlusion_attachment,
+      context.vsm_page_table_attachment,
+      context.pointspot_page_table_attachment,
+      context.vsm_physical_pages_attachment,
+      values.camera,
+      std::ignore,
+      lighting,
+      values.lights,
+      context.light_grid_buffer,
+      context.pointspot_views_buffer,
+      context.directional_clipmaps_buffer
+    ) = std::tuple_cat( //
+      bind_vsm_pointspot_spec_constants(pbr_pass)
         .set_viewport(0, vir::Rect2D::framebuffer())
         .set_scissor(0, vir::Rect2D::framebuffer())
         .bind_sampler(0, 0, linear_clamped)
         .bind_sampler(0, 1, linear_repeated)
-        .bind_image(0, 2, context.depth_attachment)
-        .bind_image(0, 3, context.albedo_attachment)
-        .bind_image(0, 4, context.normal_attachment)
-        .bind_image(0, 5, context.emissive_attachment)
-        .bind_image(0, 6, context.metallic_roughness_occlusion_attachment)
-        .bind_image(0, 7, context.ambient_occlusion_attachment)
-        .bind_image(0, 8, context.shadows_attachment)
+        .bind_sampler(0, 2, nearest_clamped)
+        .bind_image(0, 3, context.depth_attachment)
+        .bind_image(0, 4, context.albedo_attachment)
+        .bind_image(0, 5, context.normal_attachment)
+        .bind_image(0, 6, context.emissive_attachment)
+        .bind_image(0, 7, context.metallic_roughness_occlusion_attachment)
+        .bind_image(0, 8, context.ambient_occlusion_attachment)
         .bind_buffer(0, 9, values.camera)
+        .bind_image(0, 10, context.vsm_page_table_attachment)
+        .bind_image(0, 11, context.pointspot_page_table_attachment)
+        .bind_image(0, 12, context.vsm_physical_pages_attachment)
         .push_constant_address(0, sky)
-        .push_constants_from_at(8, variables.sun_push)
+        .push_constant_address(8, lighting)
+        .push_constant_address(16, values.lights)
+        .push_constant_address(24, context.light_grid_buffer)
+        .push_constant_address(32, context.pointspot_views_buffer)
+        .push_constant_address(40, context.directional_clipmaps_buffer)
         .specialize_constant(0, scene_flags)
+        .specialize_constant(1, has_directional_shadows)
         .draw(3, 1)
         .end_rendering()
     );
   }
-
-  static constexpr auto additive_blend = vir::ColorBlendAttachmentState{
-    .is_blend_enabled = true,
-    .src_color_blend_factor = VK_BLEND_FACTOR_ONE,
-    .dst_color_blend_factor = VK_BLEND_FACTOR_ONE,
-    .color_blend_op = VK_BLEND_OP_ADD,
-    .src_alpha_blend_factor = VK_BLEND_FACTOR_ZERO,
-    .dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE,
-    .alpha_blend_op = VK_BLEND_OP_ADD,
-  };
-  auto lights_pass = //
-    module
-      .begin_rendering(
-        {{dst, vir::Access::ColorRW},
-         {context.depth_attachment, vir::Access::FragmentSampled},
-         {context.albedo_attachment, vir::Access::FragmentSampled},
-         {context.normal_attachment, vir::Access::FragmentSampled},
-         {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
-         {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
-         {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
-         {values.camera, vir::Access::FragmentUniformRead},
-         {values.lights, vir::Access::FragmentRead},
-         {context.light_grid_buffer, vir::Access::FragmentRead},
-         {context.pointspot_views_buffer, vir::Access::FragmentRead}}
-      )
-      .with_name("pbr apply lights")
-      .bind_graphics_pipeline(render_context.pipeline("pbr_apply_lights"));
-  std::tie(
-    dst,
-    context.depth_attachment,
-    context.albedo_attachment,
-    context.normal_attachment,
-    context.metallic_roughness_occlusion_attachment,
-    context.pointspot_page_table_attachment,
-    context.vsm_physical_pages_attachment,
-    values.camera,
-    values.lights,
-    context.light_grid_buffer,
-    context.pointspot_views_buffer
-  ) = std::tuple_cat( //
-    bind_vsm_pointspot_spec_constants(lights_pass)
-      .set_color_blend(0, additive_blend)
-      .set_viewport(0, vir::Rect2D::framebuffer())
-      .set_scissor(0, vir::Rect2D::framebuffer())
-      .bind_buffer(0, 0, values.camera)
-      .bind_image(0, 1, context.depth_attachment)
-      .bind_image(0, 2, context.albedo_attachment)
-      .bind_image(0, 3, context.normal_attachment)
-      .bind_image(0, 4, context.metallic_roughness_occlusion_attachment)
-      .bind_image(0, 5, context.pointspot_page_table_attachment)
-      .bind_image(0, 6, context.vsm_physical_pages_attachment)
-      .push_constant_address(0, values.lights)
-      .push_constant_address(8, context.light_grid_buffer)
-      .push_constant_address(16, context.pointspot_views_buffer)
-      .push_constants_from_at(24, variables.lights_push)
-      .draw(3, 1)
-      .end_rendering()
-  );
 
   return dst;
 }
