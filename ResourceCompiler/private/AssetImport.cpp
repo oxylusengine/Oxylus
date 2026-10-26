@@ -528,14 +528,22 @@ static auto cooked_path(const Importer& importer, const UUID& uuid) -> std::file
   return importer.cooked_dir / (uuid.str() + ".oxpack");
 }
 
+// whether this output's pack was cooked from `hash`. The sidecar's hash is shared by every output that cooks the asset,
+// the editor's cache and each build of a game, so it only says that one of them is current
+static auto is_cooked(const Importer& importer, const UUID& uuid, u64 hash) -> bool {
+  const auto cooked_hash = AssetFile::read_source_hash(cooked_path(importer, uuid));
+  return cooked_hash.has_value() && *cooked_hash == hash;
+}
+
 // a build that has to create one is writing into the source tree, so say so: the new UUID only stays put if the
 // sidecar is committed
 static auto note_new_sidecar(Importer& importer, const std::filesystem::path& path) -> void {
   importer.session.push_message(fmt::format("Created {}, commit it so its UUID stays stable.", meta_file_path(path)));
 }
 
-static auto write_texture_pack(const std::filesystem::path& path, TextureData&& data, const UUID& uuid) -> bool {
-  auto file = AssetFile{};
+static auto write_texture_pack(const std::filesystem::path& path, TextureData&& data, const UUID& uuid, u64 source_hash)
+  -> bool {
+  auto file = AssetFile{.source_hash = source_hash};
   file.add_entry(std::move(data), PackedUUID::pack(uuid));
 
   return file.pack(path);
@@ -759,7 +767,12 @@ static auto compile_model(Importer& importer, const std::filesystem::path& path,
     entry.uuid = is_previous_embedded ? previous_textures[texture_index].uuid : UUID::generate_random();
 
     entry.cache = entry.uuid.str() + ".oxpack";
-    if (!write_texture_pack(importer.cooked_dir / entry.cache, std::move(compiled_texture.data), entry.uuid)) {
+    if (!write_texture_pack(
+          importer.cooked_dir / entry.cache,
+          std::move(compiled_texture.data),
+          entry.uuid,
+          meta.source_hash
+        )) {
       importer.session.push_error(fmt::format("Couldn't write a texture pack for '{}'.", path));
       return false;
     }
@@ -812,7 +825,7 @@ static auto compile_model(Importer& importer, const std::filesystem::path& path,
     meta.animation_uuids.push_back(animation_uuid);
   }
 
-  auto file = AssetFile{};
+  auto file = AssetFile{.source_hash = meta.source_hash};
   file.add_entry(std::move(model), PackedUUID::pack(meta.uuid));
   if (!file.pack(cooked_path(importer, meta.uuid))) {
     importer.session.push_error(fmt::format("Couldn't write the model pack for '{}'.", path));
@@ -929,7 +942,7 @@ static auto import_model(Importer& importer, const std::filesystem::path& path) 
   }
 
   const auto hash = source_hash(path);
-  const auto stale = meta->source_hash != hash || !std::filesystem::exists(cooked_path(importer, meta->uuid));
+  const auto stale = meta->source_hash != hash || !is_cooked(importer, meta->uuid, hash);
   if (stale) {
     meta->source_hash = hash;
     if (!compile_model(importer, path, meta.value())) {
@@ -988,7 +1001,7 @@ static auto import_compiled_texture(
   const auto resolved = usage.has_value() ? usage : directive;
   const auto hash = mix_hash(source_hash(path), resolved.has_value() ? std::to_underlying(*resolved) + 1_u64 : 0_u64);
   const auto pack_path = cooked_path(importer, uuid);
-  if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
+  if (recorded_hash != hash || !is_cooked(importer, uuid, hash)) {
     auto data = importer.session.process(
       TextureCompileRequest{.path = path, .name = path.filename().string(), .usage = resolved}
     );
@@ -997,7 +1010,7 @@ static auto import_compiled_texture(
       return UUID(nullptr);
     }
 
-    if (!write_texture_pack(pack_path, std::move(data.value()), uuid)) {
+    if (!write_texture_pack(pack_path, std::move(data.value()), uuid, hash)) {
       importer.session.push_error(fmt::format("Failed to write the texture pack for '{}'.", path));
       return UUID(nullptr);
     }
@@ -1040,7 +1053,7 @@ static auto import_scene(Importer& importer, const std::filesystem::path& path) 
   const auto hash = source_hash(path);
   const auto pack_path = cooked_path(importer, uuid);
   auto compiled = true;
-  if (recorded_hash != hash || !std::filesystem::exists(pack_path)) {
+  if (recorded_hash != hash || !is_cooked(importer, uuid, hash)) {
     auto warnings = std::vector<std::string>{};
     auto json = compile_scene(File::to_string(path), warnings);
     for (auto& warning : warnings) {
@@ -1048,7 +1061,7 @@ static auto import_scene(Importer& importer, const std::filesystem::path& path) 
     }
 
     if (json.has_value()) {
-      auto file = AssetFile{};
+      auto file = AssetFile{.source_hash = hash};
       file.add_entry(
         SceneData{.name = path.filename().string(), .json = std::move(json.value())},
         PackedUUID::pack(uuid)
@@ -1124,14 +1137,14 @@ static auto import_as_written(Importer& importer, const std::filesystem::path& p
 
   const auto hash = source_hash(path);
   const auto pack_path = cooked_path(importer, uuid);
-  if (meta.source_hash != hash || !std::filesystem::exists(pack_path)) {
+  if (meta.source_hash != hash || !is_cooked(importer, uuid, hash)) {
     auto contents = File::try_to_string(path);
     if (!contents.has_value()) {
       importer.session.push_error(fmt::format("Couldn't read '{}'.", path));
       return UUID(nullptr);
     }
 
-    auto file = AssetFile{};
+    auto file = AssetFile{.source_hash = hash};
     const auto name = path.filename().string();
     if (type == AssetType::Font) {
       const auto bytes = std::span(reinterpret_cast<const u8*>(contents->data()), contents->size());
@@ -1333,8 +1346,9 @@ auto import_asset(
   return result;
 }
 
-auto cook_assets(Session& session, const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir)
-  -> bool {
+auto cook_assets(
+  Session& session, const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir, bool is_forced
+) -> bool {
   ZoneScoped;
 
   auto error = std::error_code{};
@@ -1342,6 +1356,22 @@ auto cook_assets(Session& session, const std::filesystem::path& assets_dir, cons
   if (error) {
     session.push_error(fmt::format("Couldn't create {}: {}", output_dir, error.message()));
     return false;
+  }
+
+  // gone rather than skipped per asset, so a texture several models name is still cooked only once
+  if (is_forced) {
+    auto packs = std::vector<std::filesystem::path>{};
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(output_dir, error)) {
+      if (entry.is_regular_file() && entry.path().extension() == ".oxpack") {
+        packs.push_back(entry.path());
+      }
+    }
+
+    for (const auto& pack : packs) {
+      std::filesystem::remove(pack, error);
+    }
+
+    session.push_message(fmt::format("Removed {} packs from {}, cooking everything again.", packs.size(), output_dir));
   }
 
   // sorted, so two cooks of the same tree produce the same manifest

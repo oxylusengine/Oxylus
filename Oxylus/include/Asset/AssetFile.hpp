@@ -312,18 +312,24 @@ consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 6_u16;
+  static constexpr auto VERSION = 7_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;
   AssetFileFlags flags = AssetFileFlags::None;
+  // what the cook made the pack from, so each output can tell whether its own pack is current. The sidecar's hash is
+  // shared by every output that cooks the asset. 0 for a pack no source file produced, like a shader pack
+  u64 source_hash = 0;
 };
 
 struct AssetFile {
   AssetFileFlags flags = AssetFileFlags::Zstd;
+  u64 source_hash = 0;
   std::vector<AssetFileEntry> entries = {};
 
   static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;
+  // the header's source_hash without unpacking the rest, nullopt for a file that isn't a pack of this version
+  static auto read_source_hash(const std::filesystem::path& path) -> option<u64>;
   auto pack(this AssetFile& self, const std::filesystem::path& path) -> bool;
   auto add_entry(this AssetFile& self, ShaderPipelineData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, TextureData&& entry, const PackedUUID& uuid = {}) -> void;
