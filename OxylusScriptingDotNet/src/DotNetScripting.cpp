@@ -39,7 +39,7 @@ static auto create_scene_script(const OxManagedApi& managed_api, ecs_world_t* wo
   -> void {
   const auto type_name = OxStringView{.data = script.type_name.data(), .length = script.type_name.size()};
   if (const auto status = managed_api.script_create(world, type_name, &script.handle); status != OxStatus::Ok) {
-    OX_LOG_ERROR("Couldn't create C# scene script {}: {}", script.type_name, status_message(status));
+    OX_LOG_ERROR("Couldn't create C# scene behaviour {}: {}", script.type_name, status_message(status));
     script.handle = 0;
   }
 }
@@ -280,7 +280,7 @@ auto DotNetScripting::add_scene_script(this DotNetScripting& self, ecs_world_t* 
 
   auto* attached = self.find_world(world);
   if (!attached) {
-    OX_LOG_ERROR("C# scene script {} was added to a world the scripts aren't attached to", script.type_name);
+    OX_LOG_ERROR("C# scene behaviour {} was added to a world the scripts aren't attached to", script.type_name);
     return;
   }
 

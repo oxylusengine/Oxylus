@@ -68,7 +68,7 @@ struct DotNetScripting {
 
   // kept across an unload, a reload attaches them again and recreates their scripts and behaviours
   ankerl::svector<AttachedWorld, 4> attached_worlds = {};
-  // every scene script and behaviour class of what is loaded, sorted by name, empty while nothing is
+  // every SceneBehaviour and EntityBehaviour class of what is loaded, sorted by name, empty while nothing is
   std::vector<DotNetScriptType> script_types = {};
   std::unique_ptr<SceneScriptHost> scene_host = nullptr;
 
@@ -96,7 +96,7 @@ struct DotNetScripting {
   // A scene's world uses the scene's own
   auto set_ui_context(this DotNetScripting& self, ecs_world_t* world, Rml::Context* context) -> void;
 
-  // creates a behaviour for every ScriptComponent in the world, then starts the scene scripts and behaviours
+  // creates a behaviour for every ScriptComponent in the world, then starts the scene and entity behaviours
   auto start_world(this DotNetScripting& self, ecs_world_t* world) -> void;
   auto stop_world(this DotNetScripting& self, ecs_world_t* world) -> void;
 

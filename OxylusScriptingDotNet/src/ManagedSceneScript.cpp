@@ -14,7 +14,7 @@ static auto to_string_view(std::string_view text) -> OxStringView {
   return OxStringView{.data = text.data(), .length = text.size()};
 }
 
-// attaches its scene's world and forwards every scene hook to the managed side, which runs the scene scripts and the
+// attaches its scene's world and forwards every scene hook to the managed side, which runs the scene behaviours and the
 // behaviours of that world from there
 class ManagedSceneRuntime final : public SceneScript {
 public:
@@ -121,10 +121,10 @@ public:
     // unchecked while nothing is loaded, the editor opens scenes before it has built the project's scripts
     if (module_.is_loaded()) {
       switch (module_.managed_api.find_script_type(to_string_view(type_name))) {
-        case OxScriptKind::SceneScript: break;
-        case OxScriptKind::Behaviour:
-          return std::unexpected(fmt::format("{} is a behaviour, not a scene script", type_name));
-        case OxScriptKind::None: return std::unexpected(fmt::format("There is no C# scene script {}", type_name));
+        case OxScriptKind::SceneBehaviour: break;
+        case OxScriptKind::EntityBehaviour:
+          return std::unexpected(fmt::format("{} is an entity behaviour, not a scene behaviour", type_name));
+        case OxScriptKind::None: return std::unexpected(fmt::format("There is no C# scene behaviour {}", type_name));
       }
     }
 

@@ -13,7 +13,7 @@ public struct Frames
 }
 
 // counts frames on an entity named "Stats", which `SmokeGame --smoke-test` reads back to prove the scripts ran
-public sealed class GameLoop : SceneScript
+public sealed class GameLoop : SceneBehaviour
 {
     Entity stats;
 
@@ -28,7 +28,7 @@ public sealed class GameLoop : SceneScript
     public override void OnStop() => Log.Info($"SmokeGame stopped after {stats.Get<Frames>().Count} frames");
 }
 
-public sealed class CameraBob : Behaviour
+public sealed class CameraBob : EntityBehaviour
 {
     float time;
     float baseY;

@@ -9,7 +9,7 @@ struct ecs_world_t;
 namespace ox {
 struct DotNetScripting;
 
-// a C# scene script in one scene. The instance lives on the managed side behind `handle`, and the scene's runtime
+// a C# scene behaviour in one scene. The instance lives on the managed side behind `handle`, and the scene's runtime
 // dispatches its hooks together with every other managed script in the world, so this only creates and destroys it
 class ManagedSceneScript final : public SceneScript {
 public:

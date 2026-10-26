@@ -679,7 +679,7 @@ auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& se
     auto is_any_listed = false;
     if (App::has_mod<DotNetScripting>()) {
       for (const auto& script_type : App::mod<DotNetScripting>().script_types) {
-        if (script_type.kind != OxScriptKind::SceneScript) {
+        if (script_type.kind != OxScriptKind::SceneBehaviour) {
           continue;
         }
 

@@ -84,7 +84,7 @@ TEST_F(DotNetProjectBuildTest, BuildsAndLoadsAGeneratedProject) {
   write_text(root / "Assets" / "Behaviours" / "Mover.cs", ox::csharp_behaviour_template("TestGame", "Mover"));
   write_text(
     root / "Scripts" / "Level.cs",
-    "namespace TestGame;\n\npublic sealed class Level : Oxylus.SceneScript\n{\n}\n"
+    "namespace TestGame;\n\npublic sealed class Level : Oxylus.SceneBehaviour\n{\n}\n"
   );
 
   const auto result = ox::build_scripts_project(csproj, output_dir());
@@ -104,9 +104,9 @@ TEST_F(DotNetProjectBuildTest, BuildsAndLoadsAGeneratedProject) {
   const auto& types = scripting.script_types;
   ASSERT_EQ(types.size(), 2);
   EXPECT_EQ(types[0].name, "TestGame.Level");
-  EXPECT_EQ(types[0].kind, ox::OxScriptKind::SceneScript);
+  EXPECT_EQ(types[0].kind, ox::OxScriptKind::SceneBehaviour);
   EXPECT_EQ(types[1].name, "TestGame.Mover");
-  EXPECT_EQ(types[1].kind, ox::OxScriptKind::Behaviour);
+  EXPECT_EQ(types[1].kind, ox::OxScriptKind::EntityBehaviour);
 }
 
 TEST_F(DotNetProjectBuildTest, ReportsCompileErrorsWithTheirLocation) {

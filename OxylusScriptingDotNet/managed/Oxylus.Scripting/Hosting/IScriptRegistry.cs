@@ -6,7 +6,7 @@ public interface IScriptRegistry
     // assigns ComponentType<T>.Index for each [Component] from `firstIndex` up
     ComponentDescriptor[] RegisterComponents(int firstIndex);
 
-    // the [System]s outside of scene scripts, those register with their script
+    // the [System]s outside of scene behaviours, those register with their script
     SystemDescriptor[] CreateSystems();
 
     // also assigns BehaviourType<T>.Name for each behaviour

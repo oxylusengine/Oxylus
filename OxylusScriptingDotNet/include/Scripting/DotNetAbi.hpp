@@ -47,8 +47,8 @@ enum class OxTermAccess : i32 {
 
 enum class OxScriptKind : i32 {
   None = 0,
-  SceneScript = 1,
-  Behaviour = 2,
+  SceneBehaviour = 1,
+  EntityBehaviour = 2,
 };
 
 // UTF-8, not null terminated
@@ -639,14 +639,14 @@ struct OxManagedApi {
   auto (*find_script_type)(OxStringView type_name) -> OxScriptKind = nullptr;
   // fills up to `capacity` entries and returns how many types there are
   auto (*list_script_types)(OxScriptTypeInfo* types, i32 capacity) -> i32 = nullptr;
-  // a scene script instance, `handle` names it from then on. Its systems register in `world` with it
+  // a scene behaviour instance, `handle` names it from then on. Its systems register in `world` with it
   auto (*script_create)(ecs_world_t* world, OxStringView type_name, u64* handle) -> OxStatus = nullptr;
   auto (*script_destroy)(u64 handle) -> void = nullptr;
   // replaces whatever behaviour the entity had
   auto (*behaviour_add)(ecs_world_t* world, u64 entity, OxStringView type_name) -> OxStatus = nullptr;
   auto (*behaviour_remove)(ecs_world_t* world, u64 entity) -> void = nullptr;
 
-  // each hook reaches every scene script and then every behaviour in the world, in one call
+  // each hook reaches every scene behaviour and then every entity behaviour in the world, in one call
   auto (*world_start)(ecs_world_t* world) -> void = nullptr;
   auto (*world_stop)(ecs_world_t* world) -> void = nullptr;
   auto (*world_update)(ecs_world_t* world, f32 delta_time) -> void = nullptr;

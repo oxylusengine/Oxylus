@@ -13,12 +13,12 @@ internal sealed class WorldState(nint handle, ulong[] componentIds)
     public readonly ulong[] ComponentIds = componentIds;
     public readonly List<ulong> Systems = [];
 
-    public readonly List<SceneScript> Scripts = [];
-    public readonly Dictionary<ulong, Behaviour> Behaviours = [];
+    public readonly List<SceneBehaviour> Scripts = [];
+    public readonly Dictionary<ulong, EntityBehaviour> Behaviours = [];
     public readonly BehaviourList AllBehaviours = new(BehaviourList.All);
     public readonly BehaviourList Updating = new(BehaviourList.Update);
     public readonly BehaviourList FixedUpdating = new(BehaviourList.FixedUpdate);
-    public readonly List<Behaviour> Starting = [];
+    public readonly List<EntityBehaviour> Starting = [];
     public bool IsRunning;
 
     // what Defer queued, run at the start of the next update

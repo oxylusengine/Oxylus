@@ -12,7 +12,7 @@ public struct Spin
     public float Angle;
 }
 
-public sealed class LevelLogic : SceneScript
+public sealed class LevelLogic : SceneBehaviour
 {
     int updates;
 
@@ -38,7 +38,7 @@ public sealed class LevelLogic : SceneScript
     public static void Turn(ref Spin spin, float deltaTime) => spin.Angle += spin.Speed * deltaTime;
 }
 
-public sealed class Spinner : Behaviour
+public sealed class Spinner : EntityBehaviour
 {
     public override void OnCreate() => Log.Info($"Spinner.OnCreate {Entity.Name}");
     public override void OnStart() => Log.Info($"Spinner.OnStart {Entity.Name}");
@@ -51,13 +51,13 @@ public sealed class Spinner : Behaviour
     }
 }
 
-public sealed class Faulty : Behaviour
+public sealed class Faulty : EntityBehaviour
 {
     public override void OnUpdate(float deltaTime) => throw new InvalidOperationException("faulty on purpose");
 }
 
 // gives the entity named "Late" a Spinner from inside an update, through the Entity API
-public sealed class Spawner : Behaviour
+public sealed class Spawner : EntityBehaviour
 {
     public override void OnUpdate(float deltaTime)
     {
@@ -69,7 +69,7 @@ public sealed class Spawner : Behaviour
     }
 }
 
-public sealed class Bumper : Behaviour
+public sealed class Bumper : EntityBehaviour
 {
     int mainThread;
 
@@ -89,7 +89,7 @@ public sealed class Bumper : Behaviour
 }
 
 // the cheapest behaviour there is, what a frame of them costs is the dispatch
-public sealed class Ticker : Behaviour
+public sealed class Ticker : EntityBehaviour
 {
     public int Ticks;
 

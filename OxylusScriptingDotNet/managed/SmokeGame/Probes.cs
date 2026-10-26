@@ -103,7 +103,7 @@ public static class Probes
 }
 
 // pushes its body sideways, and checks a static body turns a force away
-public sealed class Pusher : Behaviour
+public sealed class Pusher : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -128,7 +128,7 @@ public sealed class Pusher : Behaviour
     }
 }
 
-public sealed class RaycastProbe : SceneScript
+public sealed class RaycastProbe : SceneBehaviour
 {
     public override void OnStart()
     {
@@ -146,7 +146,7 @@ public sealed class RaycastProbe : SceneScript
 }
 
 // walks along x and reports once it stands on something
-public sealed class Walker : Behaviour
+public sealed class Walker : EntityBehaviour
 {
     bool isReported;
 
@@ -162,8 +162,8 @@ public sealed class Walker : Behaviour
     }
 }
 
-// asset, audio, scene and VFS calls from a scene script, against the files TestDotNetScene writes into its assets
-public sealed class ContentProbe : SceneScript
+// asset, audio, scene and VFS calls from a scene behaviour, against the files TestDotNetScene writes into its assets
+public sealed class ContentProbe : SceneBehaviour
 {
     AssetHandle? beep;
 
@@ -214,7 +214,7 @@ public sealed class ContentProbe : SceneScript
 
 // a model's materials and one material's parameters, against the assets TestDotNetScene registers. It leaves the
 // material pointing at textures a, b and c, and gives them up again when it stops
-public sealed class MaterialProbe : SceneScript
+public sealed class MaterialProbe : SceneBehaviour
 {
     AssetId stone;
     AssetId a;
@@ -309,7 +309,7 @@ public sealed class MaterialProbe : SceneScript
 }
 
 // keeps a handle it never disposes, the runtime gives the reference back when the scripts unload
-public sealed class LeakyProbe : SceneScript
+public sealed class LeakyProbe : SceneBehaviour
 {
     public AssetHandle? Held { get; private set; }
 
@@ -556,7 +556,7 @@ public struct Calm
 
 // the ECS API runs outside of a frame in a behaviour's OnStart, where a system's commands would be deferred already,
 // and reports what it saw in the log
-public sealed class PathProbe : Behaviour
+public sealed class PathProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -588,7 +588,7 @@ public sealed class PathProbe : Behaviour
     }
 }
 
-public sealed class EnsureProbe : Behaviour
+public sealed class EnsureProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -600,7 +600,7 @@ public sealed class EnsureProbe : Behaviour
     }
 }
 
-public sealed class PairProbe : Behaviour
+public sealed class PairProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -622,7 +622,7 @@ public sealed class PairProbe : Behaviour
     }
 }
 
-public sealed class IsAProbe : Behaviour
+public sealed class IsAProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -633,7 +633,7 @@ public sealed class IsAProbe : Behaviour
     }
 }
 
-public sealed class DeferProbe : Behaviour
+public sealed class DeferProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -655,7 +655,7 @@ public sealed class DeferProbe : Behaviour
     }
 }
 
-public sealed class DefaultsProbe : Behaviour
+public sealed class DefaultsProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -672,7 +672,7 @@ public sealed class DefaultsProbe : Behaviour
 }
 
 // the scene operations of a world, which a bare world answers with nothing
-public sealed class SceneInfoProbe : Behaviour
+public sealed class SceneInfoProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -685,7 +685,7 @@ public sealed class SceneInfoProbe : Behaviour
     public override void OnUpdate(float deltaTime) => Log.Info($"scene focused {World.InputFocused}");
 }
 
-public sealed class ParticleProbe : Behaviour
+public sealed class ParticleProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -713,7 +713,7 @@ public sealed class ParticleProbe : Behaviour
     }
 }
 
-public sealed class CinematicProbe : Behaviour
+public sealed class CinematicProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -734,7 +734,7 @@ public sealed class CinematicProbe : Behaviour
     }
 }
 
-public sealed class UiCacheProbe : Behaviour
+public sealed class UiCacheProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -744,7 +744,7 @@ public sealed class UiCacheProbe : Behaviour
     }
 }
 
-public sealed class AppProbe : Behaviour
+public sealed class AppProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -757,7 +757,7 @@ public sealed class AppProbe : Behaviour
     }
 }
 
-public sealed class QuitProbe : Behaviour
+public sealed class QuitProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -766,7 +766,7 @@ public sealed class QuitProbe : Behaviour
     }
 }
 
-public sealed class SpriteProbe : Behaviour
+public sealed class SpriteProbe : EntityBehaviour
 {
     public override void OnStart()
     {
@@ -784,7 +784,7 @@ public sealed class SpriteProbe : Behaviour
 
 // a sprite spawned while the scene runs and destroyed in OnStop, the way a game cleans up what it made. "Kept" is left
 // for the scene's own teardown to remove
-public sealed class SpriteTeardownProbe : SceneScript
+public sealed class SpriteTeardownProbe : SceneBehaviour
 {
     Entity sprite;
 
@@ -803,7 +803,7 @@ public sealed class SpriteTeardownProbe : SceneScript
     }
 }
 
-public sealed class AppResetProbe : Behaviour
+public sealed class AppResetProbe : EntityBehaviour
 {
     public override void OnStart()
     {

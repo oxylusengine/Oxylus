@@ -33,8 +33,8 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
         "Invalid script class",
         "'{0}' {1}");
 
-    const string SceneScriptType = "Oxylus.SceneScript";
-    const string BehaviourType = "Oxylus.Behaviour";
+    const string SceneBehaviourType = "Oxylus.SceneBehaviour";
+    const string EntityBehaviourType = "Oxylus.EntityBehaviour";
 
     static DiagnosticDescriptor Error(string id, string title, string message) =>
         new(id, title, message, "Oxylus", DiagnosticSeverity.Error, isEnabledByDefault: true);
@@ -219,7 +219,7 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
             var hooks = scriptType.Hooks.IsEmpty
                 ? "global::Oxylus.ScriptHooks.None"
                 : string.Join(" | ", scriptType.Hooks.Select(h => $"global::Oxylus.ScriptHooks.{h}"));
-            var kind = scriptType.IsBehaviour ? "Behaviour" : "SceneScript";
+            var kind = scriptType.IsBehaviour ? "EntityBehaviour" : "SceneBehaviour";
             source.AppendLine(
                 $"            new(name{i}, global::Oxylus.Interop.ScriptKind.{kind}, {hooks}, " +
                 $"static () => new {scriptType.Type}(), [{ownSystems}]),");
@@ -442,8 +442,8 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
                 error ??= "takes no components, so it would match nothing";
             }
 
-            // a scene script's systems register with each instance of it instead of in every world
-            var owner = DerivesFrom(method.ContainingType, SceneScriptType)
+            // a scene behaviour's systems register with each instance of it instead of in every world
+            var owner = DerivesFrom(method.ContainingType, SceneBehaviourType)
                 ? method.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
                 : null;
             return new SystemModel(CallName(method), phase, parameters.ToImmutable(), owner, error, method.Locations.FirstOrDefault());
@@ -460,8 +460,8 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
     {
         public static ScriptTypeModel? From(INamedTypeSymbol type)
         {
-            var isBehaviour = DerivesFrom(type, BehaviourType);
-            if (type.IsAbstract || type.IsStatic || (!isBehaviour && !DerivesFrom(type, SceneScriptType)))
+            var isBehaviour = DerivesFrom(type, EntityBehaviourType);
+            if (type.IsAbstract || type.IsStatic || (!isBehaviour && !DerivesFrom(type, SceneBehaviourType)))
             {
                 return null;
             }
@@ -516,10 +516,10 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
             return true;
         }
 
-        // anywhere between the class and Oxylus.Behaviour, a base class can supply the override
+        // anywhere between the class and Oxylus.EntityBehaviour, a base class can supply the override
         static bool Overrides(INamedTypeSymbol type, string hook)
         {
-            for (var current = type; current is not null && current.ToDisplayString() != BehaviourType; current = current.BaseType)
+            for (var current = type; current is not null && current.ToDisplayString() != EntityBehaviourType; current = current.BaseType)
             {
                 if (current.GetMembers(hook).OfType<IMethodSymbol>().Any(m => m.IsOverride))
                 {

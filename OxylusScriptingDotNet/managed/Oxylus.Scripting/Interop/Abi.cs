@@ -39,8 +39,8 @@ public enum TermAccess : int
 public enum ScriptKind : int
 {
     None = 0,
-    SceneScript = 1,
-    Behaviour = 2,
+    SceneBehaviour = 1,
+    EntityBehaviour = 2,
 }
 
 // matches ComponentFieldType in Scene/Scene.hpp

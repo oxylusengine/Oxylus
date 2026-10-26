@@ -342,13 +342,13 @@ TEST_F(DotNetSceneTest, ListsScriptTypes) {
     return it == types.end() ? ox::OxScriptKind::None : it->kind;
   };
 
-  EXPECT_EQ(kind_of("SmokeGame.LevelLogic"), ox::OxScriptKind::SceneScript);
-  EXPECT_EQ(kind_of("SmokeGame.Spinner"), ox::OxScriptKind::Behaviour);
+  EXPECT_EQ(kind_of("SmokeGame.LevelLogic"), ox::OxScriptKind::SceneBehaviour);
+  EXPECT_EQ(kind_of("SmokeGame.Spinner"), ox::OxScriptKind::EntityBehaviour);
   EXPECT_EQ(kind_of("SmokeGame.Movement"), ox::OxScriptKind::None);
   EXPECT_TRUE(std::ranges::is_sorted(scripting().script_types, {}, &ox::DotNetScriptType::name));
 }
 
-TEST_F(DotNetSceneTest, RunsASceneScriptsHooks) {
+TEST_F(DotNetSceneTest, RunsASceneBehavioursHooks) {
   const auto added = scene->add_script_type("SmokeGame.LevelLogic");
   ASSERT_TRUE(added.has_value()) << added.error();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "LevelLogic.OnAdd"), 1);
@@ -367,7 +367,7 @@ TEST_F(DotNetSceneTest, RunsASceneScriptsHooks) {
   EXPECT_TRUE(scene->get_scripts().empty());
 }
 
-TEST_F(DotNetSceneTest, RejectsWhatIsNotASceneScript) {
+TEST_F(DotNetSceneTest, RejectsWhatIsNotASceneBehaviour) {
   const auto missing = scene->add_script_type("SmokeGame.Nope");
   ASSERT_FALSE(missing.has_value());
   EXPECT_NE(missing.error().find("SmokeGame.Nope"), std::string::npos);
@@ -378,7 +378,7 @@ TEST_F(DotNetSceneTest, RejectsWhatIsNotASceneScript) {
   EXPECT_TRUE(scene->get_scripts().empty());
 }
 
-TEST_F(DotNetSceneTest, RegistersASceneScriptsSystemsWithIt) {
+TEST_F(DotNetSceneTest, RegistersASceneBehavioursSystemsWithIt) {
   const auto spin = id_of("SmokeGame.Spin");
   ASSERT_NE(spin, 0);
   auto spinning = scene->create_entity("Spinning");

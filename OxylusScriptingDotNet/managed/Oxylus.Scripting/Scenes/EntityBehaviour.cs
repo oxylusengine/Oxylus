@@ -5,7 +5,7 @@ namespace Oxylus;
 // the script on an entity whose ScriptComponent names it. It lives while the scene runs: OnCreate when the scene starts
 // or the component is set, OnStart before its first update, OnDestroy when the component goes, the entity dies or the
 // scene stops
-public abstract class Behaviour
+public abstract class EntityBehaviour
 {
     public Entity Entity { get; internal set; }
     public World World => Entity.World;

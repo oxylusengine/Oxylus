@@ -4,7 +4,7 @@ namespace Oxylus;
 
 // one per scene that lists it in its "scripts", found by its full name, "Game.LevelLogic". [System] methods declared in
 // it run only in the scenes that have it, from OnAdd until OnRemove
-public abstract class SceneScript
+public abstract class SceneBehaviour
 {
     public World World { get; internal set; }
 

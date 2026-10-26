@@ -246,7 +246,7 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
     public void Destruct() => Runtime.Native.EcsDelete(world, Id);
 
     // sets the entity's ScriptComponent, so the behaviour is created now if the scene runs or when it starts
-    public Entity AddBehaviour<T>() where T : Behaviour
+    public Entity AddBehaviour<T>() where T : EntityBehaviour
     {
         var name = BehaviourType<T>.Name;
         if (name is null)
@@ -262,7 +262,7 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
         return this;
     }
 
-    public T? GetBehaviour<T>() where T : Behaviour =>
+    public T? GetBehaviour<T>() where T : EntityBehaviour =>
         Worlds.Get(world).Behaviours.TryGetValue(Id, out var behaviour) ? behaviour as T : null;
 
     public Entity RemoveBehaviour() => Remove<ScriptComponent>();

@@ -119,17 +119,17 @@ internal static unsafe class Scenes
         {
             if (Worlds.TryGet(world) is not { } state)
             {
-                Log.Error($"Scene script {Text(name)} was created in a world the scripts aren't attached to");
+                Log.Error($"Scene behaviour {Text(name)} was created in a world the scripts aren't attached to");
                 return OxStatus.InvalidArgument;
             }
 
-            if (Find(name) is not { Kind: ScriptKind.SceneScript } type)
+            if (Find(name) is not { Kind: ScriptKind.SceneBehaviour } type)
             {
-                Log.Error($"There is no C# scene script {Text(name)}");
+                Log.Error($"There is no C# scene behaviour {Text(name)}");
                 return OxStatus.NotFound;
             }
 
-            var script = (SceneScript)type.Create();
+            var script = (SceneBehaviour)type.Create();
             script.World = new World(world);
             script.Type = type;
             foreach (var system in type.Systems)
@@ -152,7 +152,7 @@ internal static unsafe class Scenes
             }
             catch (Exception e)
             {
-                Fault(script, nameof(SceneScript.OnAdd), e);
+                Fault(script, nameof(SceneBehaviour.OnAdd), e);
             }
 
             if (state.IsRunning)
@@ -165,7 +165,7 @@ internal static unsafe class Scenes
         }
         catch (Exception e)
         {
-            Log.Error($"Couldn't create scene script {Text(name)}: {e}");
+            Log.Error($"Couldn't create scene behaviour {Text(name)}: {e}");
             return OxStatus.Exception;
         }
     }
@@ -176,7 +176,7 @@ internal static unsafe class Scenes
         try
         {
             var gcHandle = GCHandle.FromIntPtr((nint)handle);
-            var script = (SceneScript)gcHandle.Target!;
+            var script = (SceneBehaviour)gcHandle.Target!;
             gcHandle.Free();
 
             if (!script.IsFaulted)
@@ -192,7 +192,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, nameof(SceneScript.OnRemove), e);
+                    Fault(script, nameof(SceneBehaviour.OnRemove), e);
                 }
             }
 
@@ -201,7 +201,7 @@ internal static unsafe class Scenes
         }
         catch (Exception e)
         {
-            Log.Error($"Couldn't destroy a scene script: {e}");
+            Log.Error($"Couldn't destroy a scene behaviour: {e}");
         }
     }
 
@@ -216,7 +216,7 @@ internal static unsafe class Scenes
             }
 
             var type = Find(name);
-            if (type is not { Kind: ScriptKind.Behaviour })
+            if (type is not { Kind: ScriptKind.EntityBehaviour })
             {
                 Log.Error($"There is no C# behaviour {Text(name)}");
                 RemoveBehaviour(state, entity);
@@ -233,7 +233,7 @@ internal static unsafe class Scenes
                 RemoveBehaviour(state, entity);
             }
 
-            var behaviour = (Behaviour)type.Create();
+            var behaviour = (EntityBehaviour)type.Create();
             behaviour.Type = type;
             behaviour.Entity = new Entity(world, entity);
             for (var kind = 0; kind < BehaviourList.Kinds; kind++)
@@ -259,7 +259,7 @@ internal static unsafe class Scenes
             }
             catch (Exception e)
             {
-                Fault(state, behaviour, nameof(Behaviour.OnCreate), e);
+                Fault(state, behaviour, nameof(EntityBehaviour.OnCreate), e);
             }
 
             state.Starting.Add(behaviour);
@@ -342,7 +342,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, nameof(SceneScript.OnStop), e);
+                    Fault(script, nameof(SceneBehaviour.OnStop), e);
                 }
             }
 
@@ -403,7 +403,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, nameof(SceneScript.OnUpdate), e);
+                    Fault(script, nameof(SceneBehaviour.OnUpdate), e);
                 }
             }
 
@@ -424,7 +424,7 @@ internal static unsafe class Scenes
                     }
                     catch (Exception e)
                     {
-                        Fault(state, behaviour, nameof(Behaviour.OnUpdate), e);
+                        Fault(state, behaviour, nameof(EntityBehaviour.OnUpdate), e);
                     }
                 }
             }
@@ -464,7 +464,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, nameof(SceneScript.OnFixedUpdate), e);
+                    Fault(script, nameof(SceneBehaviour.OnFixedUpdate), e);
                 }
             }
 
@@ -485,7 +485,7 @@ internal static unsafe class Scenes
                     }
                     catch (Exception e)
                     {
-                        Fault(state, behaviour, nameof(Behaviour.OnFixedUpdate), e);
+                        Fault(state, behaviour, nameof(EntityBehaviour.OnFixedUpdate), e);
                     }
                 }
             }
@@ -524,7 +524,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, nameof(SceneScript.OnRender), e);
+                    Fault(script, nameof(SceneBehaviour.OnRender), e);
                 }
             }
         }
@@ -569,7 +569,7 @@ internal static unsafe class Scenes
                     }
                     catch (Exception e)
                     {
-                        Fault(script, nameof(SceneScript.OnContact), e);
+                        Fault(script, nameof(SceneBehaviour.OnContact), e);
                     }
                 }
 
@@ -623,7 +623,7 @@ internal static unsafe class Scenes
                 }
                 catch (Exception e)
                 {
-                    Fault(script, isActivated ? nameof(SceneScript.OnBodyActivated) : nameof(SceneScript.OnBodyDeactivated), e);
+                    Fault(script, isActivated ? nameof(SceneBehaviour.OnBodyActivated) : nameof(SceneBehaviour.OnBodyDeactivated), e);
                 }
             }
 
@@ -645,7 +645,7 @@ internal static unsafe class Scenes
             }
             catch (Exception e)
             {
-                Fault(state, behaviour, isActivated ? nameof(Behaviour.OnBodyActivated) : nameof(Behaviour.OnBodyDeactivated), e);
+                Fault(state, behaviour, isActivated ? nameof(EntityBehaviour.OnBodyActivated) : nameof(EntityBehaviour.OnBodyDeactivated), e);
             }
         }
         catch (Exception e)
@@ -680,7 +680,7 @@ internal static unsafe class Scenes
         state.Running.Clear();
     }
 
-    static void Contact(WorldState state, Behaviour behaviour, in Contact contact)
+    static void Contact(WorldState state, EntityBehaviour behaviour, in Contact contact)
     {
         if (behaviour.IsFaulted)
         {
@@ -693,11 +693,11 @@ internal static unsafe class Scenes
         }
         catch (Exception e)
         {
-            Fault(state, behaviour, nameof(Behaviour.OnContact), e);
+            Fault(state, behaviour, nameof(EntityBehaviour.OnContact), e);
         }
     }
 
-    static void Start(SceneScript script)
+    static void Start(SceneBehaviour script)
     {
         if (script.IsStarted || script.IsFaulted)
         {
@@ -711,7 +711,7 @@ internal static unsafe class Scenes
         }
         catch (Exception e)
         {
-            Fault(script, nameof(SceneScript.OnStart), e);
+            Fault(script, nameof(SceneBehaviour.OnStart), e);
         }
     }
 
@@ -734,7 +734,7 @@ internal static unsafe class Scenes
             }
             catch (Exception e)
             {
-                Fault(state, behaviour, nameof(Behaviour.OnStart), e);
+                Fault(state, behaviour, nameof(EntityBehaviour.OnStart), e);
             }
         }
 
@@ -761,7 +761,7 @@ internal static unsafe class Scenes
         }
     }
 
-    static void DeleteSystems(SceneScript script)
+    static void DeleteSystems(SceneBehaviour script)
     {
         foreach (var system in script.Systems)
         {
@@ -771,13 +771,13 @@ internal static unsafe class Scenes
         script.Systems.Clear();
     }
 
-    static void Fault(SceneScript script, string hook, Exception exception)
+    static void Fault(SceneBehaviour script, string hook, Exception exception)
     {
         script.IsFaulted = true;
         Log.Error($"{NameOf(script.Type)}.{hook} threw and the script is disabled: {exception}");
     }
 
-    static void Fault(WorldState state, Behaviour behaviour, string hook, Exception exception)
+    static void Fault(WorldState state, EntityBehaviour behaviour, string hook, Exception exception)
     {
         behaviour.IsFaulted = true;
         state.Updating.Remove(behaviour);

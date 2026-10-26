@@ -11,16 +11,16 @@ internal sealed class BehaviourList(int kind)
     public const int FixedUpdate = 2;
     public const int Kinds = 3;
 
-    Behaviour?[] items = new Behaviour?[16];
+    EntityBehaviour?[] items = new EntityBehaviour?[16];
     int count;
     int dispatching;
     bool hasHoles;
 
     public int Count => count;
 
-    public Behaviour? this[int index] => items[index];
+    public EntityBehaviour? this[int index] => items[index];
 
-    public void Add(Behaviour behaviour)
+    public void Add(EntityBehaviour behaviour)
     {
         if (count == items.Length)
         {
@@ -31,7 +31,7 @@ internal sealed class BehaviourList(int kind)
         items[count++] = behaviour;
     }
 
-    public void Remove(Behaviour behaviour)
+    public void Remove(EntityBehaviour behaviour)
     {
         var index = behaviour.Slots[kind];
         if (index < 0)

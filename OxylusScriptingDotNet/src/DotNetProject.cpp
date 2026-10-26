@@ -198,7 +198,7 @@ auto csharp_behaviour_template(std::string_view namespace_name, std::string_view
 
 namespace {0};
 
-public sealed class {1} : Behaviour
+public sealed class {1} : EntityBehaviour
 {{
     public override void OnStart()
     {{

@@ -13,7 +13,7 @@ public enum ScriptHooks
     FixedUpdate = 1 << 1,
 }
 
-// a SceneScript or Behaviour class, described by the generator so nothing is found by reflection
+// a SceneBehaviour or EntityBehaviour class, described by the generator so nothing is found by reflection
 public sealed class ScriptType(byte[] name, ScriptKind kind, ScriptHooks hooks, Func<object> create, SystemDescriptor[] systems)
 {
     public byte[] Name { get; } = name;
@@ -23,7 +23,7 @@ public sealed class ScriptType(byte[] name, ScriptKind kind, ScriptHooks hooks, 
     public SystemDescriptor[] Systems { get; } = systems;
 }
 
-public static class BehaviourType<T> where T : Behaviour
+public static class BehaviourType<T> where T : EntityBehaviour
 {
     public static byte[]? Name;
 }

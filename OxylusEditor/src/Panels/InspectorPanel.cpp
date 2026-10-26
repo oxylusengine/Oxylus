@@ -81,7 +81,7 @@ static auto draw_script_component(flecs::entity entity) -> void {
     auto& dotnet = App::mod<DotNetScripting>();
     is_loaded = dotnet.is_loaded();
     for (const auto& script_type : dotnet.script_types) {
-      if (script_type.kind == OxScriptKind::Behaviour) {
+      if (script_type.kind == OxScriptKind::EntityBehaviour) {
         behaviours.push_back(script_type.name);
       }
     }
