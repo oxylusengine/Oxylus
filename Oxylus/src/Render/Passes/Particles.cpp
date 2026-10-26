@@ -471,13 +471,11 @@ auto RendererInstance::simulate_particles(
   std::tie(dead_list, particles, dead_counts, counters) = std::tuple_cat(module.set_condition(
     variables.is_pool_reset,
     [&](vir::Module& arm) {
-      const auto [counts, zeroed] = arm
-                                      .begin_compute(
-                                        {{dead_counts, vir::Access::Clear}, {counters, vir::Access::Clear}}
-                                      )
-                                      .with_name("particle initial counts")
-                                      .record_from(write_initial_counts)
-                                      .end_compute();
+      const auto [counts, zeroed] = //
+        arm.begin_compute({{dead_counts, vir::Access::Clear}, {counters, vir::Access::Clear}})
+          .with_name("particle initial counts")
+          .record_from(write_initial_counts)
+          .end_compute();
 
       const auto [initial_dead_list, initial_particles] =
         arm.begin_compute({{dead_list, vir::Access::ComputeWrite}, {particles, vir::Access::ComputeWrite}})
@@ -493,12 +491,13 @@ auto RendererInstance::simulate_particles(
     [&](vir::Module&) { return std::array{dead_list, particles, dead_counts, counters}; }
   ));
 
-  counters = module.begin_compute({{counters, vir::Access::ComputeRW}})
-               .with_name("particle prepare")
-               .bind_compute_pipeline(render_context.pipeline("particle_prepare"))
-               .bind_buffer(0, 0, counters)
-               .dispatch(1, 1, 1)
-               .end_compute()[0];
+  counters = //
+    module.begin_compute({{counters, vir::Access::ComputeRW}})
+      .with_name("particle prepare")
+      .bind_compute_pipeline(render_context.pipeline("particle_prepare"))
+      .bind_buffer(0, 0, counters)
+      .dispatch(1, 1, 1)
+      .end_compute()[0];
 
   std::tie(
     particles,
@@ -509,30 +508,32 @@ auto RendererInstance::simulate_particles(
     context.emitters_buffer,
     context.program_buffer,
     context.constants_buffer
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{particles, vir::Access::ComputeRW},
-                          {dead_list, vir::Access::ComputeRW},
-                          {dead_counts, vir::Access::ComputeRW},
-                          {alive_in, vir::Access::ComputeRW},
-                          {counters, vir::Access::ComputeRW},
-                          {context.emitters_buffer, vir::Access::ComputeRead},
-                          {context.program_buffer, vir::Access::ComputeRead},
-                          {context.constants_buffer, vir::Access::ComputeRead}}
-                       )
-                       .with_name("particle emit")
-                       .bind_compute_pipeline(render_context.pipeline("particle_emit"))
-                       .bind_buffer(0, 0, particles)
-                       .bind_buffer(0, 1, dead_list)
-                       .bind_buffer(0, 2, dead_counts)
-                       .bind_buffer(0, 3, alive_in)
-                       .bind_buffer(0, 4, counters)
-                       .bind_buffer(0, 5, context.emitters_buffer)
-                       .bind_buffer(0, 6, context.program_buffer)
-                       .bind_buffer(0, 7, context.constants_buffer)
-                       .push_constants_from(variables.emit_push)
-                       .dispatch_invocations(total_spawn, 1, 1)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{particles, vir::Access::ComputeRW},
+         {dead_list, vir::Access::ComputeRW},
+         {dead_counts, vir::Access::ComputeRW},
+         {alive_in, vir::Access::ComputeRW},
+         {counters, vir::Access::ComputeRW},
+         {context.emitters_buffer, vir::Access::ComputeRead},
+         {context.program_buffer, vir::Access::ComputeRead},
+         {context.constants_buffer, vir::Access::ComputeRead}}
+      )
+      .with_name("particle emit")
+      .bind_compute_pipeline(render_context.pipeline("particle_emit"))
+      .bind_buffer(0, 0, particles)
+      .bind_buffer(0, 1, dead_list)
+      .bind_buffer(0, 2, dead_counts)
+      .bind_buffer(0, 3, alive_in)
+      .bind_buffer(0, 4, counters)
+      .bind_buffer(0, 5, context.emitters_buffer)
+      .bind_buffer(0, 6, context.program_buffer)
+      .bind_buffer(0, 7, context.constants_buffer)
+      .push_constants_from(variables.emit_push)
+      .dispatch_invocations(total_spawn, 1, 1)
+      .end_compute()
+  );
 
   const auto simulate_args_value = VkDispatchIndirectCommand{.x = 0, .y = 1, .z = 1};
   auto simulate_args = module.transient_buffer({
@@ -569,38 +570,40 @@ auto RendererInstance::simulate_particles(
     sort_keys,
     values.camera,
     context.depth_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{simulate_args, vir::Access::IndirectRead},
-                          {particles, vir::Access::ComputeRW},
-                          {alive_in, vir::Access::ComputeRead},
-                          {alive_out, vir::Access::ComputeWrite},
-                          {dead_list, vir::Access::ComputeRW},
-                          {dead_counts, vir::Access::ComputeRW},
-                          {counters, vir::Access::ComputeRW},
-                          {context.emitters_buffer, vir::Access::ComputeRead},
-                          {context.program_buffer, vir::Access::ComputeRead},
-                          {context.constants_buffer, vir::Access::ComputeRead},
-                          {sort_keys, vir::Access::ComputeWrite},
-                          {values.camera, vir::Access::ComputeUniformRead},
-                          {context.depth_attachment, vir::Access::ComputeSampled}}
-                       )
-                       .with_name("particle simulate")
-                       .bind_compute_pipeline(render_context.pipeline("particle_simulate"))
-                       .bind_buffer(0, 0, particles)
-                       .bind_buffer(0, 1, alive_in)
-                       .bind_buffer(0, 2, alive_out)
-                       .bind_buffer(0, 3, dead_list)
-                       .bind_buffer(0, 4, dead_counts)
-                       .bind_buffer(0, 5, counters)
-                       .bind_buffer(0, 6, context.emitters_buffer)
-                       .bind_buffer(0, 7, context.program_buffer)
-                       .bind_buffer(0, 8, context.constants_buffer)
-                       .bind_buffer(0, 9, sort_keys)
-                       .bind_buffer(0, 10, values.camera)
-                       .bind_image(0, 11, context.depth_attachment)
-                       .dispatch_indirect(simulate_args)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{simulate_args, vir::Access::IndirectRead},
+         {particles, vir::Access::ComputeRW},
+         {alive_in, vir::Access::ComputeRead},
+         {alive_out, vir::Access::ComputeWrite},
+         {dead_list, vir::Access::ComputeRW},
+         {dead_counts, vir::Access::ComputeRW},
+         {counters, vir::Access::ComputeRW},
+         {context.emitters_buffer, vir::Access::ComputeRead},
+         {context.program_buffer, vir::Access::ComputeRead},
+         {context.constants_buffer, vir::Access::ComputeRead},
+         {sort_keys, vir::Access::ComputeWrite},
+         {values.camera, vir::Access::ComputeUniformRead},
+         {context.depth_attachment, vir::Access::ComputeSampled}}
+      )
+      .with_name("particle simulate")
+      .bind_compute_pipeline(render_context.pipeline("particle_simulate"))
+      .bind_buffer(0, 0, particles)
+      .bind_buffer(0, 1, alive_in)
+      .bind_buffer(0, 2, alive_out)
+      .bind_buffer(0, 3, dead_list)
+      .bind_buffer(0, 4, dead_counts)
+      .bind_buffer(0, 5, counters)
+      .bind_buffer(0, 6, context.emitters_buffer)
+      .bind_buffer(0, 7, context.program_buffer)
+      .bind_buffer(0, 8, context.constants_buffer)
+      .bind_buffer(0, 9, sort_keys)
+      .bind_buffer(0, 10, values.camera)
+      .bind_image(0, 11, context.depth_attachment)
+      .dispatch_indirect(simulate_args)
+      .end_compute()
+  );
 
   // the pool size is part of the frame shape, so the sort can be unrolled here
   const auto sorted_count = recording.shape.particle_sorted_count;
@@ -618,22 +621,24 @@ auto RendererInstance::simulate_particles(
   if (recording.shape.is_particle_sort) {
     for (auto k = GPU::PARTICLE_SORT_GROUP * 2; k <= sorted_count; k <<= 1) {
       for (auto j = k >> 1; j >= GPU::PARTICLE_SORT_GROUP; j >>= 1) {
-        sort_keys = module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
-                      .with_name(stack.format("particle sort {}/{}", k, j))
-                      .bind_compute_pipeline(render_context.pipeline("particle_sort_step"))
-                      .bind_buffer(0, 0, sort_keys)
-                      .push_constants(PushConstants(sorted_count, k, j))
-                      .dispatch_invocations(sorted_count, 1, 1)
-                      .end_compute()[0];
+        sort_keys = //
+          module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
+            .with_name(stack.format("particle sort {}/{}", k, j))
+            .bind_compute_pipeline(render_context.pipeline("particle_sort_step"))
+            .bind_buffer(0, 0, sort_keys)
+            .push_constants(PushConstants(sorted_count, k, j))
+            .dispatch_invocations(sorted_count, 1, 1)
+            .end_compute()[0];
       }
 
-      sort_keys = module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
-                    .with_name(stack.format("particle sort merge {}", k))
-                    .bind_compute_pipeline(render_context.pipeline("particle_sort_merge"))
-                    .bind_buffer(0, 0, sort_keys)
-                    .push_constants(PushConstants(sorted_count, k))
-                    .dispatch_invocations(sorted_count, 1, 1)
-                    .end_compute()[0];
+      sort_keys = //
+        module.begin_compute({{sort_keys, vir::Access::ComputeRW}})
+          .with_name(stack.format("particle sort merge {}", k))
+          .bind_compute_pipeline(render_context.pipeline("particle_sort_merge"))
+          .bind_buffer(0, 0, sort_keys)
+          .push_constants(PushConstants(sorted_count, k))
+          .dispatch_invocations(sorted_count, 1, 1)
+          .end_compute()[0];
     }
   }
 
@@ -711,32 +716,34 @@ auto RendererInstance::draw_particles(
     values.camera,
     values.materials,
     context.depth_attachment
-  ) = std::tuple_cat(module
-                       .begin_rendering(
-                         {{dst, vir::Access::ColorRW},
-                          {context.reactive_mask_attachment, vir::Access::ColorRW},
-                          {context.draw_cmd_buffer, vir::Access::IndirectRead},
-                          {context.sort_keys_buffer, vir::Access::VertexRead},
-                          {context.particles_buffer, vir::Access::VertexRead},
-                          {context.emitters_buffer, vir::Access::VertexRead},
-                          {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
-                          {values.materials, vir::Access::FragmentRead},
-                          {context.depth_attachment, vir::Access::FragmentSampled}}
-                       )
-                       .with_name("particle billboards")
-                       .bind_graphics_pipeline(render_context.pipeline("particle_billboard"))
-                       .set_color_blend(0, PARTICLE_BLEND_STATE)
-                       .set_color_blend(1, reactive_mask_blend_state())
-                       .set_viewport(0, vir::Rect2D::framebuffer())
-                       .set_scissor(0, vir::Rect2D::framebuffer())
-                       .bind_buffer(0, 0, context.sort_keys_buffer)
-                       .bind_buffer(0, 1, context.particles_buffer)
-                       .bind_buffer(0, 2, context.emitters_buffer)
-                       .bind_buffer(0, 3, values.camera)
-                       .bind_image(0, 4, context.depth_attachment)
-                       .push_constant_address(0, values.materials)
-                       .draw_indirect(context.draw_cmd_buffer, 1)
-                       .end_rendering());
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{dst, vir::Access::ColorRW},
+         {context.reactive_mask_attachment, vir::Access::ColorRW},
+         {context.draw_cmd_buffer, vir::Access::IndirectRead},
+         {context.sort_keys_buffer, vir::Access::VertexRead},
+         {context.particles_buffer, vir::Access::VertexRead},
+         {context.emitters_buffer, vir::Access::VertexRead},
+         {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
+         {values.materials, vir::Access::FragmentRead},
+         {context.depth_attachment, vir::Access::FragmentSampled}}
+      )
+      .with_name("particle billboards")
+      .bind_graphics_pipeline(render_context.pipeline("particle_billboard"))
+      .set_color_blend(0, PARTICLE_BLEND_STATE)
+      .set_color_blend(1, reactive_mask_blend_state())
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, context.sort_keys_buffer)
+      .bind_buffer(0, 1, context.particles_buffer)
+      .bind_buffer(0, 2, context.emitters_buffer)
+      .bind_buffer(0, 3, values.camera)
+      .bind_image(0, 4, context.depth_attachment)
+      .push_constant_address(0, values.materials)
+      .draw_indirect(context.draw_cmd_buffer, 1)
+      .end_rendering()
+  );
 
   // how many emitters draw a mesh, and which, changes every frame
   auto meshes = prepared.particle.meshes;
@@ -776,33 +783,35 @@ auto RendererInstance::draw_particles(
     std::ignore,
     values.materials,
     context.depth_attachment
-  ) = std::tuple_cat(module
-                       .begin_rendering(
-                         {{dst, vir::Access::ColorRW},
-                          {context.reactive_mask_attachment, vir::Access::ColorRW},
-                          {context.draw_indexed_cmd_buffer, vir::Access::IndirectRead},
-                          {context.sort_keys_buffer, vir::Access::VertexRead},
-                          {context.particles_buffer, vir::Access::VertexRead},
-                          {context.emitters_buffer, vir::Access::VertexRead},
-                          {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
-                          {meshes, vir::Access::VertexRead},
-                          {values.materials, vir::Access::FragmentRead},
-                          {context.depth_attachment, vir::Access::FragmentSampled}}
-                       )
-                       .with_name("particle meshes")
-                       .bind_graphics_pipeline(render_context.pipeline("particle_mesh"))
-                       .set_rasterization({.cull_mode = VK_CULL_MODE_BACK_BIT})
-                       .set_color_blend(0, PARTICLE_BLEND_STATE)
-                       .set_color_blend(1, reactive_mask_blend_state())
-                       .set_viewport(0, vir::Rect2D::framebuffer())
-                       .set_scissor(0, vir::Rect2D::framebuffer())
-                       .bind_buffer(0, 0, context.sort_keys_buffer)
-                       .bind_buffer(0, 1, context.particles_buffer)
-                       .bind_buffer(0, 2, context.emitters_buffer)
-                       .bind_buffer(0, 3, values.camera)
-                       .bind_image(0, 4, context.depth_attachment)
-                       .record_from(mesh_draws)
-                       .end_rendering());
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{dst, vir::Access::ColorRW},
+         {context.reactive_mask_attachment, vir::Access::ColorRW},
+         {context.draw_indexed_cmd_buffer, vir::Access::IndirectRead},
+         {context.sort_keys_buffer, vir::Access::VertexRead},
+         {context.particles_buffer, vir::Access::VertexRead},
+         {context.emitters_buffer, vir::Access::VertexRead},
+         {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
+         {meshes, vir::Access::VertexRead},
+         {values.materials, vir::Access::FragmentRead},
+         {context.depth_attachment, vir::Access::FragmentSampled}}
+      )
+      .with_name("particle meshes")
+      .bind_graphics_pipeline(render_context.pipeline("particle_mesh"))
+      .set_rasterization({.cull_mode = VK_CULL_MODE_BACK_BIT})
+      .set_color_blend(0, PARTICLE_BLEND_STATE)
+      .set_color_blend(1, reactive_mask_blend_state())
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, context.sort_keys_buffer)
+      .bind_buffer(0, 1, context.particles_buffer)
+      .bind_buffer(0, 2, context.emitters_buffer)
+      .bind_buffer(0, 3, values.camera)
+      .bind_image(0, 4, context.depth_attachment)
+      .record_from(mesh_draws)
+      .end_rendering()
+  );
 
   module.export_to(context.particles_buffer, vir::Access::ComputeRW);
   module.export_to(context.sort_keys_buffer, vir::Access::ComputeRW);

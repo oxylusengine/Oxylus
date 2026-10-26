@@ -82,20 +82,21 @@ auto RendererInstance::generate_hiz(vir::Module& module, RenderContext& render_c
   );
   const auto groups_x = extent.width / 64;
   const auto groups_y = extent.height / 64;
-  auto pass = module
-                .begin_compute({
-                  {counter, vir::Access::ComputeRW},
-                  {context.depth_attachment, vir::Access::ComputeSampled},
-                  {context.hiz_attachment, vir::Access::ComputeRW},
-                })
-                .with_name("hiz generate")
-                .bind_compute_pipeline(render_context.pipeline("hiz"))
-                .specialize_constant(0, 1_u32)
-                .specialize_constant(1, extent.width)
-                .specialize_constant(2, extent.height)
-                .bind_buffer(0, 0, counter)
-                .bind_sampler(0, 1, render_context.cached_sampler_handle(NearestSamplerClamped))
-                .bind_image(0, 2, context.depth_attachment);
+  auto pass = //
+    module
+      .begin_compute({
+        {counter, vir::Access::ComputeRW},
+        {context.depth_attachment, vir::Access::ComputeSampled},
+        {context.hiz_attachment, vir::Access::ComputeRW},
+      })
+      .with_name("hiz generate")
+      .bind_compute_pipeline(render_context.pipeline("hiz"))
+      .specialize_constant(0, 1_u32)
+      .specialize_constant(1, extent.width)
+      .specialize_constant(2, extent.height)
+      .bind_buffer(0, 0, counter)
+      .bind_sampler(0, 1, render_context.cached_sampler_handle(NearestSamplerClamped))
+      .bind_image(0, 2, context.depth_attachment);
   for (auto mip = 0_u32; mip < 13; mip++) {
     module.bind_image(0, 3 + mip, module.mip(context.hiz_attachment, std::min(mip, level_count - 1)));
   }
@@ -216,27 +217,29 @@ auto RendererInstance::cull_geometry(
       values.meshlet_instances,
       context.visibility_buffer,
       context.cull_meshlets_cmd_buffer
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{values.meshes, vir::Access::ComputeRead},
-                            {values.transforms_world, vir::Access::ComputeRead},
-                            {values.mesh_instances, vir::Access::ComputeRW},
-                            {values.meshlet_instances, vir::Access::ComputeRW},
-                            {context.visibility_buffer, vir::Access::ComputeRW},
-                            {context.cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
-                         )
-                         .with_name(context.use_hiz ? "vis cull meshes" : "cull meshes")
-                         .bind_compute_pipeline(render_context.pipeline("cull_meshes"))
-                         .bind_buffer(0, 0, values.meshes)
-                         .bind_buffer(0, 1, values.transforms_world)
-                         .bind_buffer(0, 2, values.mesh_instances)
-                         .bind_buffer(0, 3, values.meshlet_instances)
-                         .bind_buffer(0, 4, context.visibility_buffer)
-                         .bind_buffer(0, 5, context.cull_meshlets_cmd_buffer)
-                         .specialize_constant(0, std::to_underlying(cull_flags))
-                         .push_constants_from(cull_camera)
-                         .dispatch_invocations(prepared.cull.mesh_instance_count, 1, 1)
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{values.meshes, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRW},
+           {values.meshlet_instances, vir::Access::ComputeRW},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {context.cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name(context.use_hiz ? "vis cull meshes" : "cull meshes")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshes"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.transforms_world)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshlet_instances)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, context.cull_meshlets_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_invocations(prepared.cull.mesh_instance_count, 1, 1)
+        .end_compute()
+    );
   }
 
   if (recording.shape.use_mesh_shaders) {
@@ -269,34 +272,36 @@ auto RendererInstance::cull_geometry(
       values.visible_meshlet_instances_indices,
       values.meshlet_instance_visibility_mask,
       cull_triangles_cmd_buffer
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
-                            {context.hiz_attachment, vir::Access::ComputeSampled},
-                            {values.meshes, vir::Access::ComputeRead},
-                            {values.mesh_instances, vir::Access::ComputeRead},
-                            {values.meshlet_instances, vir::Access::ComputeRead},
-                            {values.transforms_world, vir::Access::ComputeRead},
-                            {context.visibility_buffer, vir::Access::ComputeRW},
-                            {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
-                            {values.meshlet_instance_visibility_mask, vir::Access::ComputeRW},
-                            {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
-                         )
-                         .with_name(stack.format("vis cull meshlets {}", is_late ? "late" : "early"))
-                         .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hiz"))
-                         .bind_image(0, 0, context.hiz_attachment)
-                         .bind_buffer(0, 1, values.meshes)
-                         .bind_buffer(0, 2, values.mesh_instances)
-                         .bind_buffer(0, 3, values.meshlet_instances)
-                         .bind_buffer(0, 4, values.transforms_world)
-                         .bind_buffer(0, 5, context.visibility_buffer)
-                         .bind_buffer(0, 6, values.visible_meshlet_instances_indices)
-                         .bind_buffer(0, 7, values.meshlet_instance_visibility_mask)
-                         .bind_buffer(0, 8, cull_triangles_cmd_buffer)
-                         .specialize_constant(0, std::to_underlying(cull_flags))
-                         .push_constants_from(cull_camera)
-                         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {context.hiz_attachment, vir::Access::ComputeSampled},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {values.meshlet_instance_visibility_mask, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name(stack.format("vis cull meshlets {}", is_late ? "late" : "early"))
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hiz"))
+        .bind_image(0, 0, context.hiz_attachment)
+        .bind_buffer(0, 1, values.meshes)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshlet_instances)
+        .bind_buffer(0, 4, values.transforms_world)
+        .bind_buffer(0, 5, context.visibility_buffer)
+        .bind_buffer(0, 6, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 7, values.meshlet_instance_visibility_mask)
+        .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
+    );
   } else if (context.use_hpb) {
     std::tie(
       context.cull_meshlets_cmd_buffer,
@@ -310,36 +315,38 @@ auto RendererInstance::cull_geometry(
       context.hpb_attachment,
       context.vsm_clipmaps_buffer,
       context.vsm_clipmap_dirty_flags_buffer
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
-                            {values.meshes, vir::Access::ComputeRead},
-                            {values.mesh_instances, vir::Access::ComputeRead},
-                            {values.meshlet_instances, vir::Access::ComputeRead},
-                            {values.transforms_world, vir::Access::ComputeRead},
-                            {context.visibility_buffer, vir::Access::ComputeRW},
-                            {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
-                            {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
-                            {context.hpb_attachment, vir::Access::ComputeSampled},
-                            {context.vsm_clipmaps_buffer, vir::Access::ComputeRead},
-                            {context.vsm_clipmap_dirty_flags_buffer, vir::Access::ComputeRead}}
-                         )
-                         .with_name("rmvsm cull meshlets")
-                         .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hpb"))
-                         .bind_buffer(0, 0, values.meshes)
-                         .bind_buffer(0, 1, values.mesh_instances)
-                         .bind_buffer(0, 2, values.meshlet_instances)
-                         .bind_buffer(0, 3, values.transforms_world)
-                         .bind_buffer(0, 4, context.visibility_buffer)
-                         .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
-                         .bind_buffer(0, 6, cull_triangles_cmd_buffer)
-                         .bind_image(0, 7, context.hpb_attachment)
-                         .bind_sampler(0, 8, render_context.cached_sampler_handle(NearestSamplerClamped))
-                         .bind_buffer(0, 9, context.vsm_clipmaps_buffer)
-                         .bind_buffer(0, 10, context.vsm_clipmap_dirty_flags_buffer)
-                         .push_constants_from(prepared.cull.clipmap_push)
-                         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
+           {context.hpb_attachment, vir::Access::ComputeSampled},
+           {context.vsm_clipmaps_buffer, vir::Access::ComputeRead},
+           {context.vsm_clipmap_dirty_flags_buffer, vir::Access::ComputeRead}}
+        )
+        .with_name("rmvsm cull meshlets")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hpb"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.mesh_instances)
+        .bind_buffer(0, 2, values.meshlet_instances)
+        .bind_buffer(0, 3, values.transforms_world)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 6, cull_triangles_cmd_buffer)
+        .bind_image(0, 7, context.hpb_attachment)
+        .bind_sampler(0, 8, render_context.cached_sampler_handle(NearestSamplerClamped))
+        .bind_buffer(0, 9, context.vsm_clipmaps_buffer)
+        .bind_buffer(0, 10, context.vsm_clipmap_dirty_flags_buffer)
+        .push_constants_from(prepared.cull.clipmap_push)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
+    );
   } else {
     static constexpr auto cull_meshlets_flags = GPU::CullFlag::TestFrustum;
     std::tie(
@@ -351,30 +358,32 @@ auto RendererInstance::cull_geometry(
       context.visibility_buffer,
       values.visible_meshlet_instances_indices,
       cull_triangles_cmd_buffer
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
-                            {values.meshes, vir::Access::ComputeRead},
-                            {values.mesh_instances, vir::Access::ComputeRead},
-                            {values.meshlet_instances, vir::Access::ComputeRead},
-                            {values.transforms_world, vir::Access::ComputeRead},
-                            {context.visibility_buffer, vir::Access::ComputeRW},
-                            {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
-                            {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
-                         )
-                         .with_name("cull meshlets")
-                         .bind_compute_pipeline(render_context.pipeline("cull_meshlets"))
-                         .bind_buffer(0, 0, values.meshes)
-                         .bind_buffer(0, 1, values.mesh_instances)
-                         .bind_buffer(0, 2, values.meshlet_instances)
-                         .bind_buffer(0, 3, values.transforms_world)
-                         .bind_buffer(0, 4, context.visibility_buffer)
-                         .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
-                         .bind_buffer(0, 6, cull_triangles_cmd_buffer)
-                         .specialize_constant(0, std::to_underlying(cull_meshlets_flags))
-                         .push_constants_from(cull_camera)
-                         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshlet_instances, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {context.visibility_buffer, vir::Access::ComputeRW},
+           {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name("cull meshlets")
+        .bind_compute_pipeline(render_context.pipeline("cull_meshlets"))
+        .bind_buffer(0, 0, values.meshes)
+        .bind_buffer(0, 1, values.mesh_instances)
+        .bind_buffer(0, 2, values.meshlet_instances)
+        .bind_buffer(0, 3, values.transforms_world)
+        .bind_buffer(0, 4, context.visibility_buffer)
+        .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+        .bind_buffer(0, 6, cull_triangles_cmd_buffer)
+        .specialize_constant(0, std::to_underlying(cull_meshlets_flags))
+        .push_constants_from(cull_camera)
+        .dispatch_indirect(context.cull_meshlets_cmd_buffer)
+        .end_compute()
+    );
   }
 
   // --- Stage 3: cull_triangles (shared by every version) ---
@@ -405,35 +414,34 @@ auto RendererInstance::cull_geometry(
     values.visible_meshlet_instances_indices,
     values.reordered_indices,
     context.draw_geometry_cmd_buffer
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
-                          {values.meshes, vir::Access::ComputeRead},
-                          {values.mesh_instances, vir::Access::ComputeRead},
-                          {values.meshlet_instances, vir::Access::ComputeRead},
-                          {context.visibility_buffer, vir::Access::ComputeRead},
-                          {values.transforms_world, vir::Access::ComputeRead},
-                          {values.visible_meshlet_instances_indices, vir::Access::ComputeRead},
-                          {values.reordered_indices, vir::Access::ComputeRW},
-                          {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW}}
-                       )
-                       .with_name(
-                         context.use_hiz ? stack.format("cull triangles {}", is_late ? "late" : "early")
-                                         : "cull triangles"
-                       )
-                       .bind_compute_pipeline(render_context.pipeline("cull_triangles"))
-                       .bind_buffer(0, 0, values.meshes)
-                       .bind_buffer(0, 1, values.mesh_instances)
-                       .bind_buffer(0, 2, values.meshlet_instances)
-                       .bind_buffer(0, 3, context.visibility_buffer)
-                       .bind_buffer(0, 4, values.transforms_world)
-                       .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
-                       .bind_buffer(0, 6, values.reordered_indices)
-                       .bind_buffer(0, 7, context.draw_geometry_cmd_buffer)
-                       .specialize_constant(0, std::to_underlying(cull_flags))
-                       .push_constants_from(cull_camera)
-                       .dispatch_indirect(cull_triangles_cmd_buffer)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.meshlet_instances, vir::Access::ComputeRead},
+         {context.visibility_buffer, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {values.visible_meshlet_instances_indices, vir::Access::ComputeRead},
+         {values.reordered_indices, vir::Access::ComputeRW},
+         {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name(context.use_hiz ? stack.format("cull triangles {}", is_late ? "late" : "early") : "cull triangles")
+      .bind_compute_pipeline(render_context.pipeline("cull_triangles"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.meshlet_instances)
+      .bind_buffer(0, 3, context.visibility_buffer)
+      .bind_buffer(0, 4, values.transforms_world)
+      .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
+      .bind_buffer(0, 6, values.reordered_indices)
+      .bind_buffer(0, 7, context.draw_geometry_cmd_buffer)
+      .specialize_constant(0, std::to_underlying(cull_flags))
+      .push_constants_from(cull_camera)
+      .dispatch_indirect(cull_triangles_cmd_buffer)
+      .end_compute()
+  );
 }
 
 auto RendererInstance::cull_geometry_pointspot(
@@ -528,22 +536,24 @@ auto RendererInstance::cull_geometry_pointspot(
     context.layer_dirty_mask_buffer,
     active_layers_buffer,
     cull_meshes_cmd_buffer
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{context.views_buffer, vir::Access::ComputeRead},
-                          {context.layer_dirty_mask_buffer, vir::Access::ComputeRead},
-                          {active_layers_buffer, vir::Access::ComputeWrite},
-                          {cull_meshes_cmd_buffer, vir::Access::ComputeRW}}
-                       )
-                       .with_name("rmvsm pointspot build active layers")
-                       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_build_active_layers"))
-                       .bind_buffer(0, 0, context.views_buffer)
-                       .bind_buffer(0, 1, context.layer_dirty_mask_buffer)
-                       .bind_buffer(0, 2, active_layers_buffer)
-                       .bind_buffer(0, 3, cull_meshes_cmd_buffer)
-                       .push_constants_from(ps_ctx)
-                       .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT, 1, 1)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.views_buffer, vir::Access::ComputeRead},
+         {context.layer_dirty_mask_buffer, vir::Access::ComputeRead},
+         {active_layers_buffer, vir::Access::ComputeWrite},
+         {cull_meshes_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot build active layers")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_build_active_layers"))
+      .bind_buffer(0, 0, context.views_buffer)
+      .bind_buffer(0, 1, context.layer_dirty_mask_buffer)
+      .bind_buffer(0, 2, active_layers_buffer)
+      .bind_buffer(0, 3, cull_meshes_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT, 1, 1)
+      .end_compute()
+  );
 
   std::tie(
     std::ignore,
@@ -555,31 +565,33 @@ auto RendererInstance::cull_geometry_pointspot(
     context.vsm_meshlet_instances_buffer,
     vsm_meshlet_instance_count_buffer,
     cull_meshlets_cmd_buffer
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{cull_meshes_cmd_buffer, vir::Access::IndirectRead},
-                          {values.meshes, vir::Access::ComputeRead},
-                          {values.transforms_world, vir::Access::ComputeRead},
-                          {values.mesh_instances, vir::Access::ComputeRead},
-                          {context.views_buffer, vir::Access::ComputeRead},
-                          {active_layers_buffer, vir::Access::ComputeRead},
-                          {context.vsm_meshlet_instances_buffer, vir::Access::ComputeWrite},
-                          {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRW},
-                          {cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
-                       )
-                       .with_name("rmvsm pointspot cull meshes")
-                       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshes"))
-                       .bind_buffer(0, 0, values.meshes)
-                       .bind_buffer(0, 1, values.transforms_world)
-                       .bind_buffer(0, 2, values.mesh_instances)
-                       .bind_buffer(0, 3, context.views_buffer)
-                       .bind_buffer(0, 4, active_layers_buffer)
-                       .bind_buffer(0, 5, context.vsm_meshlet_instances_buffer)
-                       .bind_buffer(0, 6, vsm_meshlet_instance_count_buffer)
-                       .bind_buffer(0, 7, cull_meshlets_cmd_buffer)
-                       .push_constants_from(ps_ctx)
-                       .dispatch_indirect(cull_meshes_cmd_buffer)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_meshes_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {active_layers_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeWrite},
+         {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRW},
+         {cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull meshes")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshes"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.transforms_world)
+      .bind_buffer(0, 2, values.mesh_instances)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, active_layers_buffer)
+      .bind_buffer(0, 5, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 6, vsm_meshlet_instance_count_buffer)
+      .bind_buffer(0, 7, cull_meshlets_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_meshes_cmd_buffer)
+      .end_compute()
+  );
 
   // each page-table mip has an independent occupancy pyramid, built one level per pass so every
   // level reads the one before it with the barrier the graph puts between them
@@ -595,27 +607,22 @@ auto RendererInstance::cull_geometry_pointspot(
     };
     const auto src = module.mip(context.hpb_attachment, i == 0 ? 0 : i - 1);
     const auto dst = module.mip(context.hpb_attachment, i);
-    const auto [page_table, _src, written] = module
-                                               .begin_compute(
-                                                 {{context.page_table_attachment, vir::Access::ComputeSampled},
-                                                  {src, vir::Access::ComputeSampled},
-                                                  {dst, vir::Access::ComputeRW}}
-                                               )
-                                               .with_name("rmvsm pointspot downsample hpb")
-                                               .bind_compute_pipeline(
-                                                 render_context.pipeline("rmvsm_pointspot_downsample_hpb")
-                                               )
-                                               .specialize_constant(0, i == 0)
-                                               .bind_image(0, 0, context.page_table_attachment)
-                                               .bind_image(0, 1, src)
-                                               .bind_image(0, 2, dst)
-                                               .push_constants(PushConstants(level_extent, curr_mip))
-                                               .dispatch_invocations(
-                                                 level_extent.width,
-                                                 level_extent.height,
-                                                 level_extent.depth
-                                               )
-                                               .end_compute();
+    const auto [page_table, _src, written] = //
+      module
+        .begin_compute(
+          {{context.page_table_attachment, vir::Access::ComputeSampled},
+           {src, vir::Access::ComputeSampled},
+           {dst, vir::Access::ComputeRW}}
+        )
+        .with_name("rmvsm pointspot downsample hpb")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_downsample_hpb"))
+        .specialize_constant(0, i == 0)
+        .bind_image(0, 0, context.page_table_attachment)
+        .bind_image(0, 1, src)
+        .bind_image(0, 2, dst)
+        .push_constants(PushConstants(level_extent, curr_mip))
+        .dispatch_invocations(level_extent.width, level_extent.height, level_extent.depth)
+        .end_compute();
     context.page_table_attachment = page_table;
     context.hpb_attachment = module.whole(written);
   }
@@ -655,6 +662,22 @@ auto RendererInstance::cull_geometry_pointspot(
     std::span{reinterpret_cast<const u8*>(&draw_command), sizeof(draw_command)}
   );
 
+  auto cull_pass = //
+    module
+      .begin_compute(
+        {{cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
+         {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRead},
+         {context.hpb_attachment, vir::Access::ComputeSampled},
+         {context.visible_indices_buffer, vir::Access::ComputeWrite},
+         {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull meshlets")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshlets"));
   std::tie(
     std::ignore,
     values.meshes,
@@ -666,37 +689,21 @@ auto RendererInstance::cull_geometry_pointspot(
     context.hpb_attachment,
     context.visible_indices_buffer,
     cull_triangles_cmd_buffer
-  ) = std::tuple_cat(bind_vsm_pointspot_spec_constants(module
-                                                         .begin_compute(
-                                                           {{cull_meshlets_cmd_buffer, vir::Access::IndirectRead},
-                                                            {values.meshes, vir::Access::ComputeRead},
-                                                            {values.mesh_instances, vir::Access::ComputeRead},
-                                                            {values.transforms_world, vir::Access::ComputeRead},
-                                                            {context.views_buffer, vir::Access::ComputeRead},
-                                                            {context.vsm_meshlet_instances_buffer,
-                                                             vir::Access::ComputeRead},
-                                                            {vsm_meshlet_instance_count_buffer,
-                                                             vir::Access::ComputeRead},
-                                                            {context.hpb_attachment, vir::Access::ComputeSampled},
-                                                            {context.visible_indices_buffer, vir::Access::ComputeWrite},
-                                                            {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
-                                                         )
-                                                         .with_name("rmvsm pointspot cull meshlets")
-                                                         .bind_compute_pipeline(
-                                                           render_context.pipeline("rmvsm_pointspot_cull_meshlets")
-                                                         ))
-                       .bind_buffer(0, 0, values.meshes)
-                       .bind_buffer(0, 1, values.mesh_instances)
-                       .bind_buffer(0, 2, values.transforms_world)
-                       .bind_buffer(0, 3, context.views_buffer)
-                       .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
-                       .bind_buffer(0, 5, vsm_meshlet_instance_count_buffer)
-                       .bind_image(0, 6, context.hpb_attachment)
-                       .bind_buffer(0, 7, context.visible_indices_buffer)
-                       .bind_buffer(0, 8, cull_triangles_cmd_buffer)
-                       .push_constants_from(ps_ctx)
-                       .dispatch_indirect(cull_meshlets_cmd_buffer)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    bind_vsm_pointspot_spec_constants(cull_pass)
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.transforms_world)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 5, vsm_meshlet_instance_count_buffer)
+      .bind_image(0, 6, context.hpb_attachment)
+      .bind_buffer(0, 7, context.visible_indices_buffer)
+      .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_meshlets_cmd_buffer)
+      .end_compute()
+  );
 
   std::tie(
     std::ignore,
@@ -708,30 +715,32 @@ auto RendererInstance::cull_geometry_pointspot(
     context.visible_indices_buffer,
     context.reordered_indices_buffer,
     context.draw_cmd_buffer
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
-                          {values.meshes, vir::Access::ComputeRead},
-                          {values.mesh_instances, vir::Access::ComputeRead},
-                          {values.transforms_world, vir::Access::ComputeRead},
-                          {context.views_buffer, vir::Access::ComputeRead},
-                          {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
-                          {context.visible_indices_buffer, vir::Access::ComputeRead},
-                          {context.reordered_indices_buffer, vir::Access::ComputeWrite},
-                          {context.draw_cmd_buffer, vir::Access::ComputeRW}}
-                       )
-                       .with_name("rmvsm pointspot cull triangles")
-                       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_triangles"))
-                       .bind_buffer(0, 0, values.meshes)
-                       .bind_buffer(0, 1, values.mesh_instances)
-                       .bind_buffer(0, 2, values.transforms_world)
-                       .bind_buffer(0, 3, context.views_buffer)
-                       .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
-                       .bind_buffer(0, 5, context.visible_indices_buffer)
-                       .bind_buffer(0, 6, context.reordered_indices_buffer)
-                       .bind_buffer(0, 7, context.draw_cmd_buffer)
-                       .push_constants_from(ps_ctx)
-                       .dispatch_indirect(cull_triangles_cmd_buffer)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{cull_triangles_cmd_buffer, vir::Access::IndirectRead},
+         {values.meshes, vir::Access::ComputeRead},
+         {values.mesh_instances, vir::Access::ComputeRead},
+         {values.transforms_world, vir::Access::ComputeRead},
+         {context.views_buffer, vir::Access::ComputeRead},
+         {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
+         {context.visible_indices_buffer, vir::Access::ComputeRead},
+         {context.reordered_indices_buffer, vir::Access::ComputeWrite},
+         {context.draw_cmd_buffer, vir::Access::ComputeRW}}
+      )
+      .with_name("rmvsm pointspot cull triangles")
+      .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_triangles"))
+      .bind_buffer(0, 0, values.meshes)
+      .bind_buffer(0, 1, values.mesh_instances)
+      .bind_buffer(0, 2, values.transforms_world)
+      .bind_buffer(0, 3, context.views_buffer)
+      .bind_buffer(0, 4, context.vsm_meshlet_instances_buffer)
+      .bind_buffer(0, 5, context.visible_indices_buffer)
+      .bind_buffer(0, 6, context.reordered_indices_buffer)
+      .bind_buffer(0, 7, context.draw_cmd_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_indirect(cull_triangles_cmd_buffer)
+      .end_compute()
+  );
 }
 } // namespace ox

@@ -151,22 +151,23 @@ auto RendererInstance::apply_bloom(
   downsampled = module.clear(downsampled, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
 
   const auto prefiltered = module.mip(downsampled, 0);
-  auto prefilter_results = module
-                             .begin_compute(
-                               {{context.final_attachment, vir::Access::ComputeSampled},
-                                {prefiltered, vir::Access::ComputeWrite},
-                                {values.exposure, vir::Access::ComputeUniformRead}}
-                             )
-                             .with_name("bloom prefilter")
-                             .bind_compute_pipeline(render_context.pipeline("bloom_prefilter"))
-                             .bind_image(0, 0, prefiltered)
-                             .bind_image(0, 1, context.final_attachment)
-                             .bind_sampler(0, 2, linear_border)
-                             .bind_buffer(0, 3, values.exposure)
-                             .specialize_constant(0, std::to_underlying(shape.scene_flags))
-                             .push_constants_from(variables.bloom_prefilter_push)
-                             .dispatch_invocations(extent.width, extent.height, 1)
-                             .end_compute();
+  auto prefilter_results = //
+    module
+      .begin_compute(
+        {{context.final_attachment, vir::Access::ComputeSampled},
+         {prefiltered, vir::Access::ComputeWrite},
+         {values.exposure, vir::Access::ComputeUniformRead}}
+      )
+      .with_name("bloom prefilter")
+      .bind_compute_pipeline(render_context.pipeline("bloom_prefilter"))
+      .bind_image(0, 0, prefiltered)
+      .bind_image(0, 1, context.final_attachment)
+      .bind_sampler(0, 2, linear_border)
+      .bind_buffer(0, 3, values.exposure)
+      .specialize_constant(0, std::to_underlying(shape.scene_flags))
+      .push_constants_from(variables.bloom_prefilter_push)
+      .dispatch_invocations(extent.width, extent.height, 1)
+      .end_compute();
   context.final_attachment = prefilter_results[0];
   downsampled = module.whole(prefilter_results[1]);
   values.exposure = prefilter_results[2];
@@ -181,16 +182,17 @@ auto RendererInstance::apply_bloom(
     const auto mip_height = std::max(1_u32, extent.height >> i);
     const auto src = module.mip(downsampled, i - 1);
     const auto dst = module.mip(downsampled, i);
-    downsampled = module.whole(module
-                                 .begin_compute({{src, vir::Access::ComputeSampled}, {dst, vir::Access::ComputeWrite}})
-                                 .with_name("bloom downsample")
-                                 .bind_compute_pipeline(render_context.pipeline("bloom_downsample"))
-                                 .bind_image(0, 0, dst)
-                                 .bind_image(0, 1, src)
-                                 .bind_sampler(0, 2, linear_border)
-                                 .push_constants(PushConstants(mip_width, mip_height))
-                                 .dispatch_invocations(mip_width, mip_height, 1)
-                                 .end_compute()[1]);
+    downsampled = module.whole( //
+      module.begin_compute({{src, vir::Access::ComputeSampled}, {dst, vir::Access::ComputeWrite}})
+        .with_name("bloom downsample")
+        .bind_compute_pipeline(render_context.pipeline("bloom_downsample"))
+        .bind_image(0, 0, dst)
+        .bind_image(0, 1, src)
+        .bind_sampler(0, 2, linear_border)
+        .push_constants(PushConstants(mip_width, mip_height))
+        .dispatch_invocations(mip_width, mip_height, 1)
+        .end_compute()[1]
+    );
   }
 
   // https://www.froyok.fr/blog/2021-12-ue4-custom-bloom/resources/code/bloom_down_up_demo.jpg
@@ -203,22 +205,23 @@ auto RendererInstance::apply_bloom(
     const auto upsample_src = i == last_mip ? module.mip(downsampled, last_mip) : module.mip(upsampled, i);
     const auto downsample_src = module.mip(downsampled, i - 1);
     const auto dst = module.mip(upsampled, i - 1);
-    const auto results = module
-                           .begin_compute(
-                             {{upsample_src, vir::Access::ComputeSampled},
-                              {downsample_src, vir::Access::ComputeSampled},
-                              {dst, vir::Access::ComputeWrite}}
-                           )
-                           .with_name("bloom upsample")
-                           .bind_compute_pipeline(render_context.pipeline("bloom_upsample"))
-                           .bind_image(0, 0, dst)
-                           .bind_image(0, 1, upsample_src)
-                           .bind_image(0, 2, downsample_src)
-                           .bind_sampler(0, 3, linear_clamped)
-                           .push_constants(PushConstants(mip_width, mip_height))
-                           .push_constants_from_at(8, variables.bloom_radius)
-                           .dispatch_invocations(mip_width, mip_height, 1)
-                           .end_compute();
+    const auto results = //
+      module
+        .begin_compute(
+          {{upsample_src, vir::Access::ComputeSampled},
+           {downsample_src, vir::Access::ComputeSampled},
+           {dst, vir::Access::ComputeWrite}}
+        )
+        .with_name("bloom upsample")
+        .bind_compute_pipeline(render_context.pipeline("bloom_upsample"))
+        .bind_image(0, 0, dst)
+        .bind_image(0, 1, upsample_src)
+        .bind_image(0, 2, downsample_src)
+        .bind_sampler(0, 3, linear_clamped)
+        .push_constants(PushConstants(mip_width, mip_height))
+        .push_constants_from_at(8, variables.bloom_radius)
+        .dispatch_invocations(mip_width, mip_height, 1)
+        .end_compute();
     if (i == last_mip) {
       downsampled = module.whole(results[0]);
     }
@@ -273,26 +276,28 @@ auto RendererInstance::apply_tonemap(
     context.final_attachment,
     context.bloom_upsampled_attachment,
     values.exposure
-  ) = std::tuple_cat(module
-                       .begin_rendering(
-                         {{context.dst_attachment, vir::Access::ColorWrite},
-                          {context.final_attachment, vir::Access::FragmentSampled},
-                          {context.bloom_upsampled_attachment, vir::Access::FragmentSampled},
-                          {values.exposure, vir::Access::FragmentUniformRead}}
-                       )
-                       .with_name("tonemap")
-                       .bind_graphics_pipeline(render_context.pipeline("tonemap"))
-                       .set_viewport(0, vir::Rect2D::framebuffer())
-                       .set_scissor(0, vir::Rect2D::framebuffer())
-                       .bind_sampler(0, 0, render_context.cached_sampler_handle(tonemap_sampler))
-                       .bind_image(0, 1, context.final_attachment)
-                       .bind_image(0, 2, context.bloom_upsampled_attachment)
-                       .bind_buffer(0, 3, values.exposure)
-                       .specialize_constant(0, std::to_underlying(shape.scene_flags))
-                       .specialize_constant(1, std::to_underlying(shape.tonemap))
-                       .push_constants_from(prepared.post_process.tonemap_push)
-                       .draw(3, 1)
-                       .end_rendering());
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{context.dst_attachment, vir::Access::ColorWrite},
+         {context.final_attachment, vir::Access::FragmentSampled},
+         {context.bloom_upsampled_attachment, vir::Access::FragmentSampled},
+         {values.exposure, vir::Access::FragmentUniformRead}}
+      )
+      .with_name("tonemap")
+      .bind_graphics_pipeline(render_context.pipeline("tonemap"))
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_sampler(0, 0, render_context.cached_sampler_handle(tonemap_sampler))
+      .bind_image(0, 1, context.final_attachment)
+      .bind_image(0, 2, context.bloom_upsampled_attachment)
+      .bind_buffer(0, 3, values.exposure)
+      .specialize_constant(0, std::to_underlying(shape.scene_flags))
+      .specialize_constant(1, std::to_underlying(shape.tonemap))
+      .push_constants_from(prepared.post_process.tonemap_push)
+      .draw(3, 1)
+      .end_rendering()
+  );
 
   return context.dst_attachment;
 }

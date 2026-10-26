@@ -422,16 +422,17 @@ auto RendererInstance::draw_virtual_shadowmap(
       );
     }
   );
-  page_allocator = module
-                     .begin_compute(
-                       {{page_allocator, vir::Access::Clear},
-                        {allocation_requests, vir::Access::CopyRead},
-                        {dirty_page_coords, vir::Access::CopyRead},
-                        {free_page_list, vir::Access::CopyRead}}
-                     )
-                     .with_name("vsm write page allocator")
-                     .record_from(write_allocator)
-                     .end_compute()[0];
+  page_allocator = //
+    module
+      .begin_compute(
+        {{page_allocator, vir::Access::Clear},
+         {allocation_requests, vir::Access::CopyRead},
+         {dirty_page_coords, vir::Access::CopyRead},
+         {free_page_list, vir::Access::CopyRead}}
+      )
+      .with_name("vsm write page allocator")
+      .record_from(write_allocator)
+      .end_compute()[0];
 
   // the sun moving invalidates every cached directional page
   context.virtual_page_table_attachment = module.set_condition(
@@ -575,32 +576,30 @@ auto RendererInstance::draw_virtual_shadowmap(
       values.transforms_world,
       values.transforms_previous,
       context.directional_clipmaps_buffer
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{context.virtual_page_table_attachment, vir::Access::ComputeRW},
-                            {values.dirty_mesh_instances, vir::Access::ComputeRead},
-                            {values.mesh_instances, vir::Access::ComputeRead},
-                            {values.meshes, vir::Access::ComputeRead},
-                            {values.transforms_world, vir::Access::ComputeRead},
-                            {values.transforms_previous, vir::Access::ComputeRead},
-                            {context.directional_clipmaps_buffer, vir::Access::ComputeRead}}
-                         )
-                         .with_name("vsm invalidate pages")
-                         .bind_compute_pipeline(render_context.pipeline("rmvsm_invalidate_pages"))
-                         .bind_image(0, 0, context.virtual_page_table_attachment)
-                         .bind_buffer(0, 1, values.dirty_mesh_instances)
-                         .bind_buffer(0, 2, values.mesh_instances)
-                         .bind_buffer(0, 3, values.meshes)
-                         .bind_buffer(0, 4, values.transforms_world)
-                         .bind_buffer(0, 5, context.directional_clipmaps_buffer)
-                         .bind_buffer(0, 6, values.transforms_previous)
-                         .push_constants_from(vsm_ctx)
-                         .dispatch_invocations(
-                           variables.dirty_count,
-                           RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE,
-                           directional_layers
-                         )
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.virtual_page_table_attachment, vir::Access::ComputeRW},
+           {values.dirty_mesh_instances, vir::Access::ComputeRead},
+           {values.mesh_instances, vir::Access::ComputeRead},
+           {values.meshes, vir::Access::ComputeRead},
+           {values.transforms_world, vir::Access::ComputeRead},
+           {values.transforms_previous, vir::Access::ComputeRead},
+           {context.directional_clipmaps_buffer, vir::Access::ComputeRead}}
+        )
+        .with_name("vsm invalidate pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_invalidate_pages"))
+        .bind_image(0, 0, context.virtual_page_table_attachment)
+        .bind_buffer(0, 1, values.dirty_mesh_instances)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshes)
+        .bind_buffer(0, 4, values.transforms_world)
+        .bind_buffer(0, 5, context.directional_clipmaps_buffer)
+        .bind_buffer(0, 6, values.transforms_previous)
+        .push_constants_from(vsm_ctx)
+        .dispatch_invocations(variables.dirty_count, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE, directional_layers)
+        .end_compute()
+    );
 
     std::tie(context.virtual_page_table_attachment, values.removed_mesh_bounds, context.directional_clipmaps_buffer) =
       std::tuple_cat(
@@ -628,28 +627,30 @@ auto RendererInstance::draw_virtual_shadowmap(
       context.virtual_page_table_attachment,
       page_occupancy,
       page_allocator
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{values.camera, vir::Access::ComputeUniformRead},
-                            {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
-                            {context.depth_attachment, vir::Access::ComputeSampled},
-                            {context.normal_attachment, vir::Access::ComputeSampled},
-                            {context.virtual_page_table_attachment, vir::Access::ComputeRW},
-                            {page_occupancy, vir::Access::ComputeRW},
-                            {page_allocator, vir::Access::ComputeRW}}
-                         )
-                         .with_name("vsm mark visible pages")
-                         .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
-                         .bind_buffer(0, 0, values.camera)
-                         .bind_buffer(0, 1, context.directional_clipmaps_buffer)
-                         .bind_image(0, 2, context.depth_attachment)
-                         .bind_image(0, 3, context.normal_attachment)
-                         .bind_image(0, 4, context.virtual_page_table_attachment)
-                         .bind_buffer(0, 5, page_occupancy)
-                         .bind_buffer(0, 6, page_allocator)
-                         .push_constants_from(vsm_ctx)
-                         .dispatch_invocations_per_pixel(context.depth_attachment)
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{values.camera, vir::Access::ComputeUniformRead},
+           {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
+           {context.depth_attachment, vir::Access::ComputeSampled},
+           {context.normal_attachment, vir::Access::ComputeSampled},
+           {context.virtual_page_table_attachment, vir::Access::ComputeRW},
+           {page_occupancy, vir::Access::ComputeRW},
+           {page_allocator, vir::Access::ComputeRW}}
+        )
+        .with_name("vsm mark visible pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
+        .bind_buffer(0, 0, values.camera)
+        .bind_buffer(0, 1, context.directional_clipmaps_buffer)
+        .bind_image(0, 2, context.depth_attachment)
+        .bind_image(0, 3, context.normal_attachment)
+        .bind_image(0, 4, context.virtual_page_table_attachment)
+        .bind_buffer(0, 5, page_occupancy)
+        .bind_buffer(0, 6, page_allocator)
+        .push_constants_from(vsm_ctx)
+        .dispatch_invocations_per_pixel(context.depth_attachment)
+        .end_compute()
+    );
   }
 
   if (is_pointspot) {
@@ -693,22 +694,22 @@ auto RendererInstance::draw_virtual_shadowmap(
     }
 
     const auto coarse_mip = module.mip(context.pointspot_page_table_attachment, RMVSMContext::POINT_SPOT_MIP_COUNT - 1);
-    auto pass = bind_vsm_pointspot_spec_constants(
-                  module
-                    .begin_compute(
-                      {{context.pointspot_views_buffer, vir::Access::ComputeRead},
-                       {coarse_mip, vir::Access::ComputeRW},
-                       {page_occupancy, vir::Access::ComputeRW},
-                       {page_allocator, vir::Access::ComputeRW}}
-                    )
-                    .with_name("vsm pointspot mark coarse pages")
-                    .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_mark_coarse_pages"))
-    )
-                  .bind_buffer(0, 0, context.pointspot_views_buffer)
-                  .bind_image(0, 1, coarse_mip)
-                  .bind_buffer(0, 2, page_occupancy)
-                  .bind_buffer(0, 3, page_allocator)
-                  .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT, 1, 1);
+    auto pass = //
+      module
+        .begin_compute(
+          {{context.pointspot_views_buffer, vir::Access::ComputeRead},
+           {coarse_mip, vir::Access::ComputeRW},
+           {page_occupancy, vir::Access::ComputeRW},
+           {page_allocator, vir::Access::ComputeRW}}
+        )
+        .with_name("vsm pointspot mark coarse pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_mark_coarse_pages"));
+    bind_vsm_pointspot_spec_constants(pass)
+      .bind_buffer(0, 0, context.pointspot_views_buffer)
+      .bind_image(0, 1, coarse_mip)
+      .bind_buffer(0, 2, page_occupancy)
+      .bind_buffer(0, 3, page_allocator)
+      .dispatch_invocations(RMVSMContext::POINT_SPOT_LAYER_COUNT, 1, 1);
     const auto coarse = pass.end_compute();
     context.pointspot_views_buffer = coarse[0];
     context.pointspot_page_table_attachment = module.whole(coarse[1]);
@@ -717,21 +718,17 @@ auto RendererInstance::draw_virtual_shadowmap(
   }
 
   if (is_directional) {
-    context.virtual_page_table_attachment = module
-                                              .begin_compute(
-                                                {{context.virtual_page_table_attachment, vir::Access::ComputeRW}}
-                                              )
-                                              .with_name("vsm free invisible pages")
-                                              .bind_compute_pipeline(
-                                                render_context.pipeline("rmvsm_free_invisible_pages")
-                                              )
-                                              .bind_image(0, 0, context.virtual_page_table_attachment)
-                                              .push_constants_from(vsm_ctx)
-                                              .dispatch_invocations_per_pixel(
-                                                context.virtual_page_table_attachment,
-                                                {1.0f, 1.0f, static_cast<f32>(directional_layers)}
-                                              )
-                                              .end_compute()[0];
+    context.virtual_page_table_attachment = //
+      module.begin_compute({{context.virtual_page_table_attachment, vir::Access::ComputeRW}})
+        .with_name("vsm free invisible pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_free_invisible_pages"))
+        .bind_image(0, 0, context.virtual_page_table_attachment)
+        .push_constants_from(vsm_ctx)
+        .dispatch_invocations_per_pixel(
+          context.virtual_page_table_attachment,
+          {1.0f, 1.0f, static_cast<f32>(directional_layers)}
+        )
+        .end_compute()[0];
   }
 
   if (is_pointspot) {
@@ -780,11 +777,12 @@ auto RendererInstance::draw_virtual_shadowmap(
       mips[mip] = module.mip(context.pointspot_page_table_attachment, mip);
       accesses[2 + mip] = {mips[mip], vir::Access::ComputeRW};
     }
-    auto pass = module.begin_compute(accesses)
-                  .with_name("vsm allocate pages")
-                  .bind_compute_pipeline(render_context.pipeline("rmvsm_allocate_pages"))
-                  .bind_buffer(0, 0, page_allocator)
-                  .bind_image(0, 1, context.virtual_page_table_attachment);
+    auto pass = //
+      module.begin_compute(accesses)
+        .with_name("vsm allocate pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_allocate_pages"))
+        .bind_buffer(0, 0, page_allocator)
+        .bind_image(0, 1, context.virtual_page_table_attachment);
     for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
       module.bind_image(0, 2 + mip, mips[mip]);
     }
@@ -841,49 +839,51 @@ auto RendererInstance::draw_virtual_shadowmap(
       page_allocator,
       clear_dirty_pages_cmd,
       clipmap_dirty_flags
-    ) = std::tuple_cat(module
-                         .begin_compute(
-                           {{context.virtual_page_table_attachment, vir::Access::ComputeSampled},
-                            {page_allocator, vir::Access::ComputeRW},
-                            {clear_dirty_pages_cmd, vir::Access::ComputeRW},
-                            {clipmap_dirty_flags, vir::Access::ComputeRW}}
-                         )
-                         .with_name("vsm mark dirty pages")
-                         .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_dirty_pages"))
-                         .bind_image(0, 0, context.virtual_page_table_attachment)
-                         .bind_buffer(0, 1, clear_dirty_pages_cmd)
-                         .bind_buffer(0, 2, page_allocator)
-                         .bind_buffer(0, 3, clipmap_dirty_flags)
-                         .push_constants_from(vsm_ctx)
-                         .dispatch_invocations_per_pixel(
-                           context.virtual_page_table_attachment,
-                           {1.0f, 1.0f, static_cast<f32>(directional_layers)}
-                         )
-                         .end_compute());
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{context.virtual_page_table_attachment, vir::Access::ComputeSampled},
+           {page_allocator, vir::Access::ComputeRW},
+           {clear_dirty_pages_cmd, vir::Access::ComputeRW},
+           {clipmap_dirty_flags, vir::Access::ComputeRW}}
+        )
+        .with_name("vsm mark dirty pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_dirty_pages"))
+        .bind_image(0, 0, context.virtual_page_table_attachment)
+        .bind_buffer(0, 1, clear_dirty_pages_cmd)
+        .bind_buffer(0, 2, page_allocator)
+        .bind_buffer(0, 3, clipmap_dirty_flags)
+        .push_constants_from(vsm_ctx)
+        .dispatch_invocations_per_pixel(
+          context.virtual_page_table_attachment,
+          {1.0f, 1.0f, static_cast<f32>(directional_layers)}
+        )
+        .end_compute()
+    );
   }
 
   if (is_pointspot) {
-    auto pass = bind_vsm_pointspot_spec_constants(
-                  module
-                    .begin_compute(
-                      {{context.pointspot_page_table_attachment, vir::Access::ComputeSampled},
-                       {clear_dirty_pages_cmd, vir::Access::ComputeRW},
-                       {page_allocator, vir::Access::ComputeRW},
-                       {context.pointspot_layer_dirty_mask_buffer, vir::Access::ComputeRW}}
-                    )
-                    .with_name("vsm pointspot mark dirty pages")
-                    .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_mark_dirty_pages"))
-    )
-                  .bind_image(0, 0, context.pointspot_page_table_attachment)
-                  .bind_buffer(0, 1, clear_dirty_pages_cmd)
-                  .bind_buffer(0, 2, page_allocator)
-                  .bind_buffer(0, 3, context.pointspot_layer_dirty_mask_buffer)
-                  .push_constants_from(ps_ctx)
-                  .dispatch_invocations(
-                    RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-                    RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
-                    RMVSMContext::POINT_SPOT_LAYER_COUNT
-                  );
+    auto pass = //
+      module
+        .begin_compute(
+          {{context.pointspot_page_table_attachment, vir::Access::ComputeSampled},
+           {clear_dirty_pages_cmd, vir::Access::ComputeRW},
+           {page_allocator, vir::Access::ComputeRW},
+           {context.pointspot_layer_dirty_mask_buffer, vir::Access::ComputeRW}}
+        )
+        .with_name("vsm pointspot mark dirty pages")
+        .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_mark_dirty_pages"));
+    bind_vsm_pointspot_spec_constants(pass)
+      .bind_image(0, 0, context.pointspot_page_table_attachment)
+      .bind_buffer(0, 1, clear_dirty_pages_cmd)
+      .bind_buffer(0, 2, page_allocator)
+      .bind_buffer(0, 3, context.pointspot_layer_dirty_mask_buffer)
+      .push_constants_from(ps_ctx)
+      .dispatch_invocations(
+        RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE,
+        RMVSMContext::POINT_SPOT_LAYER_COUNT
+      );
     std::tie(
       context.pointspot_page_table_attachment,
       clear_dirty_pages_cmd,
@@ -1000,48 +1000,44 @@ auto RendererInstance::draw_virtual_shadowmap(
         std::ignore,
         context.virtual_page_table_attachment,
         context.physical_page_table_attachment
-      ) = std::tuple_cat(module
-                           .begin_rendering_area(
-                             {{draw_commands, vir::Access::IndirectRead},
-                              {draw_count, vir::Access::IndirectRead},
-                              {draw_clipmaps, geometry_access},
-                              {values.meshes, geometry_access},
-                              {values.mesh_instances, geometry_access},
-                              {values.meshlet_instances, geometry_access},
-                              {values.transforms_world, geometry_access},
-                              {cull_context.visibility_buffer, geometry_access},
-                              {values.materials, vir::Access::FragmentRead},
-                              {context.directional_clipmaps_buffer, geometry_access | vir::Access::FragmentRead},
-                              {hpb, vir::Access::TaskSampled | vir::Access::MeshSampled},
-                              {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
-                              {context.physical_page_table_attachment, vir::Access::FragmentRW}},
-                             physical_extent
-                           )
-                           .with_name("vsm draw dirty clipmaps ms")
-                           .bind_graphics_pipeline(render_context.pipeline("rmvsm_draw_physical_pages_ms"))
-                           .set_viewport(0, vir::Rect2D::framebuffer())
-                           .set_scissor(0, vir::Rect2D::framebuffer())
-                           .bind_buffer(0, 0, values.meshes)
-                           .bind_buffer(0, 1, values.mesh_instances)
-                           .bind_buffer(0, 2, values.meshlet_instances)
-                           .bind_buffer(0, 3, values.transforms_world)
-                           .bind_buffer(0, 4, values.materials)
-                           .bind_buffer(0, 5, context.directional_clipmaps_buffer)
-                           .bind_image(0, 6, context.virtual_page_table_attachment)
-                           .bind_image(0, 7, context.physical_page_table_attachment, vir::Format::R32Uint)
-                           .bind_buffer(0, 8, cull_context.visibility_buffer)
-                           .bind_image(0, 9, hpb)
-                           .bind_sampler(0, 10, nearest_clamped)
-                           .bind_buffer(0, 11, draw_clipmaps)
-                           .push_constants_from(clipmap_vsm_ctx)
-                           .draw_mesh_tasks_indirect_count(
-                             draw_commands,
-                             0,
-                             draw_count,
-                             0,
-                             RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT
-                           )
-                           .end_rendering());
+      ) = std::tuple_cat( //
+        module
+          .begin_rendering_area(
+            {{draw_commands, vir::Access::IndirectRead},
+             {draw_count, vir::Access::IndirectRead},
+             {draw_clipmaps, geometry_access},
+             {values.meshes, geometry_access},
+             {values.mesh_instances, geometry_access},
+             {values.meshlet_instances, geometry_access},
+             {values.transforms_world, geometry_access},
+             {cull_context.visibility_buffer, geometry_access},
+             {values.materials, vir::Access::FragmentRead},
+             {context.directional_clipmaps_buffer, geometry_access | vir::Access::FragmentRead},
+             {hpb, vir::Access::TaskSampled | vir::Access::MeshSampled},
+             {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
+             {context.physical_page_table_attachment, vir::Access::FragmentRW}},
+            physical_extent
+          )
+          .with_name("vsm draw dirty clipmaps ms")
+          .bind_graphics_pipeline(render_context.pipeline("rmvsm_draw_physical_pages_ms"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_buffer(0, 0, values.meshes)
+          .bind_buffer(0, 1, values.mesh_instances)
+          .bind_buffer(0, 2, values.meshlet_instances)
+          .bind_buffer(0, 3, values.transforms_world)
+          .bind_buffer(0, 4, values.materials)
+          .bind_buffer(0, 5, context.directional_clipmaps_buffer)
+          .bind_image(0, 6, context.virtual_page_table_attachment)
+          .bind_image(0, 7, context.physical_page_table_attachment, vir::Format::R32Uint)
+          .bind_buffer(0, 8, cull_context.visibility_buffer)
+          .bind_image(0, 9, hpb)
+          .bind_sampler(0, 10, nearest_clamped)
+          .bind_buffer(0, 11, draw_clipmaps)
+          .push_constants_from(clipmap_vsm_ctx)
+          .draw_mesh_tasks_indirect_count(draw_commands, 0, draw_count, 0, RMVSMContext::MAX_DIRECTIONAL_CLIPMAP_COUNT)
+          .end_rendering()
+      );
     } else {
       std::tie(
         std::ignore,
@@ -1120,39 +1116,39 @@ auto RendererInstance::draw_virtual_shadowmap(
       const auto mip_extent = static_cast<u32>(RMVSMContext::POINT_SPOT_IMAGE_RESOLUTION) >> mip;
       if (use_mesh_shaders) {
         static constexpr auto geometry_access = vir::Access::TaskRead | vir::Access::MeshRead;
-        auto pass = bind_vsm_pointspot_spec_constants(
-                      module
-                        .begin_rendering_area(
-                          {{cull_context.draw_cmd_buffer, vir::Access::IndirectRead},
-                           {cull_context.vsm_meshlet_instance_count_buffer, geometry_access},
-                           {values.meshes, geometry_access},
-                           {values.mesh_instances, geometry_access},
-                           {values.transforms_world, geometry_access},
-                           {values.materials, vir::Access::FragmentRead},
-                           {cull_context.views_buffer, geometry_access},
-                           {cull_context.vsm_meshlet_instances_buffer, geometry_access},
-                           {cull_context.hpb_attachment, vir::Access::TaskSampled | vir::Access::MeshSampled},
-                           {cull_context.page_table_attachment, vir::Access::FragmentSampled},
-                           {context.physical_page_table_attachment, vir::Access::FragmentRW}},
-                          {mip_extent, mip_extent}
-                        )
-                        .with_name(stack.format("vsm pointspot draw mip {} ms", mip))
-                        .bind_graphics_pipeline(render_context.pipeline("rmvsm_pointspot_draw_pages_ms"))
-        )
-                      .set_viewport(0, vir::Rect2D::framebuffer())
-                      .set_scissor(0, vir::Rect2D::framebuffer())
-                      .bind_buffer(0, 0, values.meshes)
-                      .bind_buffer(0, 1, values.mesh_instances)
-                      .bind_buffer(0, 2, values.transforms_world)
-                      .bind_buffer(0, 3, values.materials)
-                      .bind_buffer(0, 4, cull_context.views_buffer)
-                      .bind_buffer(0, 5, cull_context.vsm_meshlet_instances_buffer)
-                      .bind_buffer(0, 6, cull_context.vsm_meshlet_instance_count_buffer)
-                      .bind_image(0, 7, cull_context.hpb_attachment)
-                      .bind_image(0, 8, cull_context.page_table_attachment)
-                      .bind_image(0, 9, context.physical_page_table_attachment, vir::Format::R32Uint)
-                      .push_constants_from(mip_ps_ctx)
-                      .draw_mesh_tasks_indirect(cull_context.draw_cmd_buffer, 1);
+        auto pass = //
+          module
+            .begin_rendering_area(
+              {{cull_context.draw_cmd_buffer, vir::Access::IndirectRead},
+               {cull_context.vsm_meshlet_instance_count_buffer, geometry_access},
+               {values.meshes, geometry_access},
+               {values.mesh_instances, geometry_access},
+               {values.transforms_world, geometry_access},
+               {values.materials, vir::Access::FragmentRead},
+               {cull_context.views_buffer, geometry_access},
+               {cull_context.vsm_meshlet_instances_buffer, geometry_access},
+               {cull_context.hpb_attachment, vir::Access::TaskSampled | vir::Access::MeshSampled},
+               {cull_context.page_table_attachment, vir::Access::FragmentSampled},
+               {context.physical_page_table_attachment, vir::Access::FragmentRW}},
+              {mip_extent, mip_extent}
+            )
+            .with_name(stack.format("vsm pointspot draw mip {} ms", mip))
+            .bind_graphics_pipeline(render_context.pipeline("rmvsm_pointspot_draw_pages_ms"));
+        bind_vsm_pointspot_spec_constants(pass)
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_buffer(0, 0, values.meshes)
+          .bind_buffer(0, 1, values.mesh_instances)
+          .bind_buffer(0, 2, values.transforms_world)
+          .bind_buffer(0, 3, values.materials)
+          .bind_buffer(0, 4, cull_context.views_buffer)
+          .bind_buffer(0, 5, cull_context.vsm_meshlet_instances_buffer)
+          .bind_buffer(0, 6, cull_context.vsm_meshlet_instance_count_buffer)
+          .bind_image(0, 7, cull_context.hpb_attachment)
+          .bind_image(0, 8, cull_context.page_table_attachment)
+          .bind_image(0, 9, context.physical_page_table_attachment, vir::Format::R32Uint)
+          .push_constants_from(mip_ps_ctx)
+          .draw_mesh_tasks_indirect(cull_context.draw_cmd_buffer, 1);
         std::tie(
           cull_context.draw_cmd_buffer,
           cull_context.vsm_meshlet_instance_count_buffer,
@@ -1167,37 +1163,37 @@ auto RendererInstance::draw_virtual_shadowmap(
           context.physical_page_table_attachment
         ) = std::tuple_cat(pass.end_rendering());
       } else {
-        auto pass = bind_vsm_pointspot_spec_constants(
-                      module
-                        .begin_rendering_area(
-                          {{cull_context.draw_cmd_buffer, vir::Access::IndirectRead},
-                           {cull_context.reordered_indices_buffer, vir::Access::IndexRead},
-                           {values.meshes, vir::Access::VertexRead},
-                           {values.mesh_instances, vir::Access::VertexRead},
-                           {values.transforms_world, vir::Access::VertexRead},
-                           {values.materials, vir::Access::FragmentRead},
-                           {cull_context.views_buffer, vir::Access::VertexRead},
-                           {cull_context.vsm_meshlet_instances_buffer, vir::Access::VertexRead},
-                           {cull_context.page_table_attachment, vir::Access::FragmentSampled},
-                           {context.physical_page_table_attachment, vir::Access::FragmentRW}},
-                          {mip_extent, mip_extent}
-                        )
-                        .with_name(stack.format("vsm pointspot draw mip {}", mip))
-                        .bind_graphics_pipeline(render_context.pipeline("rmvsm_pointspot_draw_pages"))
-        )
-                      .set_viewport(0, vir::Rect2D::framebuffer())
-                      .set_scissor(0, vir::Rect2D::framebuffer())
-                      .bind_buffer(0, 0, values.meshes)
-                      .bind_buffer(0, 1, values.mesh_instances)
-                      .bind_buffer(0, 2, values.transforms_world)
-                      .bind_buffer(0, 3, values.materials)
-                      .bind_buffer(0, 4, cull_context.views_buffer)
-                      .bind_buffer(0, 5, cull_context.vsm_meshlet_instances_buffer)
-                      .bind_image(0, 6, cull_context.page_table_attachment)
-                      .bind_image(0, 7, context.physical_page_table_attachment, vir::Format::R32Uint)
-                      .bind_index_buffer(cull_context.reordered_indices_buffer, VK_INDEX_TYPE_UINT32)
-                      .push_constants_from(mip_ps_ctx)
-                      .draw_indexed_indirect(cull_context.draw_cmd_buffer, 1);
+        auto pass = //
+          module
+            .begin_rendering_area(
+              {{cull_context.draw_cmd_buffer, vir::Access::IndirectRead},
+               {cull_context.reordered_indices_buffer, vir::Access::IndexRead},
+               {values.meshes, vir::Access::VertexRead},
+               {values.mesh_instances, vir::Access::VertexRead},
+               {values.transforms_world, vir::Access::VertexRead},
+               {values.materials, vir::Access::FragmentRead},
+               {cull_context.views_buffer, vir::Access::VertexRead},
+               {cull_context.vsm_meshlet_instances_buffer, vir::Access::VertexRead},
+               {cull_context.page_table_attachment, vir::Access::FragmentSampled},
+               {context.physical_page_table_attachment, vir::Access::FragmentRW}},
+              {mip_extent, mip_extent}
+            )
+            .with_name(stack.format("vsm pointspot draw mip {}", mip))
+            .bind_graphics_pipeline(render_context.pipeline("rmvsm_pointspot_draw_pages"));
+        bind_vsm_pointspot_spec_constants(pass)
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_buffer(0, 0, values.meshes)
+          .bind_buffer(0, 1, values.mesh_instances)
+          .bind_buffer(0, 2, values.transforms_world)
+          .bind_buffer(0, 3, values.materials)
+          .bind_buffer(0, 4, cull_context.views_buffer)
+          .bind_buffer(0, 5, cull_context.vsm_meshlet_instances_buffer)
+          .bind_image(0, 6, cull_context.page_table_attachment)
+          .bind_image(0, 7, context.physical_page_table_attachment, vir::Format::R32Uint)
+          .bind_index_buffer(cull_context.reordered_indices_buffer, VK_INDEX_TYPE_UINT32)
+          .push_constants_from(mip_ps_ctx)
+          .draw_indexed_indirect(cull_context.draw_cmd_buffer, 1);
         std::tie(
           cull_context.draw_cmd_buffer,
           cull_context.reordered_indices_buffer,
@@ -1238,29 +1234,31 @@ auto RendererInstance::resolve_shadowmap(
     context.directional_clipmaps_buffer,
     context.virtual_page_table_attachment,
     context.physical_page_table_attachment
-  ) = std::tuple_cat(module
-                       .begin_rendering(
-                         {{context.shadows_attachment, vir::Access::ColorRW},
-                          {values.camera, vir::Access::FragmentUniformRead},
-                          {context.depth_attachment, vir::Access::FragmentSampled},
-                          {context.normal_attachment, vir::Access::FragmentSampled},
-                          {context.directional_clipmaps_buffer, vir::Access::FragmentRead},
-                          {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
-                          {context.physical_page_table_attachment, vir::Access::FragmentSampled}}
-                       )
-                       .with_name("resolve shadows")
-                       .bind_graphics_pipeline(render_context.pipeline("resolve_shadowmaps"))
-                       .set_color_blend(0, vir::ColorBlendAttachmentState{.color_write_mask = VK_COLOR_COMPONENT_R_BIT})
-                       .set_viewport(0, vir::Rect2D::framebuffer())
-                       .set_scissor(0, vir::Rect2D::framebuffer())
-                       .bind_buffer(0, 0, values.camera)
-                       .bind_image(0, 1, context.depth_attachment)
-                       .bind_image(0, 2, context.normal_attachment)
-                       .bind_buffer(2, 0, context.directional_clipmaps_buffer)
-                       .bind_image(2, 1, context.virtual_page_table_attachment)
-                       .bind_image(2, 2, context.physical_page_table_attachment)
-                       .push_constants_from(prepared.shadow.resolve_context)
-                       .draw(3, 1)
-                       .end_rendering());
+  ) = std::tuple_cat( //
+    module
+      .begin_rendering(
+        {{context.shadows_attachment, vir::Access::ColorRW},
+         {values.camera, vir::Access::FragmentUniformRead},
+         {context.depth_attachment, vir::Access::FragmentSampled},
+         {context.normal_attachment, vir::Access::FragmentSampled},
+         {context.directional_clipmaps_buffer, vir::Access::FragmentRead},
+         {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
+         {context.physical_page_table_attachment, vir::Access::FragmentSampled}}
+      )
+      .with_name("resolve shadows")
+      .bind_graphics_pipeline(render_context.pipeline("resolve_shadowmaps"))
+      .set_color_blend(0, vir::ColorBlendAttachmentState{.color_write_mask = VK_COLOR_COMPONENT_R_BIT})
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.depth_attachment)
+      .bind_image(0, 2, context.normal_attachment)
+      .bind_buffer(2, 0, context.directional_clipmaps_buffer)
+      .bind_image(2, 1, context.virtual_page_table_attachment)
+      .bind_image(2, 2, context.physical_page_table_attachment)
+      .push_constants_from(prepared.shadow.resolve_context)
+      .draw(3, 1)
+      .end_rendering()
+  );
 }
 } // namespace ox

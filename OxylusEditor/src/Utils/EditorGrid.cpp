@@ -74,21 +74,22 @@ auto add_editor_grid_stage(RendererInstance& renderer_instance, std::function<au
         module.transient_image({.extent = extent, .format = format, .name = "grid applied"}),
         black
       );
-      grid_applied = module
-                       .begin_rendering(
-                         {{grid_applied, vir::Access::ColorWrite},
-                          {result_attachment, vir::Access::FragmentSampled},
-                          {grid_attachment, vir::Access::FragmentSampled}}
-                       )
-                       .with_name("apply grid")
-                       .bind_graphics_pipeline(render_context.pipeline("apply_grid"))
-                       .set_viewport(0, vir::Rect2D::framebuffer())
-                       .set_scissor(0, vir::Rect2D::framebuffer())
-                       .bind_image(0, 0, grid_attachment)
-                       .bind_image(0, 1, result_attachment)
-                       .bind_sampler(0, 2, render_context.cached_sampler_handle(LinearSamplerClamped))
-                       .draw(3, 1)
-                       .end_rendering()[0];
+      grid_applied = //
+        module
+          .begin_rendering(
+            {{grid_applied, vir::Access::ColorWrite},
+             {result_attachment, vir::Access::FragmentSampled},
+             {grid_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("apply grid")
+          .bind_graphics_pipeline(render_context.pipeline("apply_grid"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_image(0, 0, grid_attachment)
+          .bind_image(0, 1, result_attachment)
+          .bind_sampler(0, 2, render_context.cached_sampler_handle(LinearSamplerClamped))
+          .draw(3, 1)
+          .end_rendering()[0];
 
       ctx.set_image_resource("result_attachment", grid_applied)
         .set_image_resource("depth_attachment", depth_attachment)

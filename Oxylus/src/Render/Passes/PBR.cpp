@@ -73,77 +73,80 @@ auto RendererInstance::draw_atmosphere(
     context.sky_multiscatter_lut_attachment,
     values.atmosphere,
     context.sky_cubemap_attachment
-  ) = std::tuple_cat(module
-                       .set_condition(
-                         variables.is_luts_dirty,
-                         [&](vir::Module& arm) {
-                           const auto [transmittance, atmosphere] =
-                             arm
-                               .begin_compute(
-                                 {{context.sky_transmittance_lut_attachment, vir::Access::ComputeRW},
-                                  {values.atmosphere, vir::Access::ComputeUniformRead}}
-                               )
-                               .with_name("sky transmittance")
-                               .bind_compute_pipeline(render_context.pipeline("sky_transmittance"))
-                               .bind_image(0, 0, context.sky_transmittance_lut_attachment)
-                               .bind_buffer(0, 1, values.atmosphere)
-                               .dispatch_invocations_per_pixel(context.sky_transmittance_lut_attachment)
-                               .end_compute();
+  ) = std::tuple_cat( //
+    module.set_condition(
+      variables.is_luts_dirty,
+      [&](vir::Module& arm) {
+        const auto [transmittance, atmosphere] = //
+          arm
+            .begin_compute(
+              {{context.sky_transmittance_lut_attachment, vir::Access::ComputeRW},
+               {values.atmosphere, vir::Access::ComputeUniformRead}}
+            )
+            .with_name("sky transmittance")
+            .bind_compute_pipeline(render_context.pipeline("sky_transmittance"))
+            .bind_image(0, 0, context.sky_transmittance_lut_attachment)
+            .bind_buffer(0, 1, values.atmosphere)
+            .dispatch_invocations_per_pixel(context.sky_transmittance_lut_attachment)
+            .end_compute();
 
-                           const auto [transmittance_out, multiscatter, atmosphere_out] =
-                             arm
-                               .begin_compute(
-                                 {{transmittance, vir::Access::ComputeSampled},
-                                  {context.sky_multiscatter_lut_attachment, vir::Access::ComputeRW},
-                                  {atmosphere, vir::Access::ComputeUniformRead}}
-                               )
-                               .with_name("sky multiscattering")
-                               .bind_compute_pipeline(render_context.pipeline("sky_multiscatter"))
-                               .bind_sampler(0, 0, linear_clamped)
-                               .bind_image(0, 1, transmittance)
-                               .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
-                               .bind_buffer(0, 3, atmosphere)
-                               .dispatch_invocations_per_pixel(context.sky_multiscatter_lut_attachment)
-                               .end_compute();
+        const auto [transmittance_out, multiscatter, atmosphere_out] =
+          arm
+            .begin_compute(
+              {{transmittance, vir::Access::ComputeSampled},
+               {context.sky_multiscatter_lut_attachment, vir::Access::ComputeRW},
+               {atmosphere, vir::Access::ComputeUniformRead}}
+            )
+            .with_name("sky multiscattering")
+            .bind_compute_pipeline(render_context.pipeline("sky_multiscatter"))
+            .bind_sampler(0, 0, linear_clamped)
+            .bind_image(0, 1, transmittance)
+            .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
+            .bind_buffer(0, 3, atmosphere)
+            .dispatch_invocations_per_pixel(context.sky_multiscatter_lut_attachment)
+            .end_compute();
 
-                           const auto cubemap = arm.clear(
-                             context.sky_cubemap_attachment,
-                             vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
-                           );
-                           return std::array{transmittance_out, multiscatter, atmosphere_out, cubemap};
-                         },
-                         [&](vir::Module&) {
-                           return std::array{
-                             context.sky_transmittance_lut_attachment,
-                             context.sky_multiscatter_lut_attachment,
-                             values.atmosphere,
-                             context.sky_cubemap_attachment,
-                           };
-                         }
-                       ));
+        const auto cubemap = arm.clear(
+          context.sky_cubemap_attachment,
+          vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f)
+        );
+        return std::array{transmittance_out, multiscatter, atmosphere_out, cubemap};
+      },
+      [&](vir::Module&) {
+        return std::array{
+          context.sky_transmittance_lut_attachment,
+          context.sky_multiscatter_lut_attachment,
+          values.atmosphere,
+          context.sky_cubemap_attachment,
+        };
+      }
+    )
+  );
 
   std::tie(
     context.sky_transmittance_lut_attachment,
     context.sky_multiscatter_lut_attachment,
     values.atmosphere,
     context.sky_view_lut_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
-                          {context.sky_multiscatter_lut_attachment, vir::Access::ComputeSampled},
-                          {values.atmosphere, vir::Access::ComputeUniformRead},
-                          {context.sky_view_lut_attachment, vir::Access::ComputeRW}}
-                       )
-                       .with_name("sky view")
-                       .bind_compute_pipeline(render_context.pipeline("sky_view"))
-                       .bind_sampler(0, 0, linear_clamped)
-                       .bind_image(0, 1, context.sky_transmittance_lut_attachment)
-                       .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
-                       .bind_buffer(0, 3, values.atmosphere)
-                       .bind_image(0, 4, context.sky_view_lut_attachment)
-                       .push_constants_from(variables.sky_view_push)
-                       .dispatch_invocations_per_pixel(context.sky_view_lut_attachment)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
+         {context.sky_multiscatter_lut_attachment, vir::Access::ComputeSampled},
+         {values.atmosphere, vir::Access::ComputeUniformRead},
+         {context.sky_view_lut_attachment, vir::Access::ComputeRW}}
+      )
+      .with_name("sky view")
+      .bind_compute_pipeline(render_context.pipeline("sky_view"))
+      .bind_sampler(0, 0, linear_clamped)
+      .bind_image(0, 1, context.sky_transmittance_lut_attachment)
+      .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
+      .bind_buffer(0, 3, values.atmosphere)
+      .bind_image(0, 4, context.sky_view_lut_attachment)
+      .push_constants_from(variables.sky_view_push)
+      .dispatch_invocations_per_pixel(context.sky_view_lut_attachment)
+      .end_compute()
+  );
 
   constexpr auto cubemap_layers = 6.0f;
   std::tie(
@@ -152,25 +155,27 @@ auto RendererInstance::draw_atmosphere(
     values.camera,
     values.atmosphere,
     context.sky_cubemap_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{context.sky_view_lut_attachment, vir::Access::ComputeSampled},
-                          {context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
-                          {values.camera, vir::Access::ComputeUniformRead},
-                          {values.atmosphere, vir::Access::ComputeRead},
-                          {context.sky_cubemap_attachment, vir::Access::ComputeRW}}
-                       )
-                       .with_name("sky cubemap")
-                       .bind_compute_pipeline(render_context.pipeline("sky_ibl"))
-                       .bind_sampler(0, 0, linear_clamped)
-                       .bind_image(0, 1, context.sky_view_lut_attachment)
-                       .bind_image(0, 2, context.sky_transmittance_lut_attachment)
-                       .bind_buffer(0, 3, values.camera)
-                       .bind_image(0, 4, context.sky_cubemap_attachment)
-                       .push_constant_address(0, values.atmosphere)
-                       .push_constants_from_at(8, variables.sky_cubemap_push)
-                       .dispatch_invocations_per_pixel(context.sky_cubemap_attachment, {1.0f, 1.0f, cubemap_layers})
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.sky_view_lut_attachment, vir::Access::ComputeSampled},
+         {context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
+         {values.camera, vir::Access::ComputeUniformRead},
+         {values.atmosphere, vir::Access::ComputeRead},
+         {context.sky_cubemap_attachment, vir::Access::ComputeRW}}
+      )
+      .with_name("sky cubemap")
+      .bind_compute_pipeline(render_context.pipeline("sky_ibl"))
+      .bind_sampler(0, 0, linear_clamped)
+      .bind_image(0, 1, context.sky_view_lut_attachment)
+      .bind_image(0, 2, context.sky_transmittance_lut_attachment)
+      .bind_buffer(0, 3, values.camera)
+      .bind_image(0, 4, context.sky_cubemap_attachment)
+      .push_constant_address(0, values.atmosphere)
+      .push_constants_from_at(8, variables.sky_cubemap_push)
+      .dispatch_invocations_per_pixel(context.sky_cubemap_attachment, {1.0f, 1.0f, cubemap_layers})
+      .end_compute()
+  );
 
   std::tie(
     context.sky_transmittance_lut_attachment,
@@ -178,25 +183,27 @@ auto RendererInstance::draw_atmosphere(
     values.atmosphere,
     values.camera,
     context.sky_aerial_perspective_lut_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
-                          {context.sky_multiscatter_lut_attachment, vir::Access::ComputeSampled},
-                          {values.atmosphere, vir::Access::ComputeUniformRead},
-                          {values.camera, vir::Access::ComputeUniformRead},
-                          {context.sky_aerial_perspective_lut_attachment, vir::Access::ComputeRW}}
-                       )
-                       .with_name("sky aerial perspective")
-                       .bind_compute_pipeline(render_context.pipeline("sky_aerial_perspective"))
-                       .bind_sampler(0, 0, linear_clamped)
-                       .bind_image(0, 1, context.sky_transmittance_lut_attachment)
-                       .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
-                       .bind_buffer(0, 3, values.atmosphere)
-                       .bind_buffer(0, 4, values.camera)
-                       .bind_image(0, 5, context.sky_aerial_perspective_lut_attachment)
-                       .push_constants_from(variables.aerial_push)
-                       .dispatch_invocations_per_pixel(context.sky_aerial_perspective_lut_attachment)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.sky_transmittance_lut_attachment, vir::Access::ComputeSampled},
+         {context.sky_multiscatter_lut_attachment, vir::Access::ComputeSampled},
+         {values.atmosphere, vir::Access::ComputeUniformRead},
+         {values.camera, vir::Access::ComputeUniformRead},
+         {context.sky_aerial_perspective_lut_attachment, vir::Access::ComputeRW}}
+      )
+      .with_name("sky aerial perspective")
+      .bind_compute_pipeline(render_context.pipeline("sky_aerial_perspective"))
+      .bind_sampler(0, 0, linear_clamped)
+      .bind_image(0, 1, context.sky_transmittance_lut_attachment)
+      .bind_image(0, 2, context.sky_multiscatter_lut_attachment)
+      .bind_buffer(0, 3, values.atmosphere)
+      .bind_buffer(0, 4, values.camera)
+      .bind_image(0, 5, context.sky_aerial_perspective_lut_attachment)
+      .push_constants_from(variables.aerial_push)
+      .dispatch_invocations_per_pixel(context.sky_aerial_perspective_lut_attachment)
+      .end_compute()
+  );
 }
 
 auto RendererInstance::update_vbgtao_info(this RendererInstance& self, const RendererCVar& cvar) -> void {
@@ -289,10 +296,11 @@ auto RendererInstance::generate_ambient_occlusion(
     prefilter_accesses[i + 1] = {module.mip(prefiltered_depth, i), vir::Access::ComputeWrite};
   }
 
-  auto pass = module.begin_compute(prefilter_accesses)
-                .with_name("vbgtao prefilter")
-                .bind_compute_pipeline(render_context.pipeline("vbgtao_prefilter"))
-                .bind_image(0, 0, context.depth_attachment);
+  auto pass = //
+    module.begin_compute(prefilter_accesses)
+      .with_name("vbgtao prefilter")
+      .bind_compute_pipeline(render_context.pipeline("vbgtao_prefilter"))
+      .bind_image(0, 0, context.depth_attachment);
   for (auto i = 0_u32; i < 5; i++) {
     module.bind_image(0, 1 + i, prefilter_accesses[i + 1].resource);
   }
@@ -319,28 +327,30 @@ auto RendererInstance::generate_ambient_occlusion(
     context.noise_attachment,
     noisy_occlusion,
     context.depth_differences_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{values.camera, vir::Access::ComputeUniformRead},
-                          {prefiltered_depth, vir::Access::ComputeSampled},
-                          {context.normal_attachment, vir::Access::ComputeSampled},
-                          {context.noise_attachment, vir::Access::ComputeSampled},
-                          {noisy_occlusion, vir::Access::ComputeRW},
-                          {context.depth_differences_attachment, vir::Access::ComputeRW}}
-                       )
-                       .with_name("vbgtao generate")
-                       .bind_compute_pipeline(render_context.pipeline("vbgtao_main"))
-                       .bind_buffer(0, 0, values.camera)
-                       .bind_image(0, 1, prefiltered_depth)
-                       .bind_image(0, 2, context.normal_attachment)
-                       .bind_image(0, 3, context.noise_attachment)
-                       .bind_image(0, 4, noisy_occlusion)
-                       .bind_image(0, 5, context.depth_differences_attachment)
-                       .bind_sampler(0, 6, nearest_clamped)
-                       .bind_sampler(0, 7, render_context.cached_sampler_handle(LinearSamplerClamped))
-                       .push_constants_from(variables.vbgtao_settings)
-                       .dispatch_invocations_per_pixel(noisy_occlusion)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {prefiltered_depth, vir::Access::ComputeSampled},
+         {context.normal_attachment, vir::Access::ComputeSampled},
+         {context.noise_attachment, vir::Access::ComputeSampled},
+         {noisy_occlusion, vir::Access::ComputeRW},
+         {context.depth_differences_attachment, vir::Access::ComputeRW}}
+      )
+      .with_name("vbgtao generate")
+      .bind_compute_pipeline(render_context.pipeline("vbgtao_main"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, prefiltered_depth)
+      .bind_image(0, 2, context.normal_attachment)
+      .bind_image(0, 3, context.noise_attachment)
+      .bind_image(0, 4, noisy_occlusion)
+      .bind_image(0, 5, context.depth_differences_attachment)
+      .bind_sampler(0, 6, nearest_clamped)
+      .bind_sampler(0, 7, render_context.cached_sampler_handle(LinearSamplerClamped))
+      .push_constants_from(variables.vbgtao_settings)
+      .dispatch_invocations_per_pixel(noisy_occlusion)
+      .end_compute()
+  );
 
   std::tie(std::ignore, context.depth_differences_attachment, context.ambient_occlusion_attachment) = std::tuple_cat(
     module
@@ -399,25 +409,27 @@ auto RendererInstance::generate_rtao(
     context.depth_attachment,
     context.normal_attachment,
     context.ambient_occlusion_attachment
-  ) = std::tuple_cat(module
-                       .begin_compute(
-                         {{context.tlas_buffer, vir::Access::ComputeAccelerationStructureRead},
-                          {values.camera, vir::Access::ComputeUniformRead},
-                          {context.depth_attachment, vir::Access::ComputeSampled},
-                          {context.normal_attachment, vir::Access::ComputeSampled},
-                          {context.ambient_occlusion_attachment, vir::Access::ComputeRW}}
-                       )
-                       .with_name("rtao")
-                       .bind_compute_pipeline(render_context.pipeline("rtao"))
-                       .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
-                       .bind_buffer(0, 1, values.camera)
-                       .bind_image(0, 2, context.depth_attachment)
-                       .bind_image(0, 3, context.normal_attachment)
-                       .bind_image(0, 4, context.ambient_occlusion_attachment)
-                       .bind_sampler(0, 5, render_context.cached_sampler_handle(NearestSamplerClamped))
-                       .push_constants_from(prepared.pbr.rtao_push)
-                       .dispatch_invocations_per_pixel(context.ambient_occlusion_attachment)
-                       .end_compute());
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.tlas_buffer, vir::Access::ComputeAccelerationStructureRead},
+         {values.camera, vir::Access::ComputeUniformRead},
+         {context.depth_attachment, vir::Access::ComputeSampled},
+         {context.normal_attachment, vir::Access::ComputeSampled},
+         {context.ambient_occlusion_attachment, vir::Access::ComputeRW}}
+      )
+      .with_name("rtao")
+      .bind_compute_pipeline(render_context.pipeline("rtao"))
+      .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
+      .bind_buffer(0, 1, values.camera)
+      .bind_image(0, 2, context.depth_attachment)
+      .bind_image(0, 3, context.normal_attachment)
+      .bind_image(0, 4, context.ambient_occlusion_attachment)
+      .bind_sampler(0, 5, render_context.cached_sampler_handle(NearestSamplerClamped))
+      .push_constants_from(prepared.pbr.rtao_push)
+      .dispatch_invocations_per_pixel(context.ambient_occlusion_attachment)
+      .end_compute()
+  );
 }
 
 auto RendererInstance::bind_pbr_variables(
@@ -468,46 +480,48 @@ auto RendererInstance::apply_pbr(
       context.shadows_attachment,
       values.camera,
       values.atmosphere
-    ) = std::tuple_cat(module
-                         .begin_rendering(
-                           {{dst, vir::Access::ColorWrite},
-                            {context.sky_transmittance_lut_attachment, vir::Access::FragmentSampled},
-                            {context.sky_aerial_perspective_lut_attachment, vir::Access::FragmentSampled},
-                            {context.sky_view_lut_attachment, vir::Access::FragmentSampled},
-                            {context.sky_cubemap_attachment, vir::Access::FragmentSampled},
-                            {context.depth_attachment, vir::Access::FragmentSampled},
-                            {context.albedo_attachment, vir::Access::FragmentSampled},
-                            {context.normal_attachment, vir::Access::FragmentSampled},
-                            {context.emissive_attachment, vir::Access::FragmentSampled},
-                            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
-                            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
-                            {context.shadows_attachment, vir::Access::FragmentSampled},
-                            {values.camera, vir::Access::FragmentUniformRead},
-                            {values.atmosphere, vir::Access::FragmentRead}}
-                         )
-                         .with_name("pbr apply")
-                         .bind_graphics_pipeline(render_context.pipeline("pbr_apply"))
-                         .set_viewport(0, vir::Rect2D::framebuffer())
-                         .set_scissor(0, vir::Rect2D::framebuffer())
-                         .bind_sampler(0, 0, linear_clamped)
-                         .bind_sampler(0, 1, linear_repeated)
-                         .bind_image(0, 2, context.sky_transmittance_lut_attachment)
-                         .bind_image(0, 3, context.sky_aerial_perspective_lut_attachment)
-                         .bind_image(0, 4, context.sky_cubemap_attachment)
-                         .bind_image(0, 5, context.sky_view_lut_attachment)
-                         .bind_image(0, 6, context.depth_attachment)
-                         .bind_image(0, 7, context.albedo_attachment)
-                         .bind_image(0, 8, context.normal_attachment)
-                         .bind_image(0, 9, context.emissive_attachment)
-                         .bind_image(0, 10, context.metallic_roughness_occlusion_attachment)
-                         .bind_image(0, 11, context.ambient_occlusion_attachment)
-                         .bind_image(0, 12, context.shadows_attachment)
-                         .bind_buffer(0, 13, values.camera)
-                         .push_constant_address(0, values.atmosphere)
-                         .push_constants_from_at(8, variables.sun_push)
-                         .specialize_constant(0, scene_flags)
-                         .draw(3, 1)
-                         .end_rendering());
+    ) = std::tuple_cat( //
+      module
+        .begin_rendering(
+          {{dst, vir::Access::ColorWrite},
+           {context.sky_transmittance_lut_attachment, vir::Access::FragmentSampled},
+           {context.sky_aerial_perspective_lut_attachment, vir::Access::FragmentSampled},
+           {context.sky_view_lut_attachment, vir::Access::FragmentSampled},
+           {context.sky_cubemap_attachment, vir::Access::FragmentSampled},
+           {context.depth_attachment, vir::Access::FragmentSampled},
+           {context.albedo_attachment, vir::Access::FragmentSampled},
+           {context.normal_attachment, vir::Access::FragmentSampled},
+           {context.emissive_attachment, vir::Access::FragmentSampled},
+           {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
+           {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
+           {context.shadows_attachment, vir::Access::FragmentSampled},
+           {values.camera, vir::Access::FragmentUniformRead},
+           {values.atmosphere, vir::Access::FragmentRead}}
+        )
+        .with_name("pbr apply")
+        .bind_graphics_pipeline(render_context.pipeline("pbr_apply"))
+        .set_viewport(0, vir::Rect2D::framebuffer())
+        .set_scissor(0, vir::Rect2D::framebuffer())
+        .bind_sampler(0, 0, linear_clamped)
+        .bind_sampler(0, 1, linear_repeated)
+        .bind_image(0, 2, context.sky_transmittance_lut_attachment)
+        .bind_image(0, 3, context.sky_aerial_perspective_lut_attachment)
+        .bind_image(0, 4, context.sky_cubemap_attachment)
+        .bind_image(0, 5, context.sky_view_lut_attachment)
+        .bind_image(0, 6, context.depth_attachment)
+        .bind_image(0, 7, context.albedo_attachment)
+        .bind_image(0, 8, context.normal_attachment)
+        .bind_image(0, 9, context.emissive_attachment)
+        .bind_image(0, 10, context.metallic_roughness_occlusion_attachment)
+        .bind_image(0, 11, context.ambient_occlusion_attachment)
+        .bind_image(0, 12, context.shadows_attachment)
+        .bind_buffer(0, 13, values.camera)
+        .push_constant_address(0, values.atmosphere)
+        .push_constants_from_at(8, variables.sun_push)
+        .specialize_constant(0, scene_flags)
+        .draw(3, 1)
+        .end_rendering()
+    );
   } else {
     auto sky = module.transient_buffer({
       .size = sizeof(GPU::Sky),
@@ -527,38 +541,40 @@ auto RendererInstance::apply_pbr(
       context.shadows_attachment,
       values.camera,
       std::ignore
-    ) = std::tuple_cat(module
-                         .begin_rendering(
-                           {{dst, vir::Access::ColorWrite},
-                            {context.depth_attachment, vir::Access::FragmentSampled},
-                            {context.albedo_attachment, vir::Access::FragmentSampled},
-                            {context.normal_attachment, vir::Access::FragmentSampled},
-                            {context.emissive_attachment, vir::Access::FragmentSampled},
-                            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
-                            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
-                            {context.shadows_attachment, vir::Access::FragmentSampled},
-                            {values.camera, vir::Access::FragmentUniformRead},
-                            {sky, vir::Access::FragmentRead}}
-                         )
-                         .with_name("pbr apply")
-                         .bind_graphics_pipeline(render_context.pipeline("pbr_apply_no_atmos"))
-                         .set_viewport(0, vir::Rect2D::framebuffer())
-                         .set_scissor(0, vir::Rect2D::framebuffer())
-                         .bind_sampler(0, 0, linear_clamped)
-                         .bind_sampler(0, 1, linear_repeated)
-                         .bind_image(0, 2, context.depth_attachment)
-                         .bind_image(0, 3, context.albedo_attachment)
-                         .bind_image(0, 4, context.normal_attachment)
-                         .bind_image(0, 5, context.emissive_attachment)
-                         .bind_image(0, 6, context.metallic_roughness_occlusion_attachment)
-                         .bind_image(0, 7, context.ambient_occlusion_attachment)
-                         .bind_image(0, 8, context.shadows_attachment)
-                         .bind_buffer(0, 9, values.camera)
-                         .push_constant_address(0, sky)
-                         .push_constants_from_at(8, variables.sun_push)
-                         .specialize_constant(0, scene_flags)
-                         .draw(3, 1)
-                         .end_rendering());
+    ) = std::tuple_cat( //
+      module
+        .begin_rendering(
+          {{dst, vir::Access::ColorWrite},
+           {context.depth_attachment, vir::Access::FragmentSampled},
+           {context.albedo_attachment, vir::Access::FragmentSampled},
+           {context.normal_attachment, vir::Access::FragmentSampled},
+           {context.emissive_attachment, vir::Access::FragmentSampled},
+           {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
+           {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
+           {context.shadows_attachment, vir::Access::FragmentSampled},
+           {values.camera, vir::Access::FragmentUniformRead},
+           {sky, vir::Access::FragmentRead}}
+        )
+        .with_name("pbr apply")
+        .bind_graphics_pipeline(render_context.pipeline("pbr_apply_no_atmos"))
+        .set_viewport(0, vir::Rect2D::framebuffer())
+        .set_scissor(0, vir::Rect2D::framebuffer())
+        .bind_sampler(0, 0, linear_clamped)
+        .bind_sampler(0, 1, linear_repeated)
+        .bind_image(0, 2, context.depth_attachment)
+        .bind_image(0, 3, context.albedo_attachment)
+        .bind_image(0, 4, context.normal_attachment)
+        .bind_image(0, 5, context.emissive_attachment)
+        .bind_image(0, 6, context.metallic_roughness_occlusion_attachment)
+        .bind_image(0, 7, context.ambient_occlusion_attachment)
+        .bind_image(0, 8, context.shadows_attachment)
+        .bind_buffer(0, 9, values.camera)
+        .push_constant_address(0, sky)
+        .push_constants_from_at(8, variables.sun_push)
+        .specialize_constant(0, scene_flags)
+        .draw(3, 1)
+        .end_rendering()
+    );
   }
 
   static constexpr auto additive_blend = vir::ColorBlendAttachmentState{
@@ -570,6 +586,23 @@ auto RendererInstance::apply_pbr(
     .dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE,
     .alpha_blend_op = VK_BLEND_OP_ADD,
   };
+  auto lights_pass = //
+    module
+      .begin_rendering(
+        {{dst, vir::Access::ColorRW},
+         {context.depth_attachment, vir::Access::FragmentSampled},
+         {context.albedo_attachment, vir::Access::FragmentSampled},
+         {context.normal_attachment, vir::Access::FragmentSampled},
+         {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
+         {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
+         {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
+         {values.camera, vir::Access::FragmentUniformRead},
+         {values.lights, vir::Access::FragmentRead},
+         {context.light_grid_buffer, vir::Access::FragmentRead},
+         {context.pointspot_views_buffer, vir::Access::FragmentRead}}
+      )
+      .with_name("pbr apply lights")
+      .bind_graphics_pipeline(render_context.pipeline("pbr_apply_lights"));
   std::tie(
     dst,
     context.depth_attachment,
@@ -582,41 +615,25 @@ auto RendererInstance::apply_pbr(
     values.lights,
     context.light_grid_buffer,
     context.pointspot_views_buffer
-  ) =
-    std::tuple_cat(bind_vsm_pointspot_spec_constants(
-                     module
-                       .begin_rendering(
-                         {{dst, vir::Access::ColorRW},
-                          {context.depth_attachment, vir::Access::FragmentSampled},
-                          {context.albedo_attachment, vir::Access::FragmentSampled},
-                          {context.normal_attachment, vir::Access::FragmentSampled},
-                          {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
-                          {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
-                          {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
-                          {values.camera, vir::Access::FragmentUniformRead},
-                          {values.lights, vir::Access::FragmentRead},
-                          {context.light_grid_buffer, vir::Access::FragmentRead},
-                          {context.pointspot_views_buffer, vir::Access::FragmentRead}}
-                       )
-                       .with_name("pbr apply lights")
-                       .bind_graphics_pipeline(render_context.pipeline("pbr_apply_lights"))
-    )
-                     .set_color_blend(0, additive_blend)
-                     .set_viewport(0, vir::Rect2D::framebuffer())
-                     .set_scissor(0, vir::Rect2D::framebuffer())
-                     .bind_buffer(0, 0, values.camera)
-                     .bind_image(0, 1, context.depth_attachment)
-                     .bind_image(0, 2, context.albedo_attachment)
-                     .bind_image(0, 3, context.normal_attachment)
-                     .bind_image(0, 4, context.metallic_roughness_occlusion_attachment)
-                     .bind_image(0, 5, context.pointspot_page_table_attachment)
-                     .bind_image(0, 6, context.vsm_physical_pages_attachment)
-                     .push_constant_address(0, values.lights)
-                     .push_constant_address(8, context.light_grid_buffer)
-                     .push_constant_address(16, context.pointspot_views_buffer)
-                     .push_constants_from_at(24, variables.lights_push)
-                     .draw(3, 1)
-                     .end_rendering());
+  ) = std::tuple_cat( //
+    bind_vsm_pointspot_spec_constants(lights_pass)
+      .set_color_blend(0, additive_blend)
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.depth_attachment)
+      .bind_image(0, 2, context.albedo_attachment)
+      .bind_image(0, 3, context.normal_attachment)
+      .bind_image(0, 4, context.metallic_roughness_occlusion_attachment)
+      .bind_image(0, 5, context.pointspot_page_table_attachment)
+      .bind_image(0, 6, context.vsm_physical_pages_attachment)
+      .push_constant_address(0, values.lights)
+      .push_constant_address(8, context.light_grid_buffer)
+      .push_constant_address(16, context.pointspot_views_buffer)
+      .push_constants_from_at(24, variables.lights_push)
+      .draw(3, 1)
+      .end_rendering()
+  );
 
   return dst;
 }
