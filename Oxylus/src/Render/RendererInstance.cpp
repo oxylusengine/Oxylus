@@ -21,6 +21,7 @@
 #include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
+#include "Utils/Timer.hpp"
 
 namespace ox {
 struct PendingLight {
@@ -207,6 +208,7 @@ constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BI
                                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 // programs kept per instance, enough to flip between a few shapes without recompiling
 constexpr static usize MAX_FRAME_PROGRAMS = 4;
+constexpr static usize EVICTED_SHAPE_HISTORY = 8;
 
 // true when the buffer was (re)allocated, which leaves it undefined
 static auto ensure_buffer(RenderContext& render_context, BufferID& id, u64 size, std::string_view name) -> bool {
@@ -1140,6 +1142,7 @@ auto RendererInstance::program_for(this RendererInstance& self, const FrameShape
     return it->second.get();
   }
 
+  const auto timer = Timer();
   auto recorded = std::make_unique<RecordedFrame>();
   auto module = vir::Module{};
   self.record_frame(module, shape, recorded->prepared);
@@ -1153,14 +1156,39 @@ auto RendererInstance::program_for(this RendererInstance& self, const FrameShape
     OX_LOG_INFO("frame program IR:\n{}", compiled->dump());
   }
 
+  auto& stats = self.program_stats;
+  stats.compile_count += 1;
+  stats.last_compile_ms = timer.get_elapsed_ms();
+
+  const auto evicted = std::ranges::find(self.evicted_shapes, FrameShapeHash{}(shape));
+  if (evicted != self.evicted_shapes.end()) {
+    self.evicted_shapes.erase(evicted);
+    stats.recompile_count += 1;
+    // powers of two, so a shape thrashing every frame doesn't flood the log
+    if (std::has_single_bit(stats.recompile_count)) {
+      OX_LOG_WARN(
+        "recompiled an evicted frame program in {:.1f} ms, {} times so far. More than {} frame shapes are alternating",
+        stats.last_compile_ms,
+        stats.recompile_count,
+        MAX_FRAME_PROGRAMS
+      );
+    }
+  }
+
   recorded->program = std::move(*compiled);
   auto* program = self.programs.emplace(shape, std::move(recorded)).first->second.get();
   self.program_order.push_back(shape);
   while (self.program_order.size() > MAX_FRAME_PROGRAMS) {
+    if (self.evicted_shapes.size() >= EVICTED_SHAPE_HISTORY) {
+      self.evicted_shapes.erase(self.evicted_shapes.begin());
+    }
+
+    self.evicted_shapes.push_back(FrameShapeHash{}(self.program_order.front()));
     self.programs.erase(self.program_order.front());
     self.program_order.erase(self.program_order.begin());
   }
 
+  stats.cached_count = static_cast<u32>(self.programs.size());
   return program;
 }
 

@@ -923,6 +923,15 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
       ImGui::Text("Entities with rigidbody: %d", rigidbody_entities_count);
       const auto audio_entities_count = self.editor_scene->get_scene()->world.count<AudioSourceComponent>();
       ImGui::Text("Entities with audio: %d", audio_entities_count);
+
+      if (const auto* renderer_instance = self.editor_scene->get_scene()->get_renderer_instance()) {
+        const auto& stats = renderer_instance->program_stats;
+        ImGui::Text("Frame programs: %u cached", stats.cached_count);
+        ImGui::Text("Compiles: %u (last %.1f ms)", stats.compile_count, stats.last_compile_ms);
+        if (stats.recompile_count > 0) {
+          ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "Evicted recompiles: %u", stats.recompile_count);
+        }
+      }
     }
   }
   ImGui::End();

@@ -340,6 +340,14 @@ struct FrameShapeHash {
   auto operator()(const FrameShape& shape) const noexcept -> u64;
 };
 
+struct FrameProgramStats {
+  u32 cached_count = 0;
+  u32 compile_count = 0;
+  // compiles of a shape the cache had evicted, so more shapes alternate than it holds
+  u32 recompile_count = 0;
+  f32 last_compile_ms = 0.0f;
+};
+
 struct ShadowSlotState {
   u64 entity_id = 0;
   glm::vec3 position = {};
@@ -1196,6 +1204,8 @@ public:
     vir::ValueID output
   ) -> std::array<vir::ValueID, 4>;
 
+  FrameProgramStats program_stats = {};
+
   // read by passes and their variables, filled per frame
   FrameParams frame_params = {};
   FrameData frame_data = {};
@@ -1208,6 +1218,7 @@ private:
 
   ankerl::unordered_dense::map<FrameShape, std::unique_ptr<RecordedFrame>, FrameShapeHash> programs = {};
   std::vector<FrameShape> program_order = {};
+  ankerl::svector<u64, 8> evicted_shapes = {};
   const vir::ImageAttachment* render_target = nullptr;
 
   auto rebuild_execution_order(this RendererInstance& self) -> void;
