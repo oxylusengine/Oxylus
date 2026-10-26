@@ -50,7 +50,14 @@ packages = {
   },
   ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
   ["vulkan-headers " .. vulkan_headers_version] = { system = false },
-  ["vir 2026.10.19"] = { debug = is_mode("debug"), system = false },
+  ["vir 2026.10.19"] = {
+    debug = is_mode("debug"),
+    system = false,
+    -- vir's logging macros use __VA_OPT__, which MSVC's traditional preprocessor rejects
+    configs = {
+      cxflags = is_plat("windows") and (get_config("toolchain") or "msvc") == "msvc" and "/Zc:preprocessor" or nil,
+    },
+  },
   ["toml++ v3.4.0"] = {
     configs = {
       header_only = true,

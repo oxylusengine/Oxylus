@@ -110,4 +110,7 @@ target("Oxylus")
         "zstd",
         {public = true})
 
+    -- the package doesn't order its own libs, and GNU ld needs them after their users with the core last
+    add_linkorders("Oxylus", "rmlui_lua", "rmlui_debugger", "rmlui", {public = true})
+
 target_end()

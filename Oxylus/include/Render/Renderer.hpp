@@ -3,6 +3,7 @@
 #include <expected>
 #include <glm/ext/vector_uint2.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "Render/Fwd.hpp"
