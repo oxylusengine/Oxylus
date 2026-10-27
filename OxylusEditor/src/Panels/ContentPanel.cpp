@@ -31,7 +31,7 @@
 #include "UI/UI.hpp"
 #include "Utils/ExternalEditor.hpp"
 #ifdef OX_DOTNET
-#include "Scripting/DotNetProject.hpp"
+  #include "Scripting/DotNetProject.hpp"
 #endif
 
 namespace ox {
@@ -152,6 +152,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_S
   {FileType::Cinematic, "Cinematic"},
   {FileType::UI, "UI"},
   {FileType::CSharp, "C# Script"},
+  {FileType::Font, "Font"},
 };
 
 static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
@@ -183,13 +184,16 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
 
   {".mp3", FileType::Audio},
   {".m4a", FileType::Audio},
-  {".wav", FileType::Audio},  //
-  {".ogg", FileType::Audio},  //
+  {".wav", FileType::Audio}, //
+  {".ogg", FileType::Audio}, //
 
   {".cs", FileType::CSharp},
 
-  {".rcss", FileType::UI}, //
-  {".rml", FileType::UI}, //
+  {".rcss", FileType::UI},  //
+  {".rml", FileType::UI},   //
+
+  {".ttf", FileType::Font}, //
+  {".otf", FileType::Font}, //
 };
 
 static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
@@ -206,6 +210,7 @@ static const ankerl::unordered_dense::map<FileType, ImVec4> TYPE_COLORS = {
   {FileType::Cinematic, {0.90f, 0.45f, 0.55f, 1.00f}},
   {FileType::UI, {0.0f, 16.0f, 121.0f, 1.00f}},
   {FileType::CSharp, {0.40f, 0.30f, 0.85f, 1.00f}},
+  {FileType::Font, {0.0f, 16.0f, 121.0f, 1.00f}},
 };
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_ICON = {
@@ -224,6 +229,7 @@ static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_I
   {FileType::Cinematic, ICON_MDI_MOVIE_OPEN},
   {FileType::UI, ICON_MDI_LANGUAGE_HTML5},
   {FileType::CSharp, ICON_MDI_LANGUAGE_CSHARP},
+  {FileType::Font, ICON_MDI_FORMAT_FONT},
 };
 
 static constexpr auto file_type_bit(const FileType type) -> u32 { return 1u << static_cast<u32>(type); }

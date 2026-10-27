@@ -8,7 +8,6 @@
 
 #include "Asset/AssetImporter.hpp"
 #include "Core/App.hpp"
-#include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "UI/PayloadData.hpp"

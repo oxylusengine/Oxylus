@@ -42,7 +42,8 @@ enum class FileType {
   ParticleSystem,
   Cinematic,
   UI,
-  CSharp
+  CSharp,
+  Font
 };
 
 // Resolves what a file on disk is, including the meta-file case where a standalone `.oxasset`
