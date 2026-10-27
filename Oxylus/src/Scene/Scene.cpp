@@ -1171,16 +1171,19 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       rb.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
     });
 
+  const auto physics_alpha = [physics_tick_source] {
+    const auto* timer = physics_tick_source.try_get<flecs::Timer>();
+    return (timer && timer->timeout > 0.f) ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
+                                           : 1.0f;
+  };
+
   self.world.system<TransformComponent, const RigidBodyComponent>("physics_interpolate")
     .kind(flecs::OnUpdate)
-    .each([physics_tick_source](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
+    .each([physics_alpha](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
       if (!rb.runtime_body)
         return;
 
-      const auto* timer = physics_tick_source.try_get<flecs::Timer>();
-      const f32 alpha = (timer && timer->timeout > 0.f)
-                          ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
-                          : 1.0f;
+      const f32 alpha = physics_alpha();
 
       auto position = glm::mix(rb.previous_translation, rb.translation, alpha);
       auto rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
@@ -1208,11 +1211,34 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
       ch.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
 
+      if (ch.interpolation) {
+        return;
+      }
+
       auto local_position = ch.translation;
       auto local_rotation = ch.rotation;
       world_pose_to_local(e, local_position, local_rotation);
       tc.position = local_position;
       tc.rotation = local_rotation;
+
+      e.modified<TransformComponent>();
+    });
+
+  // declared after character_controller_update so a tick frame blends from the freshly recorded pair
+  self.world.system<TransformComponent, const CharacterControllerComponent>("character_interpolate")
+    .kind(flecs::OnUpdate)
+    .each([physics_alpha](const flecs::entity& e, TransformComponent& tc, const CharacterControllerComponent& ch) {
+      if (!ch.interpolation || !ch.character) {
+        return;
+      }
+
+      const f32 alpha = physics_alpha();
+      auto position = glm::mix(ch.previous_translation, ch.translation, alpha);
+      auto rotation = glm::slerp(ch.previous_rotation, ch.rotation, alpha);
+      world_pose_to_local(e, position, rotation);
+
+      tc.position = position;
+      tc.rotation = rotation;
 
       e.modified<TransformComponent>();
     });
@@ -3655,6 +3681,7 @@ void Scene::create_character_controller(flecs::entity entity, CharacterControlle
   // Balances the Release in physics_deinit / the OnRemove observer.
   character->AddRef();
   component.character = character;
+  component.previous_translation = component.translation = world_position;
 
   character->AddToPhysicsSystem(JPH::EActivation::Activate);
 

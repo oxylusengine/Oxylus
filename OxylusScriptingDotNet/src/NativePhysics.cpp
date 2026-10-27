@@ -370,7 +370,15 @@ static auto physics_character_command(ecs_world_t* world, u64 entity, OxCharacte
     case OxCharacterCommand::SetLinearVelocity: character->SetLinearVelocity(vector); break;
     case OxCharacterCommand::AddLinearVelocity: character->AddLinearVelocity(vector); break;
     case OxCharacterCommand::AddImpulse       : character->AddImpulse(vector); break;
-    case OxCharacterCommand::SetPosition      : character->SetPosition(vector); break;
+    case OxCharacterCommand::SetPosition      : {
+      character->SetPosition(vector);
+
+      // snaps the interpolated pose instead of sliding from the old position
+      if (auto* controller = flecs::entity(world, entity).try_get_mut<CharacterControllerComponent>()) {
+        controller->previous_translation = controller->translation = {value->x, value->y, value->z};
+      }
+      break;
+    }
   }
 
   return OxStatus::Ok;
