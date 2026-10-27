@@ -57,6 +57,8 @@ target("OxylusManaged")
     end)
 target_end()
 
+includes("SmokeGame")
+
 if has_config("tests") then
     includes("tests")
 end
