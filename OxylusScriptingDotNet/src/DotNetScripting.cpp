@@ -1,10 +1,12 @@
 #include "Scripting/DotNetScripting.hpp"
 
+#include <SDL3/SDL_filesystem.h>
 #include <algorithm>
 #include <flecs.h>
 #include <fmt/format.h>
 #include <vector>
 
+#include "Core/App.hpp"
 #include "DotNetHosts.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
@@ -13,6 +15,20 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+static auto published_scripts(const std::filesystem::path& scripts_path) -> DotNetLoadInfo {
+  const auto* base_path = SDL_GetBasePath();
+  auto path = (base_path ? std::filesystem::path(base_path) : std::filesystem::path()) / scripts_path;
+#if defined(OX_PLATFORM_WINDOWS)
+  path += ".dll";
+#elif defined(OX_PLATFORM_MACOSX)
+  path += ".dylib";
+#else
+  path += ".so";
+#endif
+
+  return {.kind = DotNetHostKind::Aot, .path = std::move(path)};
+}
+
 static auto attach_managed(const OxManagedApi& managed_api, const DotNetScripting::AttachedWorld& attached)
   -> std::expected<void, std::string> {
   ZoneScoped;
@@ -73,6 +89,10 @@ auto DotNetScripting::init(this DotNetScripting& self) -> std::expected<void, st
 
   self.scene_host = make_scene_host(self);
   Scene::set_script_host(self.scene_host.get());
+
+  if (!self.startup.has_value() && App::get() && !App::get()->get_scripts_path().empty()) {
+    self.startup = published_scripts(App::get()->get_scripts_path());
+  }
 
   if (!self.startup.has_value()) {
     return {};

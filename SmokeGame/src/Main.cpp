@@ -16,14 +16,6 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-#if defined(OX_PLATFORM_WINDOWS)
-constexpr auto SCRIPTS_LIBRARY = "SmokeGame.dll";
-#elif defined(OX_PLATFORM_MACOSX)
-constexpr auto SCRIPTS_LIBRARY = "SmokeGame.dylib";
-#else
-constexpr auto SCRIPTS_LIBRARY = "SmokeGame.so";
-#endif
-
 constexpr auto START_SCENE = "Scenes/Main.oxscene";
 constexpr auto SMOKE_TEST_FRAMES = 120;
 
@@ -231,12 +223,8 @@ auto main(int argc, char** argv) -> int {
     )
     // next to the executable whatever directory the game was started from
     .with_assets_directory(base_dir / "Assets")
+    .with_scripts("scripts/SmokeGame")
     .with(ox::DefaultModules{});
-
-  ox::App::mod<ox::DotNetScripting>().startup = ox::DotNetLoadInfo{
-    .kind = ox::DotNetHostKind::Aot,
-    .path = base_dir / "scripts" / ox::SCRIPTS_LIBRARY,
-  };
 
   const auto is_smoke_test = app.get_command_line_args().contains("--smoke-test");
   app.with<ox::SmokeGame>(is_smoke_test).run();

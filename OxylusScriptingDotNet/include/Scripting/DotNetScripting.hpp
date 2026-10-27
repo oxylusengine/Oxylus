@@ -54,7 +54,7 @@ struct SceneLoadRequestEvent {
 struct DotNetScripting {
   constexpr static auto MODULE_NAME = "DotNetScripting";
 
-  // loaded at init when set, a game points this at its published scripts, the editor loads its project later
+  // loaded at init when set, otherwise from App::with_scripts. The editor loads its project later
   option<DotNetLoadInfo> startup = nullopt;
   OxManagedApi managed_api = {};
 
