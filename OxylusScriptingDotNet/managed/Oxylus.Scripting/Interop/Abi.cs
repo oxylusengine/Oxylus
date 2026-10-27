@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 10;
+    public const uint Version = 11;
 }
 
 public enum OxStatus : int
@@ -530,6 +530,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<nint, ulong, CinematicState*, void> SceneCinematicState;
     public delegate* unmanaged<nint, bool> SceneInputFocused;
     public delegate* unmanaged<nint, AssetId*, bool> SceneUuid;
+    public delegate* unmanaged<nint, StringView, OxStatus> SceneSave;
     public delegate* unmanaged<nint, float, void> SceneSetUiDpiRatio;
     public delegate* unmanaged<nint, void> SceneClearUiDpiRatio;
     public delegate* unmanaged<AssetId*, OxStatus> SceneRequestLoad;

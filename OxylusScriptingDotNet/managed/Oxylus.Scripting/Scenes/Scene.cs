@@ -43,6 +43,20 @@ public static unsafe class Scene
             }
         }
 
+        // writes the world as the scene's editor JSON to a physical path
+        public void Save(string path)
+        {
+            var bytes = Encoding.UTF8.GetBytes(path);
+            fixed (byte* data = bytes)
+            {
+                var status = Runtime.Native.SceneSave(world.Handle, new StringView(data, bytes.Length));
+                if (status != OxStatus.Ok)
+                {
+                    throw new InvalidOperationException($"saving the scene to '{path}' failed: {status}");
+                }
+            }
+        }
+
         // pins the scene's UI to `ratio` pixels per logical pixel instead of following the window
         public void SetUiDpiRatio(float ratio) => Runtime.Native.SceneSetUiDpiRatio(world.Handle, ratio);
 

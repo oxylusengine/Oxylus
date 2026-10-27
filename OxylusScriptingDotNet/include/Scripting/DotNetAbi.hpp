@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 10u
+#define OX_DOTNET_ABI_VERSION 11u
 
 struct ecs_world_t;
 
@@ -571,6 +571,8 @@ struct OxNativeApi {
   auto (*scene_input_focused)(ecs_world_t* world) -> bool = nullptr;
   // false for a world without a scene
   auto (*scene_uuid)(ecs_world_t* world, OxAssetId* id) -> bool = nullptr;
+  // writes the scene's editor JSON to a physical path
+  auto (*scene_save)(ecs_world_t* world, OxStringView path) -> OxStatus = nullptr;
   auto (*scene_set_ui_dpi_ratio)(ecs_world_t* world, f32 ratio) -> void = nullptr;
   auto (*scene_clear_ui_dpi_ratio)(ecs_world_t* world) -> void = nullptr;
   // emits SceneLoadRequestEvent, the scene's owner does the load

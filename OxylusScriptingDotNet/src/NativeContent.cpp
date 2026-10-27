@@ -362,10 +362,13 @@ static auto scene_spawn(ecs_world_t* world, OxStringView name, u64 parent) -> u6
     return 0;
   }
 
-  // safe naming, a script spawning "Bullet" a hundred times gets a hundred entities rather than the first one back
-  auto entity = scene->create_entity(std::string(to_view(name)), true);
-  if (parent != 0 && ecs_is_alive(world, parent)) {
-    entity.child_of(flecs::entity(world, parent));
+  // safe naming, a script spawning "Bullet" a hundred times gets a hundred entities rather than the first one back.
+  // named against the parent's scope too, or a second "Bullet" under the same parent aborts in child_of
+  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent) : flecs::entity();
+  const auto requested = name.length == 0 ? std::string("entity") : std::string(to_view(name));
+  auto entity = scene->create_entity(scene->safe_entity_name(requested, parent_entity), false);
+  if (parent_entity) {
+    entity.child_of(parent_entity);
   }
 
   return entity.id();
@@ -507,6 +510,19 @@ static auto scene_uuid(ecs_world_t* world, OxAssetId* id) -> bool {
   return true;
 }
 
+static auto scene_save(ecs_world_t* world, OxStringView path) -> OxStatus {
+  const auto* scene = scene_of(world);
+  if (!scene) {
+    return OxStatus::NotFound;
+  }
+
+  if (path.length == 0) {
+    return OxStatus::InvalidArgument;
+  }
+
+  return scene->save_to_file(std::filesystem::path(to_view(path))) ? OxStatus::Ok : OxStatus::Exception;
+}
+
 static auto scene_set_ui_dpi_ratio(ecs_world_t* world, f32 ratio) -> void {
   if (const auto* scene = scene_of(world)) {
     scene->set_rml_dpi_ratio(ratio);
@@ -587,6 +603,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.scene_cinematic_state = scene_cinematic_state;
   api.scene_input_focused = scene_input_focused;
   api.scene_uuid = scene_uuid;
+  api.scene_save = scene_save;
   api.scene_set_ui_dpi_ratio = scene_set_ui_dpi_ratio;
   api.scene_clear_ui_dpi_ratio = scene_clear_ui_dpi_ratio;
   api.scene_request_load = scene_request_load;
