@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 11u
+#define OX_DOTNET_ABI_VERSION 12u
 
 struct ecs_world_t;
 
@@ -126,6 +126,12 @@ struct OxRay {
   // one bit per object layer, PhysicsLayers in Physics/PhysicsInterfaces.hpp
   u32 layer_mask = ~0_u32;
   u64 ignore_entity = 0;
+};
+
+struct OxTerrainWaypoint {
+  OxVec3 position = {};
+  f32 width = 0.0f;
+  f32 shoulder = 0.0f;
 };
 
 struct OxRayHit {
@@ -577,6 +583,10 @@ struct OxNativeApi {
   auto (*scene_clear_ui_dpi_ratio)(ecs_world_t* world) -> void = nullptr;
   // emits SceneLoadRequestEvent, the scene's owner does the load
   auto (*scene_request_load)(const OxAssetId* scene) -> OxStatus = nullptr;
+  // position.y is ignored. A count of 0 clears the track. NotFound for a world without a scene, InvalidArgument for a
+  // count of 1 or past TERRAIN_TRACK_MAX_POINTS, a non-finite value, a width <= 0, or a negative shoulder or smoothing
+  auto (*scene_set_terrain_track)(ecs_world_t* world, const OxTerrainWaypoint* waypoints, i32 count, f32 smoothing)
+    -> OxStatus = nullptr;
 
   // each writes up to `capacity` bytes of UTF-8 and returns the full length, so a short buffer can be retried
   auto (*vfs_resolve)(OxVfsDir dir, OxStringView relative_path, c8* out, u32 capacity) -> u32 = nullptr;

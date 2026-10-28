@@ -1,9 +1,11 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <flecs.h>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "Asset/AssetManager.hpp"
 #include "Asset/Model.hpp"
@@ -11,6 +13,7 @@
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "DotNetHosts.hpp"
+#include "Memory/Stack.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scripting/DotNetScripting.hpp"
@@ -554,6 +557,44 @@ static auto scene_request_load(const OxAssetId* scene) -> OxStatus {
   return App::get_event_system().emit(SceneLoadRequestEvent{.scene = uuid}) ? OxStatus::Ok : OxStatus::InvalidArgument;
 }
 
+static auto scene_set_terrain_track(ecs_world_t* world, const OxTerrainWaypoint* waypoints, i32 count, f32 smoothing)
+  -> OxStatus {
+  ZoneScoped;
+
+  auto* scene = scene_of(world);
+  if (!scene) {
+    return OxStatus::NotFound;
+  }
+
+  const auto is_count_valid = count == 0 || (count >= 2 && std::cmp_less_equal(count, TERRAIN_TRACK_MAX_POINTS));
+  if (!is_count_valid || (count > 0 && !waypoints) || !std::isfinite(smoothing) || smoothing < 0.0f) {
+    return OxStatus::InvalidArgument;
+  }
+
+  for (i32 i = 0; i < count; i++) {
+    const auto& waypoint = waypoints[i];
+    const auto is_finite = std::isfinite(waypoint.position.x) && std::isfinite(waypoint.position.z) &&
+                           std::isfinite(waypoint.width) && std::isfinite(waypoint.shoulder);
+    if (!is_finite || waypoint.width <= 0.0f || waypoint.shoulder < 0.0f) {
+      return OxStatus::InvalidArgument;
+    }
+  }
+
+  memory::ScopedStack stack;
+  auto track = stack.alloc<TerrainWaypoint>(static_cast<usize>(count));
+  for (i32 i = 0; i < count; i++) {
+    const auto& waypoint = waypoints[i];
+    track[static_cast<usize>(i)] = TerrainWaypoint{
+      .position = {waypoint.position.x, waypoint.position.z},
+      .width = waypoint.width,
+      .shoulder = waypoint.shoulder,
+    };
+  }
+
+  scene->set_terrain_track(track, smoothing);
+  return OxStatus::Ok;
+}
+
 static auto virtual_dir(OxVfsDir dir) -> const c8* {
   switch (dir) {
     case OxVfsDir::App   : return VFS::APP_DIR;
@@ -607,6 +648,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.scene_set_ui_dpi_ratio = scene_set_ui_dpi_ratio;
   api.scene_clear_ui_dpi_ratio = scene_clear_ui_dpi_ratio;
   api.scene_request_load = scene_request_load;
+  api.scene_set_terrain_track = scene_set_terrain_track;
   api.vfs_resolve = vfs_resolve;
   api.vfs_to_physical = vfs_to_physical;
   api.vfs_to_virtual = vfs_to_virtual;

@@ -1,6 +1,7 @@
 #include "Scene/Terrain.hpp"
 
 #include <cmath>
+#include <span>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
@@ -11,6 +12,7 @@
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/Samplers.hpp"
 #include "Scene/Scene.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -117,6 +119,29 @@ auto RendererInstance::bind_terrain_variables(
   program.set(variables.is_brush_active, self.frame_params.is_terrain_brush_active);
   program.set(variables.is_brush_painting, self.frame_params.is_terrain_brush_painting);
 
+  // a stroke regenerates the texels under it, which have to come out with the track still pressed in
+  auto& render_context = *self.renderer.render_context;
+  const auto track = terrain.track();
+  auto track_staging = render_context.upload_frame_buffer(
+    std::span{reinterpret_cast<const u8*>(&track), sizeof(track)},
+    "terrain track"
+  );
+  if (!track_staging) {
+    OX_LOG_ERROR("failed to stage {}", "terrain track");
+  }
+  program.set(variables.track, track_staging.value_or(vir::Buffer{}));
+  const auto points = self.frame_params.is_terrain_brush_painting
+                        ? std::span<const GPU::TerrainTrackPoint>(terrain.track_points)
+                        : std::span<const GPU::TerrainTrackPoint>();
+  auto points_staging = render_context.upload_frame_buffer(
+    std::span{reinterpret_cast<const u8*>(points.data()), points.size_bytes()},
+    "terrain track points"
+  );
+  if (!points_staging) {
+    OX_LOG_ERROR("failed to stage {}", "terrain track points");
+  }
+  program.set(variables.track_points, points_staging.value_or(vir::Buffer{}));
+
   program.set(variables.heightmap, terrain.heightmap.attachment_info());
   program.set(variables.ridgemap, terrain.ridgemap.attachment_info());
   program.set(variables.normalmap, terrain.normalmap.attachment_info());
@@ -184,7 +209,9 @@ auto RendererInstance::apply_terrain_brush(
     maps.splatmap,
     maps.patch_minmax,
     maps.height_edit,
-    maps.splat_edit
+    maps.splat_edit,
+    maps.track,
+    maps.track_points
   };
   std::tie(
     context.hit_buffer,
@@ -195,7 +222,9 @@ auto RendererInstance::apply_terrain_brush(
     maps.splatmap,
     maps.patch_minmax,
     maps.height_edit,
-    maps.splat_edit
+    maps.splat_edit,
+    maps.track,
+    maps.track_points
   ) =
     std::tuple_cat(module.set_condition(
       variables.is_brush_active,
@@ -227,7 +256,9 @@ auto RendererInstance::apply_terrain_brush(
           maps.splatmap,
           maps.patch_minmax,
           maps.height_edit,
-          maps.splat_edit
+          maps.splat_edit,
+          maps.track,
+          maps.track_points
         };
         return arm.set_condition(
           variables.is_brush_painting,
@@ -284,7 +315,9 @@ auto RendererInstance::apply_terrain_brush(
               maps.splatmap,
               maps.patch_minmax,
               maps.height_edit,
-              maps.splat_edit
+              maps.splat_edit,
+              maps.track,
+              maps.track_points
             };
           },
           [&](vir::Module&) { return traced; }

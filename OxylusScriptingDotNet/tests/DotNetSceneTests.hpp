@@ -958,6 +958,46 @@ TEST_F(DotNetSceneTest, ReadsTheScenesStateFromCSharp) {
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "scene focused False"), 1) << logs_text();
 }
 
+TEST_F(DotNetSceneTest, PressesATerrainTrackFromCSharp) {
+  scene->create_entity("Terrain").set(ox::TerrainComponent{});
+  ASSERT_TRUE(scene->terrain_entity);
+  scene->terrain_dirty = false;
+
+  behaviour_entity("Track", "SmokeGame.TerrainTrackProbe");
+  scene->runtime_start();
+
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "terrain track set"), 1) << logs_text();
+  for (const auto* what :
+       {"one waypoint", "zero width", "nan", "negative shoulder", "negative smoothing", "too many"}) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, std::string("terrain track rejected ") + what), 1) << logs_text();
+  }
+
+  ASSERT_EQ(scene->terrain_track.size(), 2);
+  EXPECT_EQ(scene->terrain_track[0].position, glm::vec2(1.0f, 2.0f));
+  EXPECT_EQ(scene->terrain_track[0].width, 6.0f);
+  EXPECT_EQ(scene->terrain_track[0].shoulder, 3.0f);
+  EXPECT_EQ(scene->terrain_track[1].position, glm::vec2(10.0f, 20.0f));
+  EXPECT_EQ(scene->terrain_track[1].width, 8.0f);
+  EXPECT_EQ(scene->terrain_track[1].shoulder, 4.0f);
+  EXPECT_EQ(scene->terrain_track_smoothing, 5.0f);
+  EXPECT_TRUE(scene->terrain_dirty);
+
+  // the bake needs a renderer this fixture doesn't have
+  scene->terrain_dirty = false;
+  scene->terrain_entity = {};
+
+  step();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "terrain track large set"), 1) << logs_text();
+  ASSERT_EQ(scene->terrain_track.size(), 200);
+  EXPECT_EQ(scene->terrain_track[199].position, glm::vec2(199.0f, 398.0f));
+  EXPECT_EQ(scene->terrain_track_smoothing, 1.0f);
+
+  step();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "terrain track cleared"), 1) << logs_text();
+  EXPECT_TRUE(scene->terrain_track.empty());
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
 TEST_F(DotNetSceneTest, ForwardsWindowResizesAndTheFrameLimit) {
   behaviour_entity("App", "SmokeGame.AppProbe");
   scene->runtime_start();

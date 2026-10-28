@@ -62,6 +62,44 @@ public static unsafe class Scene
 
         public void ClearUiDpiRatio() => Runtime.Native.SceneClearUiDpiRatio(world.Handle);
 
+        // presses a flat track into the scene's terrain along the waypoints. Widths are the flat part in metres, shoulders
+        // the blend back into the terrain on each side, and smoothing the metres along the track its height is averaged
+        // over. No waypoints clears it
+        public void SetTerrainTrack(ReadOnlySpan<TerrainWaypoint> waypoints, float smoothing)
+        {
+            const int MaxWaypoints = 1024;
+            const string Accepted = "A terrain track takes 0 or 2 to 1024 waypoints, positive finite widths, and non-negative finite shoulders and smoothing";
+            // checked before the stackalloc, which is what keeps it small
+            if (waypoints.Length > MaxWaypoints)
+            {
+                throw new ArgumentException(Accepted);
+            }
+
+            Span<TerrainWaypointNative> native = stackalloc TerrainWaypointNative[waypoints.Length];
+            for (var i = 0; i < waypoints.Length; i++)
+            {
+                native[i] = new TerrainWaypointNative { Position = waypoints[i].Position, Width = waypoints[i].Width, Shoulder = waypoints[i].Shoulder };
+            }
+
+            OxStatus status;
+            fixed (TerrainWaypointNative* data = native)
+            {
+                status = Runtime.Native.SceneSetTerrainTrack(world.Handle, data, native.Length, smoothing);
+            }
+
+            if (status == OxStatus.NotFound)
+            {
+                throw new InvalidOperationException("Only a scene's world has a terrain track");
+            }
+
+            if (status != OxStatus.Ok)
+            {
+                throw new ArgumentException(Accepted);
+            }
+        }
+
+        public void ClearTerrainTrack() => world.SetTerrainTrack(default, 0.0f);
+
         // runs `action` at the start of the scene's next update, after this frame's hooks and systems are done with
         // whatever it changes
         public void Defer(Action action)

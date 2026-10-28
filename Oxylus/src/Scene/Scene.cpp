@@ -2486,6 +2486,17 @@ auto Scene::bake_terrain(this Scene& self) -> void {
   terrain->collision_friction = c.collision_friction;
   terrain->collision_restitution = c.collision_restitution;
 
+  const auto world_min = terrain->world_min();
+  terrain->track_points.clear();
+  for (const auto& waypoint : self.terrain_track) {
+    terrain->track_points.push_back({
+      .position = waypoint.position - world_min,
+      .half_width = waypoint.width * 0.5f,
+      .shoulder = waypoint.shoulder,
+    });
+  }
+  terrain->track_smoothing = self.terrain_track_smoothing;
+
   auto& asset_man = App::mod<AssetManager>();
   const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
     if (!uuid || !asset_man.is_loaded(uuid)) {
@@ -3662,6 +3673,17 @@ auto Scene::clear_terrain_edits(this Scene& self) -> void {
 
   if (self.terrain_edits_ref) {
     App::mod<AssetManager>().set_terrain_edits(self.terrain_edits_ref, {});
+  }
+}
+
+auto Scene::set_terrain_track(this Scene& self, std::span<const TerrainWaypoint> waypoints, f32 smoothing) -> void {
+  ZoneScoped;
+  OX_CHECK_LE(waypoints.size(), static_cast<usize>(TERRAIN_TRACK_MAX_POINTS));
+
+  self.terrain_track.assign(waypoints.begin(), waypoints.end());
+  self.terrain_track_smoothing = smoothing;
+  if (self.terrain_entity) {
+    self.terrain_dirty = true;
   }
 }
 

@@ -685,6 +685,56 @@ public sealed class SceneInfoProbe : EntityBehaviour
     public override void OnUpdate(float deltaTime) => Log.Info($"scene focused {World.InputFocused}");
 }
 
+public sealed class TerrainTrackProbe : EntityBehaviour
+{
+    bool isLargeSet;
+
+    public override void OnStart()
+    {
+        World.SetTerrainTrack([new TerrainWaypoint(new Vector3(1.0f, 50.0f, 2.0f), 6.0f, 3.0f), new TerrainWaypoint(new Vector3(10.0f, 0.0f, 20.0f), 8.0f, 4.0f)], 5.0f);
+        Log.Info("terrain track set");
+
+        Rejects("one waypoint", [new TerrainWaypoint(Vector3.Zero, 6.0f, 3.0f)], 5.0f);
+        Rejects("zero width", [new TerrainWaypoint(Vector3.Zero, 6.0f, 3.0f), new TerrainWaypoint(Vector3.One, 0.0f, 3.0f)], 5.0f);
+        Rejects("nan", [new TerrainWaypoint(Vector3.Zero, 6.0f, 3.0f), new TerrainWaypoint(new Vector3(float.NaN, 0.0f, 0.0f), 6.0f, 3.0f)], 5.0f);
+        Rejects("negative shoulder", [new TerrainWaypoint(Vector3.Zero, 6.0f, 3.0f), new TerrainWaypoint(Vector3.One, 6.0f, -1.0f)], 5.0f);
+        Rejects("negative smoothing", [new TerrainWaypoint(Vector3.Zero, 6.0f, 3.0f), new TerrainWaypoint(Vector3.One, 6.0f, 3.0f)], -1.0f);
+        Rejects("too many", new TerrainWaypoint[1025], 5.0f);
+    }
+
+    public override void OnUpdate(float deltaTime)
+    {
+        if (!isLargeSet)
+        {
+            isLargeSet = true;
+            var many = new TerrainWaypoint[200];
+            for (var i = 0; i < many.Length; i++)
+            {
+                many[i] = new TerrainWaypoint(new Vector3(i, 0.0f, i * 2.0f), 4.0f, 2.0f);
+            }
+
+            World.SetTerrainTrack(many, 1.0f);
+            Log.Info("terrain track large set");
+            return;
+        }
+
+        World.ClearTerrainTrack();
+        Log.Info("terrain track cleared");
+    }
+
+    void Rejects(string what, TerrainWaypoint[] waypoints, float smoothing)
+    {
+        try
+        {
+            World.SetTerrainTrack(waypoints, smoothing);
+        }
+        catch (ArgumentException)
+        {
+            Log.Info($"terrain track rejected {what}");
+        }
+    }
+}
+
 public sealed class ParticleProbe : EntityBehaviour
 {
     public override void OnStart()

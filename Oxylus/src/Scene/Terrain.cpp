@@ -1,7 +1,9 @@
 #include "Scene/Terrain.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <span>
 #include <vir/Allocator.hpp>
 #include <vir/Module.hpp>
 #include <vir/Types.hpp>
@@ -54,17 +56,22 @@ static auto record_generate(
         {{maps.heightmap, vir::Access::ComputeRW},
          {maps.ridgemap, vir::Access::ComputeRW},
          {maps.height_edit, vir::Access::ComputeSampled},
-         {maps.region, vir::Access::ComputeRead}}
+         {maps.region, vir::Access::ComputeRead},
+         {maps.track, vir::Access::ComputeRead},
+         {maps.track_points, vir::Access::ComputeRead}}
       )
       .with_name("terrain generate")
       .bind_compute_pipeline(render_context.pipeline("terrain_generate"))
       .bind_image(0, 0, maps.heightmap)
       .bind_image(0, 1, maps.ridgemap)
       .bind_image(0, 2, maps.height_edit)
-      .bind_buffer(0, 3, maps.region);
+      .bind_buffer(0, 3, maps.region)
+      .bind_buffer(0, 4, maps.track)
+      .bind_buffer(0, 5, maps.track_points);
   push(module);
   terrain_pass.dispatch(groups_x, groups_y, 1);
-  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit, maps.region) = std::tuple_cat(terrain_pass.end_compute());
+  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit, maps.region, maps.track, maps.track_points) =
+    std::tuple_cat(terrain_pass.end_compute());
 }
 
 template <typename PushF>
@@ -465,6 +472,11 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
   };
 
   const auto region = GPU::TerrainRegion{};
+  const auto track = self.track();
+  // a buffer can't be empty, and the shader reads none of them below two points
+  const auto no_track_points = std::array{GPU::TerrainTrackPoint{}};
+  const auto track_points = self.track_points.empty() ? std::span<const GPU::TerrainTrackPoint>(no_track_points)
+                                                      : std::span<const GPU::TerrainTrackPoint>(self.track_points);
   const auto edit_clear = vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f);
 
   auto module = vir::Module{};
@@ -487,6 +499,22 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
         .name = "terrain region",
       }),
       std::span{reinterpret_cast<const u8*>(&region), sizeof(region)}
+    ),
+    .track = module.update_buffer(
+      module.transient_buffer({
+        .size = sizeof(GPU::TerrainTrack),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .name = "terrain track",
+      }),
+      std::span{reinterpret_cast<const u8*>(&track), sizeof(track)}
+    ),
+    .track_points = module.update_buffer(
+      module.transient_buffer({
+        .size = track_points.size_bytes(),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .name = "terrain track points",
+      }),
+      std::span{reinterpret_cast<const u8*>(track_points.data()), track_points.size_bytes()}
     ),
   };
 
