@@ -205,8 +205,8 @@ auto LoadingPanel::on_update(this LoadingPanel& self) -> void {
       break;
     }
     case Phase::OpeningScene: {
-      // `Editor::update` opens it on the same frame the scan clears, ahead of this panel's tick, so
-      // this is normally already satisfied on entry
+      // `Editor::update` opens it ahead of this panel's tick once the scan clears and the project's C#
+      // scripts have loaded
       if (editor.pending_start_scene.has_value()) {
         break;
       }

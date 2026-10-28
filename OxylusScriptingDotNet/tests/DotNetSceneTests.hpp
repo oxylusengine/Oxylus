@@ -568,6 +568,50 @@ TEST_F(DotNetSceneTest, SkipsLuaScriptEntriesInSceneJson) {
   EXPECT_EQ(loaded->to_json().stream.str().find(lua_uuid), std::string::npos);
 }
 
+TEST_F(DotNetSceneTest, KeepsComponentsNothingDefinesInSceneJson) {
+  // how the editor opens a scene while the C# scripts are still building
+  scripting().unload();
+  const auto json = std::string_view(
+    R"({"name":"Unbuilt","scripts":[],"entities":[{"name":"Car","tags":[],"components":[{"::SmokeGame::Spin":{"Speed":1.5,"Angle":-0.25}}],"children":[{"name":"Wheel","tags":[],"components":[],"children":[]}]}]})"
+  );
+
+  auto unbuilt = std::make_shared<ox::Scene>("Unbuilt");
+  ASSERT_TRUE(unbuilt->from_json(std::string(json)));
+  ASSERT_TRUE(unbuilt->world.lookup("Car").is_valid());
+  EXPECT_TRUE(unbuilt->world.lookup("Car::Wheel").is_valid());
+
+  const auto count_spins = [](const std::string& scene_json) {
+    auto count = 0_sz;
+    for (auto at = scene_json.find("::SmokeGame::Spin"); at != std::string::npos;
+         at = scene_json.find("::SmokeGame::Spin", at + 1)) {
+      count++;
+    }
+
+    return count;
+  };
+
+  const auto saved = unbuilt->to_json().stream.str();
+  EXPECT_EQ(count_spins(saved), 1_sz);
+  EXPECT_NE(saved.find("\"Speed\": 1.5"), std::string::npos);
+  EXPECT_NE(saved.find("\"Angle\": -0.25"), std::string::npos);
+
+  const auto loaded = scripting().load(smoke_game(), capturing_native_api());
+  ASSERT_TRUE(loaded.has_value()) << loaded.error();
+  EXPECT_EQ(count_spins(unbuilt->to_json().stream.str()), 1_sz);
+
+  // Play copies the scene through its JSON, which resolves the component now that the scripts define it
+  const auto copy = ox::Scene::copy(unbuilt);
+  const auto car = copy->world.lookup("Car");
+  ASSERT_TRUE(car.is_valid());
+  const auto spin_id = ecs_lookup(copy->world.c_ptr(), "SmokeGame.Spin");
+  ASSERT_NE(spin_id, 0);
+  const auto* spin = static_cast<const Spin*>(ecs_get_id(copy->world.c_ptr(), car, spin_id));
+  ASSERT_NE(spin, nullptr);
+  EXPECT_FLOAT_EQ(spin->speed, 1.5f);
+  EXPECT_FLOAT_EQ(spin->angle, -0.25f);
+  EXPECT_EQ(count_spins(copy->to_json().stream.str()), 1_sz);
+}
+
 TEST_F(DotNetSceneTest, RecreatesScriptsAndBehavioursOnReload) {
   ASSERT_TRUE(scene->add_script_type("SmokeGame.LevelLogic").has_value());
   auto spun = behaviour_entity("Spun", "SmokeGame.Spinner");

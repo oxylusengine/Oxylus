@@ -57,6 +57,47 @@
 namespace ox {
 static SceneScriptHost* scene_script_host = nullptr;
 
+struct UnresolvedComponent {
+  std::string name = {};
+  std::string json = {};
+};
+
+// components a scene names that nothing defines yet, a C# one while the scripts don't load. Kept as written so
+// saving the scene writes them back instead of dropping them
+struct UnresolvedComponents {
+  std::vector<UnresolvedComponent> components = {};
+};
+
+// a token's raw JSON runs on to the next token, whitespace included
+static auto trim_token(std::string_view token) -> std::string_view {
+  const auto end = token.find_last_not_of(" \t\r\n");
+  return end == std::string_view::npos ? std::string_view{} : token.substr(0, end + 1);
+}
+
+// rewritten through the writer rather than pasted, so a kept component is formatted like the rest of the scene
+static auto copy_json_value(JsonWriter& writer, simdjson::ondemand::value value) -> void {
+  switch (value.type().value_unsafe()) {
+    case simdjson::ondemand::json_type::object: {
+      writer.begin_obj();
+      for (auto field : value.get_object()) {
+        writer.key(field.escaped_key().value_unsafe());
+        copy_json_value(writer, field.value().value_unsafe());
+      }
+      writer.end_obj();
+      break;
+    }
+    case simdjson::ondemand::json_type::array: {
+      writer.begin_array();
+      for (auto element : value.get_array()) {
+        copy_json_value(writer, element.value_unsafe());
+      }
+      writer.end_array();
+      break;
+    }
+    default: writer.new_value(trim_token(value.raw_json_token())); break;
+  }
+}
+
 // a cooked scene is a pack holding its JSON, anything else is the JSON the editor saved
 static auto read_scene_json(const std::filesystem::path& path) -> option<std::string> {
   ZoneScoped;
@@ -3938,7 +3979,7 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   writer["tags"].begin_array();
   auto components = std::vector<flecs::entity>{};
   e.each([&](flecs::id component_id) {
-    if (!component_id.is_entity()) {
+    if (!component_id.is_entity() || component_id == world.id<UnresolvedComponents>()) {
       return;
     }
 
@@ -3962,6 +4003,28 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
     serializer.serialize(component, component_data);
     writer.end_obj();
     writer.end_obj();
+  }
+
+  if (const auto* unresolved = e.try_get<UnresolvedComponents>()) {
+    for (const auto& component : unresolved->components) {
+      // defined and set on the entity since, which is newer than what the file said
+      if (const auto component_id = world.lookup(component.name.c_str()); component_id && e.has(component_id)) {
+        continue;
+      }
+
+      auto content = simdjson::padded_string(component.json);
+      auto parser = simdjson::ondemand::parser{};
+      auto doc = parser.iterate(content);
+      auto value = doc.get_value();
+      if (value.error()) {
+        continue;
+      }
+
+      writer.begin_obj();
+      writer.key(component.name);
+      copy_json_value(writer, value.value_unsafe());
+      writer.end_obj();
+    }
   }
   writer.end_array();
 
@@ -4024,13 +4087,21 @@ auto Scene::json_to_entity(
 
       const auto* component_name = stack.null_terminate_cstr(component_name_json.value_unsafe());
       auto component_id = world.lookup(component_name);
-      if (!component_id) {
-        OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
-        return flecs::entity::null();
-      }
+      if (!component_id || !self.component_db.is_component_known(component_id)) {
+        auto raw_component = field_json.value().raw_json();
+        if (raw_component.error()) {
+          OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+          return flecs::entity::null();
+        }
 
-      if (!self.component_db.is_component_known(component_id)) {
-        OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+        OX_LOG_WARN(
+          "Entity '{}' has component '{}' that nothing defines, it's kept as written",
+          e.name().c_str(),
+          component_name
+        );
+        e.ensure<UnresolvedComponents>().components.push_back(
+          {.name = std::string(component_name), .json = std::string(raw_component.value_unsafe())}
+        );
         continue;
       }
 

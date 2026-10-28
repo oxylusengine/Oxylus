@@ -42,6 +42,8 @@ public:
   auto prepare_for_play(this CSharpScripts& self) -> bool;
   auto request_build(this CSharpScripts& self) -> void;
   auto is_building(this const CSharpScripts& self) -> bool;
+  // until a build is loaded or has failed, a scene naming C# components would drop the entities holding them
+  auto is_loading(this const CSharpScripts& self) -> bool;
 
 private:
   std::filesystem::path csproj_ = {};

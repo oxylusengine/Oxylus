@@ -227,6 +227,10 @@ auto CSharpScripts::request_build(this CSharpScripts& self) -> void {
 
 auto CSharpScripts::is_building(this const CSharpScripts& self) -> bool { return self.build_.valid(); }
 
+auto CSharpScripts::is_loading(this const CSharpScripts& self) -> bool {
+  return self.is_open() && (self.build_.valid() || self.is_reload_pending_);
+}
+
 auto CSharpScripts::start_build(this CSharpScripts& self) -> void {
   ZoneScoped;
 
