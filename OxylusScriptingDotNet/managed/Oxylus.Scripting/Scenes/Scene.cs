@@ -138,6 +138,21 @@ public static unsafe class Scene
 
         public void ClearTerrainStamps() => world.SetTerrainStamps(default);
 
+        // scales the scene's time, physics included. 0 pauses it while the scene's hooks keep running on the app's clock
+        public void SetTimeScale(float scale)
+        {
+            var status = Runtime.Native.SceneSetTimeScale(world.Handle, scale);
+            if (status == OxStatus.NotFound)
+            {
+                throw new InvalidOperationException("Only a scene's world has a time scale");
+            }
+
+            if (status != OxStatus.Ok)
+            {
+                throw new ArgumentException($"A time scale is finite and not negative, not {scale}");
+            }
+        }
+
         // runs `action` at the start of the scene's next update, after this frame's hooks and systems are done with
         // whatever it changes
         public void Defer(Action action)

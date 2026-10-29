@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 13u
+#define OX_DOTNET_ABI_VERSION 14u
 
 struct ecs_world_t;
 
@@ -597,6 +597,9 @@ struct OxNativeApi {
   // the y components are ignored. A count of 0 clears the stamps. NotFound for a world without a scene, InvalidArgument
   // for a count past TERRAIN_STAMP_MAX, a non-finite value, or a radius <= 0. A negative height presses a trench
   auto (*scene_set_terrain_stamps)(ecs_world_t* world, const OxTerrainStamp* stamps, i32 count) -> OxStatus = nullptr;
+  // scales the scene's world time, physics included. 0 pauses it, while the scene's hooks keep the app's frame time so
+  // menus still run. NotFound for a world without a scene, InvalidArgument for a negative or non-finite scale
+  auto (*scene_set_time_scale)(ecs_world_t* world, f32 scale) -> OxStatus = nullptr;
 
   // each writes up to `capacity` bytes of UTF-8 and returns the full length, so a short buffer can be retried
   auto (*vfs_resolve)(OxVfsDir dir, OxStringView relative_path, c8* out, u32 capacity) -> u32 = nullptr;

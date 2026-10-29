@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 13;
+    public const uint Version = 14;
 }
 
 public enum OxStatus : int
@@ -553,6 +553,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<AssetId*, OxStatus> SceneRequestLoad;
     public delegate* unmanaged<nint, TerrainWaypointNative*, int, float, OxStatus> SceneSetTerrainTrack;
     public delegate* unmanaged<nint, TerrainStampNative*, int, OxStatus> SceneSetTerrainStamps;
+    public delegate* unmanaged<nint, float, OxStatus> SceneSetTimeScale;
 
     public delegate* unmanaged<VfsDir, StringView, byte*, uint, uint> VfsResolve;
     public delegate* unmanaged<StringView, byte*, uint, uint> VfsToPhysical;

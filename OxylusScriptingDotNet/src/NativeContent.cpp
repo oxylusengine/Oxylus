@@ -633,6 +633,21 @@ static auto scene_set_terrain_stamps(ecs_world_t* world, const OxTerrainStamp* s
   return OxStatus::Ok;
 }
 
+static auto scene_set_time_scale(ecs_world_t* world, f32 scale) -> OxStatus {
+  ZoneScoped;
+
+  if (!scene_of(world)) {
+    return OxStatus::NotFound;
+  }
+
+  if (!std::isfinite(scale) || scale < 0.0f) {
+    return OxStatus::InvalidArgument;
+  }
+
+  ecs_set_time_scale(world, scale);
+  return OxStatus::Ok;
+}
+
 static auto virtual_dir(OxVfsDir dir) -> const c8* {
   switch (dir) {
     case OxVfsDir::App   : return VFS::APP_DIR;
@@ -688,6 +703,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.scene_request_load = scene_request_load;
   api.scene_set_terrain_track = scene_set_terrain_track;
   api.scene_set_terrain_stamps = scene_set_terrain_stamps;
+  api.scene_set_time_scale = scene_set_time_scale;
   api.vfs_resolve = vfs_resolve;
   api.vfs_to_physical = vfs_to_physical;
   api.vfs_to_virtual = vfs_to_virtual;
