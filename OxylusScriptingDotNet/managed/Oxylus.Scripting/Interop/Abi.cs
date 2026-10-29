@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 12;
+    public const uint Version = 13;
 }
 
 public enum OxStatus : int
@@ -168,6 +168,15 @@ public struct TerrainWaypointNative
     public Vector3 Position;
     public float Width;
     public float Shoulder;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct TerrainStampNative
+{
+    public Vector3 Start;
+    public Vector3 End;
+    public float Radius;
+    public float Height;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -543,6 +552,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<nint, void> SceneClearUiDpiRatio;
     public delegate* unmanaged<AssetId*, OxStatus> SceneRequestLoad;
     public delegate* unmanaged<nint, TerrainWaypointNative*, int, float, OxStatus> SceneSetTerrainTrack;
+    public delegate* unmanaged<nint, TerrainStampNative*, int, OxStatus> SceneSetTerrainStamps;
 
     public delegate* unmanaged<VfsDir, StringView, byte*, uint, uint> VfsResolve;
     public delegate* unmanaged<StringView, byte*, uint, uint> VfsToPhysical;

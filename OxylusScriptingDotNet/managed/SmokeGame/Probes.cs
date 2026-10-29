@@ -735,6 +735,38 @@ public sealed class TerrainTrackProbe : EntityBehaviour
     }
 }
 
+public sealed class TerrainStampProbe : EntityBehaviour
+{
+    public override void OnStart()
+    {
+        World.SetTerrainStamps([new TerrainStamp(new Vector3(1.0f, 50.0f, 2.0f), new Vector3(10.0f, 60.0f, 20.0f), 6.0f, 12.0f), new TerrainStamp(Vector3.Zero, Vector3.One, 3.0f, -4.0f)]);
+        Log.Info("terrain stamps set");
+
+        Rejects("zero radius", [new TerrainStamp(Vector3.Zero, Vector3.One, 0.0f, 1.0f)]);
+        Rejects("nan", [new TerrainStamp(Vector3.Zero, new Vector3(float.NaN, 0.0f, 0.0f), 3.0f, 1.0f)]);
+        Rejects("infinite height", [new TerrainStamp(Vector3.Zero, Vector3.One, 3.0f, float.PositiveInfinity)]);
+        Rejects("too many", new TerrainStamp[65]);
+    }
+
+    public override void OnUpdate(float deltaTime)
+    {
+        World.ClearTerrainStamps();
+        Log.Info("terrain stamps cleared");
+    }
+
+    void Rejects(string what, TerrainStamp[] stamps)
+    {
+        try
+        {
+            World.SetTerrainStamps(stamps);
+        }
+        catch (ArgumentException)
+        {
+            Log.Info($"terrain stamps rejected {what}");
+        }
+    }
+}
+
 public sealed class ParticleProbe : EntityBehaviour
 {
     public override void OnStart()

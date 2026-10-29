@@ -998,6 +998,37 @@ TEST_F(DotNetSceneTest, PressesATerrainTrackFromCSharp) {
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
 }
 
+TEST_F(DotNetSceneTest, PressesTerrainStampsFromCSharp) {
+  scene->create_entity("Terrain").set(ox::TerrainComponent{});
+  ASSERT_TRUE(scene->terrain_entity);
+  scene->terrain_dirty = false;
+
+  behaviour_entity("Stamps", "SmokeGame.TerrainStampProbe");
+  scene->runtime_start();
+
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "terrain stamps set"), 1) << logs_text();
+  for (const auto* what : {"zero radius", "nan", "infinite height", "too many"}) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, std::string("terrain stamps rejected ") + what), 1) << logs_text();
+  }
+
+  ASSERT_EQ(scene->terrain_stamps.size(), 2);
+  EXPECT_EQ(scene->terrain_stamps[0].start, glm::vec2(1.0f, 2.0f));
+  EXPECT_EQ(scene->terrain_stamps[0].end, glm::vec2(10.0f, 20.0f));
+  EXPECT_EQ(scene->terrain_stamps[0].radius, 6.0f);
+  EXPECT_EQ(scene->terrain_stamps[0].height, 12.0f);
+  EXPECT_EQ(scene->terrain_stamps[1].height, -4.0f);
+  EXPECT_TRUE(scene->terrain_dirty);
+
+  // the bake needs a renderer this fixture doesn't have
+  scene->terrain_dirty = false;
+  scene->terrain_entity = {};
+
+  step();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "terrain stamps cleared"), 1) << logs_text();
+  EXPECT_TRUE(scene->terrain_stamps.empty());
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
 TEST_F(DotNetSceneTest, ForwardsWindowResizesAndTheFrameLimit) {
   behaviour_entity("App", "SmokeGame.AppProbe");
   scene->runtime_start();

@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 12u
+#define OX_DOTNET_ABI_VERSION 13u
 
 struct ecs_world_t;
 
@@ -132,6 +132,13 @@ struct OxTerrainWaypoint {
   OxVec3 position = {};
   f32 width = 0.0f;
   f32 shoulder = 0.0f;
+};
+
+struct OxTerrainStamp {
+  OxVec3 start = {};
+  OxVec3 end = {};
+  f32 radius = 0.0f;
+  f32 height = 0.0f;
 };
 
 struct OxRayHit {
@@ -587,6 +594,9 @@ struct OxNativeApi {
   // count of 1 or past TERRAIN_TRACK_MAX_POINTS, a non-finite value, a width <= 0, or a negative shoulder or smoothing
   auto (*scene_set_terrain_track)(ecs_world_t* world, const OxTerrainWaypoint* waypoints, i32 count, f32 smoothing)
     -> OxStatus = nullptr;
+  // the y components are ignored. A count of 0 clears the stamps. NotFound for a world without a scene, InvalidArgument
+  // for a count past TERRAIN_STAMP_MAX, a non-finite value, or a radius <= 0. A negative height presses a trench
+  auto (*scene_set_terrain_stamps)(ecs_world_t* world, const OxTerrainStamp* stamps, i32 count) -> OxStatus = nullptr;
 
   // each writes up to `capacity` bytes of UTF-8 and returns the full length, so a short buffer can be retried
   auto (*vfs_resolve)(OxVfsDir dir, OxStringView relative_path, c8* out, u32 capacity) -> u32 = nullptr;

@@ -453,6 +453,8 @@ struct VehicleWheelComponent {
 
   f32 radius = 0.5f;
   f32 width = 0.3f;
+  // scales the tyre's friction, read every physics step so it can change mid drive
+  f32 grip = 1.0f;
 
   f32 suspension_min_length = 0.3f;
   f32 suspension_max_length = 0.5f;

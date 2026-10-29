@@ -100,6 +100,44 @@ public static unsafe class Scene
 
         public void ClearTerrainTrack() => world.SetTerrainTrack(default, 0.0f);
 
+        // presses capsule-shaped ridges (positive height) or trenches (negative) into the scene's terrain, from Start to
+        // End in world x and z. Height is in metres at the centre and falls to nothing at Radius. Stamps add up, and no
+        // stamps clears them
+        public void SetTerrainStamps(ReadOnlySpan<TerrainStamp> stamps)
+        {
+            const int MaxStamps = 64;
+            const string Accepted = "Terrain stamps take 0 to 64 entries with finite values and a positive radius";
+            // checked before the stackalloc, which is what keeps it small
+            if (stamps.Length > MaxStamps)
+            {
+                throw new ArgumentException(Accepted);
+            }
+
+            Span<TerrainStampNative> native = stackalloc TerrainStampNative[stamps.Length];
+            for (var i = 0; i < stamps.Length; i++)
+            {
+                native[i] = new TerrainStampNative { Start = stamps[i].Start, End = stamps[i].End, Radius = stamps[i].Radius, Height = stamps[i].Height };
+            }
+
+            OxStatus status;
+            fixed (TerrainStampNative* data = native)
+            {
+                status = Runtime.Native.SceneSetTerrainStamps(world.Handle, data, native.Length);
+            }
+
+            if (status == OxStatus.NotFound)
+            {
+                throw new InvalidOperationException("Only a scene's world has terrain stamps");
+            }
+
+            if (status != OxStatus.Ok)
+            {
+                throw new ArgumentException(Accepted);
+            }
+        }
+
+        public void ClearTerrainStamps() => world.SetTerrainStamps(default);
+
         // runs `action` at the start of the scene's next update, after this frame's hooks and systems are done with
         // whatever it changes
         public void Defer(Action action)

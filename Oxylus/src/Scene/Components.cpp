@@ -302,6 +302,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::attachment,
       &C::radius,
       &C::width,
+      &C::grip,
       &C::suspension_min_length,
       &C::suspension_max_length,
       &C::suspension_frequency,

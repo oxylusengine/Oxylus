@@ -58,7 +58,8 @@ static auto record_generate(
          {maps.height_edit, vir::Access::ComputeSampled},
          {maps.region, vir::Access::ComputeRead},
          {maps.track, vir::Access::ComputeRead},
-         {maps.track_points, vir::Access::ComputeRead}}
+         {maps.track_points, vir::Access::ComputeRead},
+         {maps.stamps, vir::Access::ComputeRead}}
       )
       .with_name("terrain generate")
       .bind_compute_pipeline(render_context.pipeline("terrain_generate"))
@@ -67,10 +68,11 @@ static auto record_generate(
       .bind_image(0, 2, maps.height_edit)
       .bind_buffer(0, 3, maps.region)
       .bind_buffer(0, 4, maps.track)
-      .bind_buffer(0, 5, maps.track_points);
+      .bind_buffer(0, 5, maps.track_points)
+      .bind_buffer(0, 6, maps.stamps);
   push(module);
   terrain_pass.dispatch(groups_x, groups_y, 1);
-  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit, maps.region, maps.track, maps.track_points) =
+  std::tie(maps.heightmap, maps.ridgemap, maps.height_edit, maps.region, maps.track, maps.track_points, maps.stamps) =
     std::tuple_cat(terrain_pass.end_compute());
 }
 
@@ -477,6 +479,9 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
   const auto no_track_points = std::array{GPU::TerrainTrackPoint{}};
   const auto track_points = self.track_points.empty() ? std::span<const GPU::TerrainTrackPoint>(no_track_points)
                                                       : std::span<const GPU::TerrainTrackPoint>(self.track_points);
+  const auto no_stamps = std::array{GPU::TerrainStamp{}};
+  const auto stamps = self.stamps.empty() ? std::span<const GPU::TerrainStamp>(no_stamps)
+                                          : std::span<const GPU::TerrainStamp>(self.stamps);
   const auto edit_clear = vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f);
 
   auto module = vir::Module{};
@@ -515,6 +520,14 @@ auto Terrain::bake(this Terrain& self, RenderContext& render_context) -> void {
         .name = "terrain track points",
       }),
       std::span{reinterpret_cast<const u8*>(track_points.data()), track_points.size_bytes()}
+    ),
+    .stamps = module.update_buffer(
+      module.transient_buffer({
+        .size = stamps.size_bytes(),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .name = "terrain stamps",
+      }),
+      std::span{reinterpret_cast<const u8*>(stamps.data()), stamps.size_bytes()}
     ),
   };
 

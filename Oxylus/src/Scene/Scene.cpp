@@ -31,6 +31,7 @@
 #include <cstring>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <memory>
 #include <ranges>
 #include <simdjson.h>
 
@@ -1111,7 +1112,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<VehicleComponent>("vehicle_input")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
-    .each([&self](VehicleComponent& vehicle) {
+    .each([&self](flecs::entity entity, VehicleComponent& vehicle) {
       if (!vehicle.runtime_constraint)
         return;
 
@@ -1119,6 +1120,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto* controller = static_cast<JPH::WheeledVehicleController*>(constraint->GetController());
       controller
         ->SetDriverInput(vehicle.input_forward, vehicle.input_right, vehicle.input_brake, vehicle.input_hand_brake);
+
+      if (auto* grip = reinterpret_cast<std::vector<f32>*>(constraint->GetUserData())) {
+        entity.children([grip](flecs::entity child) {
+          const auto* wheel = child.try_get<VehicleWheelComponent>();
+          if (wheel && wheel->runtime_wheel_index < grip->size()) {
+            (*grip)[wheel->runtime_wheel_index] = glm::max(0.0f, wheel->grip);
+          }
+        });
+      }
 
       // jolt puts the body to sleep on its own and a sleeping chassis ignores driver input, braking
       // alone leaves it asleep so parked cars on the handbrake stay cheap
@@ -2497,6 +2507,17 @@ auto Scene::bake_terrain(this Scene& self) -> void {
   }
   terrain->track_smoothing = self.terrain_track_smoothing;
 
+  const auto height_scale = terrain->height_scale();
+  terrain->stamps.clear();
+  for (const auto& stamp : self.terrain_stamps) {
+    terrain->stamps.push_back({
+      .start = stamp.start - world_min,
+      .end = stamp.end - world_min,
+      .radius = stamp.radius,
+      .height = height_scale > 0.0f ? stamp.height / height_scale : 0.0f,
+    });
+  }
+
   auto& asset_man = App::mod<AssetManager>();
   const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
     if (!uuid || !asset_man.is_loaded(uuid)) {
@@ -3687,6 +3708,16 @@ auto Scene::set_terrain_track(this Scene& self, std::span<const TerrainWaypoint>
   }
 }
 
+auto Scene::set_terrain_stamps(this Scene& self, std::span<const TerrainStampDesc> stamps) -> void {
+  ZoneScoped;
+  OX_CHECK_LE(stamps.size(), static_cast<usize>(TERRAIN_STAMP_MAX));
+
+  self.terrain_stamps.assign(stamps.begin(), stamps.end());
+  if (self.terrain_entity) {
+    self.terrain_dirty = true;
+  }
+}
+
 auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
   ZoneScoped;
 
@@ -3877,6 +3908,31 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
 
   auto* body = static_cast<JPH::Body*>(rb->runtime_body);
   auto* constraint = new JPH::VehicleConstraint(*body, settings);
+
+  // the controller reads this during the physics step and vehicle_input rewrites it on the main thread before each
+  // step, the two never overlap. The callback owns it, so it lives exactly as long as the constraint
+  auto grip = std::make_shared<std::vector<f32>>(wheel_entities.size(), 1.0f);
+  for (auto wheel_index = 0_sz; wheel_index < wheel_entities.size(); wheel_index++) {
+    (*grip)[wheel_index] = glm::max(0.0f, wheel_entities[wheel_index].get<VehicleWheelComponent>().grip);
+  }
+
+  constraint->SetUserData(reinterpret_cast<u64>(grip.get()));
+  static_cast<JPH::WheeledVehicleController*>(constraint->GetController())
+    ->SetTireMaxImpulseCallback([grip](
+                                  u32 wheel_index,
+                                  f32& longitudinal_impulse,
+                                  f32& lateral_impulse,
+                                  f32 suspension_impulse,
+                                  f32 longitudinal_friction,
+                                  f32 lateral_friction,
+                                  f32,
+                                  f32,
+                                  f32
+                                ) {
+      const auto scale = wheel_index < grip->size() ? (*grip)[wheel_index] : 1.0f;
+      longitudinal_impulse = longitudinal_friction * suspension_impulse * scale;
+      lateral_impulse = lateral_friction * suspension_impulse * scale;
+    });
 
   switch (component.collision_mode) {
     case VehicleComponent::CollisionMode::Ray:

@@ -141,6 +141,16 @@ auto RendererInstance::bind_terrain_variables(
     OX_LOG_ERROR("failed to stage {}", "terrain track points");
   }
   program.set(variables.track_points, points_staging.value_or(vir::Buffer{}));
+  const auto stamps = self.frame_params.is_terrain_brush_painting ? std::span<const GPU::TerrainStamp>(terrain.stamps)
+                                                                  : std::span<const GPU::TerrainStamp>();
+  auto stamps_staging = render_context.upload_frame_buffer(
+    std::span{reinterpret_cast<const u8*>(stamps.data()), stamps.size_bytes()},
+    "terrain stamps"
+  );
+  if (!stamps_staging) {
+    OX_LOG_ERROR("failed to stage {}", "terrain stamps");
+  }
+  program.set(variables.stamps, stamps_staging.value_or(vir::Buffer{}));
 
   program.set(variables.heightmap, terrain.heightmap.attachment_info());
   program.set(variables.ridgemap, terrain.ridgemap.attachment_info());
@@ -211,7 +221,8 @@ auto RendererInstance::apply_terrain_brush(
     maps.height_edit,
     maps.splat_edit,
     maps.track,
-    maps.track_points
+    maps.track_points,
+    maps.stamps
   };
   std::tie(
     context.hit_buffer,
@@ -224,7 +235,8 @@ auto RendererInstance::apply_terrain_brush(
     maps.height_edit,
     maps.splat_edit,
     maps.track,
-    maps.track_points
+    maps.track_points,
+    maps.stamps
   ) =
     std::tuple_cat(module.set_condition(
       variables.is_brush_active,
@@ -258,7 +270,8 @@ auto RendererInstance::apply_terrain_brush(
           maps.height_edit,
           maps.splat_edit,
           maps.track,
-          maps.track_points
+          maps.track_points,
+          maps.stamps
         };
         return arm.set_condition(
           variables.is_brush_painting,
@@ -317,7 +330,8 @@ auto RendererInstance::apply_terrain_brush(
               maps.height_edit,
               maps.splat_edit,
               maps.track,
-              maps.track_points
+              maps.track_points,
+              maps.stamps
             };
           },
           [&](vir::Module&) { return traced; }

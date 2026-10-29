@@ -231,6 +231,7 @@ public:
   // runtime state a script sets, never saved with the scene
   std::vector<TerrainWaypoint> terrain_track = {};
   f32 terrain_track_smoothing = 0.0f;
+  std::vector<TerrainStampDesc> terrain_stamps = {};
 
   bool meshes_dirty = false;
   u32 gpu_mesh_instance_count = 0;
@@ -381,6 +382,7 @@ public:
   auto clear_terrain_edits(this Scene& self) -> void;
   // rebakes the terrain with the track pressed in, an empty track takes it back out
   auto set_terrain_track(this Scene& self, std::span<const TerrainWaypoint> waypoints, f32 smoothing) -> void;
+  auto set_terrain_stamps(this Scene& self, std::span<const TerrainStampDesc> stamps) -> void;
 
   // Needs the chassis rigidbody to exist already, so it runs after create_rigidbody. Wheels are read
   // from child entities carrying VehicleWheelComponent, in hierarchy order.

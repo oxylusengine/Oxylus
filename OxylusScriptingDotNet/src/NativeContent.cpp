@@ -595,6 +595,44 @@ static auto scene_set_terrain_track(ecs_world_t* world, const OxTerrainWaypoint*
   return OxStatus::Ok;
 }
 
+static auto scene_set_terrain_stamps(ecs_world_t* world, const OxTerrainStamp* stamps, i32 count) -> OxStatus {
+  ZoneScoped;
+
+  auto* scene = scene_of(world);
+  if (!scene) {
+    return OxStatus::NotFound;
+  }
+
+  const auto is_count_valid = count >= 0 && std::cmp_less_equal(count, TERRAIN_STAMP_MAX);
+  if (!is_count_valid || (count > 0 && !stamps)) {
+    return OxStatus::InvalidArgument;
+  }
+
+  for (i32 i = 0; i < count; i++) {
+    const auto& stamp = stamps[i];
+    const auto is_finite = std::isfinite(stamp.start.x) && std::isfinite(stamp.start.z) && std::isfinite(stamp.end.x) &&
+                           std::isfinite(stamp.end.z) && std::isfinite(stamp.radius) && std::isfinite(stamp.height);
+    if (!is_finite || stamp.radius <= 0.0f) {
+      return OxStatus::InvalidArgument;
+    }
+  }
+
+  memory::ScopedStack stack;
+  auto descs = stack.alloc<TerrainStampDesc>(static_cast<usize>(count));
+  for (i32 i = 0; i < count; i++) {
+    const auto& stamp = stamps[i];
+    descs[static_cast<usize>(i)] = TerrainStampDesc{
+      .start = {stamp.start.x, stamp.start.z},
+      .end = {stamp.end.x, stamp.end.z},
+      .radius = stamp.radius,
+      .height = stamp.height,
+    };
+  }
+
+  scene->set_terrain_stamps(descs);
+  return OxStatus::Ok;
+}
+
 static auto virtual_dir(OxVfsDir dir) -> const c8* {
   switch (dir) {
     case OxVfsDir::App   : return VFS::APP_DIR;
@@ -649,6 +687,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.scene_clear_ui_dpi_ratio = scene_clear_ui_dpi_ratio;
   api.scene_request_load = scene_request_load;
   api.scene_set_terrain_track = scene_set_terrain_track;
+  api.scene_set_terrain_stamps = scene_set_terrain_stamps;
   api.vfs_resolve = vfs_resolve;
   api.vfs_to_physical = vfs_to_physical;
   api.vfs_to_virtual = vfs_to_virtual;

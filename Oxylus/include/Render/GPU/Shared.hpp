@@ -641,6 +641,15 @@ struct TerrainTrack {
   // metres along the track, either side of the nearest point, that the track's height is averaged over
   f32 smoothing = 0.0f;
   f32x2 world_size = {};
+  u32 stamp_count = 0;
+};
+
+// metres from the terrain's minimum corner, height in normalized heightmap units
+struct TerrainStamp {
+  f32x2 start = {};
+  f32x2 end = {};
+  f32 radius = 0.0f;
+  f32 height = 0.0f;
 };
 
 // metres from the terrain's minimum corner
