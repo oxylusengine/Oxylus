@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- a game ships as one NativeAOT shared library, and setting it here also turns on the AOT analyzers for
+         every build, so code that would break the shipped game fails in the editor instead -->
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Oxylus.Scripting/Oxylus.Scripting.csproj" />
+    <ProjectReference
+      Include="../Oxylus.Scripting.Generators/Oxylus.Scripting.Generators.csproj"
+      OutputItemType="Analyzer"
+      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

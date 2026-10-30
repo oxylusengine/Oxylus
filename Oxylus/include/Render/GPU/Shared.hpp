@@ -636,6 +636,29 @@ struct TerrainRegion {
   u32x2 patch_origin = {};
 };
 
+struct TerrainTrack {
+  u32 point_count = 0;
+  // metres along the track, either side of the nearest point, that the track's height is averaged over
+  f32 smoothing = 0.0f;
+  f32x2 world_size = {};
+  u32 stamp_count = 0;
+};
+
+// metres from the terrain's minimum corner, height in normalized heightmap units
+struct TerrainStamp {
+  f32x2 start = {};
+  f32x2 end = {};
+  f32 radius = 0.0f;
+  f32 height = 0.0f;
+};
+
+// metres from the terrain's minimum corner
+struct TerrainTrackPoint {
+  f32x2 position = {};
+  f32 half_width = 0.0f;
+  f32 shoulder = 0.0f;
+};
+
 enum class TerrainBrushMode : u32 {
   Raise = 0,
   Smooth,

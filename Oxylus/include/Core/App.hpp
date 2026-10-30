@@ -42,6 +42,9 @@ public:
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
   auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
+  // the game's C# scripts published with NativeAOT, relative to the executable and without the platform's library
+  // extension. DotNetScripting loads them at init
+  auto with_scripts(this App& self, const std::filesystem::path& path) -> App&;
 
   // Sets the number of worker threads for the JobManager, overriding the default hardware-based auto-detection.
   auto with_workers(this App& self, const u32 count) -> App&;
@@ -88,8 +91,10 @@ public:
   }
 
   auto get_command_line_args(this const App& self) -> const AppCommandLineArgs&;
+  auto get_scripts_path(this const App& self) -> const std::filesystem::path&;
 
   static auto get_window() -> const Window&;
+  static auto has_window() -> bool { return instance_ && instance_->window.has_value(); }
   static auto get_rendercontext() -> RenderContext&;
   static auto get_ui_scale() -> f32;
   static auto get_timestep() -> const Timestep&;
@@ -107,6 +112,7 @@ private:
   std::string name = "Oxylus App";
   std::filesystem::path assets_path = "Assets";
   std::filesystem::path working_directory = {};
+  std::filesystem::path scripts_path = {};
   AppCommandLineArgs command_line_args = {};
   option<WindowInfo> window_info = nullopt;
 

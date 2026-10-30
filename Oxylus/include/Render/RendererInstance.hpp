@@ -740,6 +740,9 @@ struct TerrainVariables {
   vir::ValueID patch_minmax = vir::ValueID::Invalid;
   vir::ValueID height_edit = vir::ValueID::Invalid;
   vir::ValueID splat_edit = vir::ValueID::Invalid;
+  vir::ValueID track = vir::ValueID::Invalid;
+  vir::ValueID track_points = vir::ValueID::Invalid;
+  vir::ValueID stamps = vir::ValueID::Invalid;
 };
 
 struct ShadowVariables {

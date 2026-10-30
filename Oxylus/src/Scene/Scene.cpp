@@ -31,9 +31,9 @@
 #include <cstring>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <memory>
 #include <ranges>
 #include <simdjson.h>
-#include <sol/state.hpp>
 
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetManager.hpp"
@@ -49,7 +49,6 @@
 #include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
-#include "Scripting/LuaManager.hpp"
 #include "UI/RmlUI.hpp"
 #include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
@@ -57,6 +56,49 @@
 #include "Utils/Timestep.hpp"
 
 namespace ox {
+static SceneScriptHost* scene_script_host = nullptr;
+
+struct UnresolvedComponent {
+  std::string name = {};
+  std::string json = {};
+};
+
+// components a scene names that nothing defines yet, a C# one while the scripts don't load. Kept as written so
+// saving the scene writes them back instead of dropping them
+struct UnresolvedComponents {
+  std::vector<UnresolvedComponent> components = {};
+};
+
+// a token's raw JSON runs on to the next token, whitespace included
+static auto trim_token(std::string_view token) -> std::string_view {
+  const auto end = token.find_last_not_of(" \t\r\n");
+  return end == std::string_view::npos ? std::string_view{} : token.substr(0, end + 1);
+}
+
+// rewritten through the writer rather than pasted, so a kept component is formatted like the rest of the scene
+static auto copy_json_value(JsonWriter& writer, simdjson::ondemand::value value) -> void {
+  switch (value.type().value_unsafe()) {
+    case simdjson::ondemand::json_type::object: {
+      writer.begin_obj();
+      for (auto field : value.get_object()) {
+        writer.key(field.escaped_key().value_unsafe());
+        copy_json_value(writer, field.value().value_unsafe());
+      }
+      writer.end_obj();
+      break;
+    }
+    case simdjson::ondemand::json_type::array: {
+      writer.begin_array();
+      for (auto element : value.get_array()) {
+        copy_json_value(writer, element.value_unsafe());
+      }
+      writer.end_array();
+      break;
+    }
+    default: writer.new_value(trim_token(value.raw_json_token())); break;
+  }
+}
+
 // a cooked scene is a pack holding its JSON, anything else is the JSON the editor saved
 static auto read_scene_json(const std::filesystem::path& path) -> option<std::string> {
   ZoneScoped;
@@ -595,14 +637,23 @@ Scene::~Scene() {
   set_terrain_edits_ref({});
   terrain.reset();
 
-  for (auto& [_, system] : lua_systems) {
-    system->on_remove(this);
+  for (auto& [_, script] : scripts) {
+    script->on_remove(this);
   }
 
-  lua_systems.clear();
+  scripts.clear();
+
+  // last, the runtime is what the scripts above ran inside of
+  if (script_runtime) {
+    script_runtime->on_remove(this);
+    script_runtime.reset();
+  }
+
   rml_view.reset();
-  auto& lua_manager = App::mod<LuaManager>();
-  lua_manager.get_state()->collect_gc();
+
+  // ecs_fini removes every entity still alive, and the observers that runs reach transforms, mesh_instances and the
+  // rest, which are declared after the world and so would already be destroyed by the time its own destructor ran
+  world.release();
 }
 
 auto Scene::init(this Scene& self, const std::string& name) -> void {
@@ -1061,7 +1112,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<VehicleComponent>("vehicle_input")
     .kind(flecs::OnUpdate)
     .tick_source(physics_tick_source)
-    .each([&self](VehicleComponent& vehicle) {
+    .each([&self](flecs::entity entity, VehicleComponent& vehicle) {
       if (!vehicle.runtime_constraint)
         return;
 
@@ -1069,6 +1120,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto* controller = static_cast<JPH::WheeledVehicleController*>(constraint->GetController());
       controller
         ->SetDriverInput(vehicle.input_forward, vehicle.input_right, vehicle.input_brake, vehicle.input_hand_brake);
+
+      if (auto* grip = reinterpret_cast<std::vector<f32>*>(constraint->GetUserData())) {
+        entity.children([grip](flecs::entity child) {
+          const auto* wheel = child.try_get<VehicleWheelComponent>();
+          if (wheel && wheel->runtime_wheel_index < grip->size()) {
+            (*grip)[wheel->runtime_wheel_index] = glm::max(0.0f, wheel->grip);
+          }
+        });
+      }
 
       // jolt puts the body to sleep on its own and a sleeping chassis ignores driver input, braking
       // alone leaves it asleep so parked cars on the handbrake stay cheap
@@ -1090,9 +1150,19 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const auto owed_steps = std::round(it.delta_system_time() / self.physics_interval);
       const auto steps = std::clamp(static_cast<i32>(owed_steps), 1, 4);
 
+      // a step at a time rather than one Update with several collision steps, so scripts see every fixed step
       p.debug_renderer->begin_step(self.debug_renderer, physics_debug_draw_enabled(self));
-      self.physics_system
-        ->Update(self.physics_interval * static_cast<f32>(steps), steps, p.get_temp_allocator(), p.get_job_system());
+      for (i32 step = 0; step < steps; step++) {
+        self.for_each_script([&self](SceneScript& script) {
+          script.on_scene_fixed_update(&self, self.physics_interval);
+        });
+
+        self.physics_system->Update(self.physics_interval, 1, p.get_temp_allocator(), p.get_job_system());
+
+        self.dispatch_contacts();
+        self.dispatch_body_activations();
+      }
+
       p.debug_renderer->end_step();
     });
 
@@ -1152,16 +1222,19 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       rb.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
     });
 
+  const auto physics_alpha = [physics_tick_source] {
+    const auto* timer = physics_tick_source.try_get<flecs::Timer>();
+    return (timer && timer->timeout > 0.f) ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
+                                           : 1.0f;
+  };
+
   self.world.system<TransformComponent, const RigidBodyComponent>("physics_interpolate")
     .kind(flecs::OnUpdate)
-    .each([physics_tick_source](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
+    .each([physics_alpha](const flecs::entity& e, TransformComponent& tc, const RigidBodyComponent& rb) {
       if (!rb.runtime_body)
         return;
 
-      const auto* timer = physics_tick_source.try_get<flecs::Timer>();
-      const f32 alpha = (timer && timer->timeout > 0.f)
-                          ? std::clamp(static_cast<f32>(timer->time / timer->timeout), 0.0f, 1.0f)
-                          : 1.0f;
+      const f32 alpha = physics_alpha();
 
       auto position = glm::mix(rb.previous_translation, rb.translation, alpha);
       auto rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
@@ -1189,11 +1262,34 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       ch.translation = {position.GetX(), position.GetY(), position.GetZ()};
       ch.rotation = glm::quat::wxyz(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
 
+      if (ch.interpolation) {
+        return;
+      }
+
       auto local_position = ch.translation;
       auto local_rotation = ch.rotation;
       world_pose_to_local(e, local_position, local_rotation);
       tc.position = local_position;
       tc.rotation = local_rotation;
+
+      e.modified<TransformComponent>();
+    });
+
+  // declared after character_controller_update so a tick frame blends from the freshly recorded pair
+  self.world.system<TransformComponent, const CharacterControllerComponent>("character_interpolate")
+    .kind(flecs::OnUpdate)
+    .each([physics_alpha](const flecs::entity& e, TransformComponent& tc, const CharacterControllerComponent& ch) {
+      if (!ch.interpolation || !ch.character) {
+        return;
+      }
+
+      const f32 alpha = physics_alpha();
+      auto position = glm::mix(ch.previous_translation, ch.translation, alpha);
+      auto rotation = glm::slerp(ch.previous_rotation, ch.rotation, alpha);
+      world_pose_to_local(e, position, rotation);
+
+      tc.position = position;
+      tc.rotation = rotation;
 
       e.modified<TransformComponent>();
     });
@@ -1274,6 +1370,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       };
       material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
     });
+
+  // after every engine system, so systems the runtime registers run after the engine's within a phase
+  if (scene_script_host) {
+    self.script_runtime = scene_script_host->create_runtime(self);
+    if (self.script_runtime) {
+      self.script_runtime->on_add(&self);
+    }
+  }
 }
 
 auto Scene::physics_init(this Scene& self) -> void {
@@ -1282,7 +1386,7 @@ auto Scene::physics_init(this Scene& self) -> void {
   // Remove old bodies and reset callbacks
   self.physics_deinit();
 
-  self.body_activation_listener_3d = std::make_unique<Physics3DBodyActivationListener>();
+  self.body_activation_listener_3d = std::make_unique<Physics3DBodyActivationListener>(&self);
   self.contact_listener_3d = std::make_unique<Physics3DContactListener>(&self);
   self.physics_system->SetBodyActivationListener(self.body_activation_listener_3d.get());
   self.physics_system->SetContactListener(self.contact_listener_3d.get());
@@ -1347,8 +1451,19 @@ auto Scene::physics_deinit(this Scene& self) -> void {
     }
   );
 
+  // jolt keeps the raw pointers, and removing the bodies above queued deactivations nothing should see
+  self.physics_system->SetBodyActivationListener(nullptr);
+  self.physics_system->SetContactListener(nullptr);
   self.body_activation_listener_3d.reset();
   self.contact_listener_3d.reset();
+
+  {
+    auto lock = std::unique_lock(self.body_activations_mutex);
+    self.pending_body_activations.clear();
+  }
+
+  auto lock = std::unique_lock(self.contacts_mutex);
+  self.pending_contacts.clear();
 }
 
 auto Scene::runtime_start(this Scene& self) -> void {
@@ -1375,29 +1490,28 @@ auto Scene::runtime_start(this Scene& self) -> void {
     }
   );
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto& audio_engine = App::mod<AudioEngine>();
-  self.world.query_builder<const AudioSourceComponent>().build().each(
-    [&](flecs::entity e, const AudioSourceComponent& ac) {
-      if (!ac.play_on_awake) {
-        return;
+  if (App::has_mod<AudioEngine>()) {
+    auto& asset_man = App::mod<AssetManager>();
+    auto& audio_engine = App::mod<AudioEngine>();
+    self.world.query_builder<const AudioSourceComponent>().build().each(
+      [&](flecs::entity e, const AudioSourceComponent& ac) {
+        if (!ac.play_on_awake) {
+          return;
+        }
+
+        auto audio = asset_man.get_audio(ac.audio_source);
+        if (!audio || !audio->get_source()) {
+          return;
+        }
+
+        // settings first so a spatialized sound doesn't start at the origin
+        apply_audio_source(audio->get_source(), ac, e);
+        audio_engine.play_source(audio->get_source());
       }
-
-      auto audio = asset_man.get_audio(ac.audio_source);
-      if (!audio || !audio->get_source()) {
-        return;
-      }
-
-      // settings first so a spatialized sound doesn't start at the origin
-      apply_audio_source(audio->get_source(), ac, e);
-      audio_engine.play_source(audio->get_source());
-    }
-  );
-
-  // Scripting
-  for (auto& [_, system] : self.lua_systems) {
-    system->on_scene_start(&self);
+    );
   }
+
+  self.for_each_script([&self](SceneScript& script) { script.on_scene_start(&self); });
 }
 
 auto Scene::runtime_stop(this Scene& self) -> void {
@@ -1412,19 +1526,18 @@ auto Scene::runtime_stop(this Scene& self) -> void {
   self.physics_deinit();
 
   // the play scene shares each asset's sound with the edit scene, so it would keep playing after stop
-  auto& asset_man = App::mod<AssetManager>();
-  auto& audio_engine = App::mod<AudioEngine>();
-  self.world.query_builder<const AudioSourceComponent>().build().each([&](const AudioSourceComponent& ac) {
-    auto audio = asset_man.get_audio(ac.audio_source);
-    if (audio && audio->get_source()) {
-      audio_engine.stop_source(audio->get_source());
-    }
-  });
-
-  // Scripting
-  for (auto& [_, system] : self.lua_systems) {
-    system->on_scene_stop(&self);
+  if (App::has_mod<AudioEngine>()) {
+    auto& asset_man = App::mod<AssetManager>();
+    auto& audio_engine = App::mod<AudioEngine>();
+    self.world.query_builder<const AudioSourceComponent>().build().each([&](const AudioSourceComponent& ac) {
+      auto audio = asset_man.get_audio(ac.audio_source);
+      if (audio && audio->get_source()) {
+        audio_engine.stop_source(audio->get_source());
+      }
+    });
   }
+
+  self.for_each_script([&self](SceneScript& script) { script.on_scene_stop(&self); });
 
   if (auto* rml_context = self.get_rml_context()) {
     auto doc_count = rml_context->GetNumDocuments();
@@ -1452,9 +1565,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   const auto gameplay_enabled = pre_update_phase_enabled && on_update_phase_enabled;
   self.last_step_delta = gameplay_enabled ? static_cast<f32>(delta_time.get_seconds()) : 0.0f;
   if (gameplay_enabled) {
-    for (auto& [_, system] : self.lua_systems) {
-      system->on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
-    }
+    self.for_each_script([&self, &delta_time](SceneScript& script) {
+      script.on_scene_update(&self, static_cast<f32>(delta_time.get_seconds()));
+    });
   }
 
   // before progress(), not after: camera_update runs in flecs::PostUpdate and has to see the pose a
@@ -1717,63 +1830,121 @@ auto Scene::prepare_render(this Scene& self) -> void {
   }
 }
 
-auto Scene::get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem* {
+auto define_component(
+  flecs::world& world, ComponentDB* component_db, std::string_view name, std::span<const ComponentField> fields
+) -> flecs::entity {
   ZoneScoped;
 
-  const auto it = self.lua_systems.find(lua_script);
-
-  return it == self.lua_systems.end() ? nullptr : it->second.get();
-}
-
-auto Scene::get_lua_systems(this const Scene& self)
-  -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>& {
-  ZoneScoped;
-
-  return self.lua_systems;
-}
-
-auto Scene::add_lua_system(this Scene& self, const UUID& lua_script) -> void {
-  ZoneScoped;
-
-  auto& asset_man = App::mod<AssetManager>();
-  if (!asset_man.get_asset(lua_script)->is_loaded()) {
-    asset_man.load_asset(lua_script);
+  memory::ScopedStack stack;
+  auto component = world.component(stack.null_terminate_cstr(name));
+  if (component.has<flecs::Struct>()) {
+    fields = {};
   }
 
-  // Copy the source out and drop the guard before running any Lua, which can reach back into the asset registry.
-  auto script = LuaScript{};
-  {
-    auto guard = asset_man.get_script(lua_script);
-    if (!guard) {
-      OX_LOG_ERROR("Failed to add lua system {}, script asset is not loaded.", lua_script.str());
-      return;
+  for (const auto& field : fields) {
+    const auto* field_name = stack.null_terminate_cstr(field.name);
+    switch (field.type) {
+      case ComponentFieldType::F32   : component.member<f32>(field_name); break;
+      case ComponentFieldType::F64   : component.member<f64>(field_name); break;
+      case ComponentFieldType::I8    : component.member<i8>(field_name); break;
+      case ComponentFieldType::I16   : component.member<i16>(field_name); break;
+      case ComponentFieldType::I32   : component.member<i32>(field_name); break;
+      case ComponentFieldType::I64   : component.member<i64>(field_name); break;
+      case ComponentFieldType::U8    : component.member<u8>(field_name); break;
+      case ComponentFieldType::U16   : component.member<u16>(field_name); break;
+      case ComponentFieldType::U32   : component.member<u32>(field_name); break;
+      case ComponentFieldType::U64   : component.member<u64>(field_name); break;
+      case ComponentFieldType::Bool  : component.member<bool>(field_name); break;
+      case ComponentFieldType::String: component.member<std::string>(field_name); break;
+      case ComponentFieldType::Vec2  : component.member<glm::vec2>(field_name); break;
+      case ComponentFieldType::Vec3  : component.member<glm::vec3>(field_name); break;
+      case ComponentFieldType::Vec4  : component.member<glm::vec4>(field_name); break;
+      case ComponentFieldType::Quat  : component.member<glm::quat>(field_name); break;
     }
-    script = guard.copy();
   }
 
-  auto [it, inserted] = self.lua_systems.try_emplace(lua_script, std::make_unique<LuaSystem>(script));
-  if (!inserted) {
-    return;
+  if (component_db && !component_db->is_component_known(component)) {
+    component_db->components.emplace_back(component);
   }
 
-  it->second->on_add(&self);
-
-  OX_LOG_TRACE("Added lua system to the scene {}", script.path);
+  return component;
 }
 
-auto Scene::remove_lua_system(this Scene& self, const UUID& lua_script) -> void {
+auto Scene::define_component(this Scene& self, std::string_view name, std::span<const ComponentField> fields)
+  -> flecs::entity {
+  return ox::define_component(self.world, &self.component_db, name, fields);
+}
+
+auto Scene::undefine_component(this Scene& self, flecs::entity component) -> void {
   ZoneScoped;
 
-  const auto it = self.lua_systems.find(lua_script);
-  if (it == self.lua_systems.end()) {
+  std::erase(self.component_db.components, flecs::id(component));
+  component.destruct();
+}
+
+auto Scene::get_scripts(this const Scene& self)
+  -> const ankerl::unordered_dense::map<ScriptKey, std::unique_ptr<SceneScript>>& {
+  ZoneScoped;
+
+  return self.scripts;
+}
+
+auto Scene::add_script_type(this Scene& self, std::string_view type_name) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  auto key = ScriptKey{.type_name = std::string(type_name)};
+  if (self.scripts.contains(key)) {
+    return {};
+  }
+
+  if (!scene_script_host) {
+    return std::unexpected(fmt::format("Can't add script {}, no scripting module is loaded", type_name));
+  }
+
+  auto script = scene_script_host->create_script(self, type_name);
+  if (!script) {
+    return std::unexpected(std::move(script.error()));
+  }
+
+  self.add_script(std::move(key), std::move(*script));
+
+  return {};
+}
+
+auto Scene::set_script_host(SceneScriptHost* host) -> void { scene_script_host = host; }
+
+auto Scene::add_script(this Scene& self, ScriptKey key, std::unique_ptr<SceneScript> script) -> SceneScript* {
+  ZoneScoped;
+
+  auto [it, is_inserted] = self.scripts.try_emplace(std::move(key), std::move(script));
+  if (!is_inserted) {
+    return nullptr;
+  }
+
+  // on_add can add or remove scripts, which would move the entry out from under the iterator
+  auto* added = it->second.get();
+  added->on_add(&self);
+
+  return added;
+}
+
+auto Scene::remove_script(this Scene& self, const ScriptKey& key) -> void {
+  ZoneScoped;
+
+  const auto it = self.scripts.find(key);
+  if (it == self.scripts.end()) {
     return;
   }
 
-  it->second->on_remove(&self);
+  // taken out before on_remove runs, which may add or remove other scripts
+  auto script = std::move(it->second);
+  self.scripts.erase(it);
 
-  OX_LOG_TRACE("Removed lua system from the scene {}", it->second->get_path());
+  script->on_remove(&self);
 
-  self.lua_systems.erase(it);
+  OX_LOG_TRACE("Removed script {} from the scene", script->display_name());
+
+  script.reset();
 }
 
 auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
@@ -1802,11 +1973,12 @@ auto Scene::defer_function(this Scene& self, const std::function<void(Scene* sce
 auto Scene::run_deferred_functions(this Scene& self) -> void {
   ZoneScoped;
 
-  if (!self.deferred_functions_.empty()) {
-    for (auto& func : self.deferred_functions_) {
-      func(&self);
-    }
-    self.deferred_functions_.clear();
+  // swapped out first, a deferred function that defers another would otherwise grow the vector under the loop. What
+  // it defers runs on the next call
+  auto functions = decltype(self.deferred_functions_){};
+  std::swap(functions, self.deferred_functions_);
+  for (auto& func : functions) {
+    func(&self);
   }
 }
 
@@ -2323,6 +2495,28 @@ auto Scene::bake_terrain(this Scene& self) -> void {
   terrain->collision_resolution = c.collision_resolution;
   terrain->collision_friction = c.collision_friction;
   terrain->collision_restitution = c.collision_restitution;
+
+  const auto world_min = terrain->world_min();
+  terrain->track_points.clear();
+  for (const auto& waypoint : self.terrain_track) {
+    terrain->track_points.push_back({
+      .position = waypoint.position - world_min,
+      .half_width = waypoint.width * 0.5f,
+      .shoulder = waypoint.shoulder,
+    });
+  }
+  terrain->track_smoothing = self.terrain_track_smoothing;
+
+  const auto height_scale = terrain->height_scale();
+  terrain->stamps.clear();
+  for (const auto& stamp : self.terrain_stamps) {
+    terrain->stamps.push_back({
+      .start = stamp.start - world_min,
+      .end = stamp.end - world_min,
+      .radius = stamp.radius,
+      .height = height_scale > 0.0f ? stamp.height / height_scale : 0.0f,
+    });
+  }
 
   auto& asset_man = App::mod<AssetManager>();
   const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
@@ -2940,63 +3134,118 @@ auto Scene::set_particle_parameter(
   return true;
 }
 
-auto Scene::on_contact_added(
-  const JPH::Body& body1,
-  const JPH::Body& body2,
-  const JPH::ContactManifold& manifold,
-  const JPH::ContactSettings& settings
-) -> void {
+auto Scene::on_contact_added(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+  -> void {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(physics_mutex);
-
-  for (auto& [_, system] : lua_systems) {
-    system->on_contact_added(this, body1, body2, manifold, settings);
-  }
+  auto lock = std::unique_lock(contacts_mutex);
+  pending_contacts.push_back(
+    {.entity1 = body1.GetUserData(),
+     .entity2 = body2.GetUserData(),
+     .point = math::from_jolt(manifold.GetWorldSpaceContactPointOn1(0)),
+     .penetration_depth = manifold.mPenetrationDepth,
+     .normal = math::from_jolt(manifold.mWorldSpaceNormal),
+     .event = ContactEvent::Added}
+  );
 }
 
-auto Scene::on_contact_persisted(
-  const JPH::Body& body1,
-  const JPH::Body& body2,
-  const JPH::ContactManifold& manifold,
-  const JPH::ContactSettings& settings
-) -> void {
+auto Scene::on_contact_persisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+  -> void {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(physics_mutex);
-
-  for (auto& [_, system] : lua_systems) {
-    system->on_contact_persisted(this, body1, body2, manifold, settings);
-  }
+  auto lock = std::unique_lock(contacts_mutex);
+  pending_contacts.push_back(
+    {.entity1 = body1.GetUserData(),
+     .entity2 = body2.GetUserData(),
+     .point = math::from_jolt(manifold.GetWorldSpaceContactPointOn1(0)),
+     .penetration_depth = manifold.mPenetrationDepth,
+     .normal = math::from_jolt(manifold.mWorldSpaceNormal),
+     .event = ContactEvent::Persisted}
+  );
 }
 
 auto Scene::on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(physics_mutex);
+  // jolt gives no bodies here, so the body ids ride in the entity slots until dispatch_contacts resolves them
+  auto lock = std::unique_lock(contacts_mutex);
+  pending_contacts.push_back(
+    {.entity1 = sub_shape_pair.GetBody1ID().GetIndexAndSequenceNumber(),
+     .entity2 = sub_shape_pair.GetBody2ID().GetIndexAndSequenceNumber(),
+     .event = ContactEvent::Removed}
+  );
+}
 
-  for (auto& [_, system] : lua_systems) {
-    system->on_contact_removed(this, sub_shape_pair);
+auto Scene::on_body_activated(this Scene& self, const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.body_activations_mutex);
+  self.pending_body_activations.push_back({.body_id = body_id, .body_user_data = body_user_data, .is_activated = true});
+}
+
+auto Scene::on_body_deactivated(this Scene& self, const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
+  ZoneScoped;
+
+  auto lock = std::unique_lock(self.body_activations_mutex);
+  self.pending_body_activations.push_back(
+    {.body_id = body_id, .body_user_data = body_user_data, .is_activated = false}
+  );
+}
+
+auto Scene::dispatch_body_activations(this Scene& self) -> void {
+  ZoneScoped;
+
+  // swapped out first, a script that wakes another body queues it for the next step instead of looping here
+  auto activations = std::vector<BodyActivation>();
+  {
+    auto lock = std::unique_lock(self.body_activations_mutex);
+    std::swap(activations, self.pending_body_activations);
+  }
+
+  for (const auto& activation : activations) {
+    for (auto& [_, script] : self.scripts) {
+      if (activation.is_activated) {
+        script->on_body_activated(&self, activation.body_id, activation.body_user_data);
+      } else {
+        script->on_body_deactivated(&self, activation.body_id, activation.body_user_data);
+      }
+    }
+  }
+
+  // hand the capacity back so a steady stream of wakeups doesn't allocate every step
+  activations.clear();
+  auto lock = std::unique_lock(self.body_activations_mutex);
+  if (self.pending_body_activations.empty()) {
+    std::swap(activations, self.pending_body_activations);
   }
 }
 
-auto Scene::on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
+auto Scene::dispatch_contacts(this Scene& self) -> void {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(physics_mutex);
-
-  for (auto& [_, system] : lua_systems) {
-    system->on_body_activated(this, body_id, (u64)body_user_data);
+  auto contacts = std::vector<PhysicsContact>();
+  {
+    auto lock = std::unique_lock(self.contacts_mutex);
+    std::swap(contacts, self.pending_contacts);
   }
-}
 
-auto Scene::on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void {
-  ZoneScoped;
+  if (!contacts.empty()) {
+    // a body removed since has no user data left, and its side of the contact stays 0
+    const auto& body_interface = self.physics_system->GetBodyInterface();
+    for (auto& contact : contacts) {
+      if (contact.event == ContactEvent::Removed) {
+        contact.entity1 = body_interface.GetUserData(JPH::BodyID(static_cast<u32>(contact.entity1)));
+        contact.entity2 = body_interface.GetUserData(JPH::BodyID(static_cast<u32>(contact.entity2)));
+      }
+    }
 
-  auto write_lock = std::unique_lock(physics_mutex);
+    self.for_each_script([&self, &contacts](SceneScript& script) { script.on_contacts(&self, contacts); });
+  }
 
-  for (auto& [_, system] : lua_systems) {
-    system->on_body_deactivated(this, body_id, (u64)body_user_data);
+  contacts.clear();
+  auto lock = std::unique_lock(self.contacts_mutex);
+  if (self.pending_contacts.empty()) {
+    std::swap(contacts, self.pending_contacts);
   }
 }
 
@@ -3448,6 +3697,27 @@ auto Scene::clear_terrain_edits(this Scene& self) -> void {
   }
 }
 
+auto Scene::set_terrain_track(this Scene& self, std::span<const TerrainWaypoint> waypoints, f32 smoothing) -> void {
+  ZoneScoped;
+  OX_CHECK_LE(waypoints.size(), static_cast<usize>(TERRAIN_TRACK_MAX_POINTS));
+
+  self.terrain_track.assign(waypoints.begin(), waypoints.end());
+  self.terrain_track_smoothing = smoothing;
+  if (self.terrain_entity) {
+    self.terrain_dirty = true;
+  }
+}
+
+auto Scene::set_terrain_stamps(this Scene& self, std::span<const TerrainStampDesc> stamps) -> void {
+  ZoneScoped;
+  OX_CHECK_LE(stamps.size(), static_cast<usize>(TERRAIN_STAMP_MAX));
+
+  self.terrain_stamps.assign(stamps.begin(), stamps.end());
+  if (self.terrain_entity) {
+    self.terrain_dirty = true;
+  }
+}
+
 auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
   ZoneScoped;
 
@@ -3505,6 +3775,7 @@ void Scene::create_character_controller(flecs::entity entity, CharacterControlle
   // Balances the Release in physics_deinit / the OnRemove observer.
   character->AddRef();
   component.character = character;
+  component.previous_translation = component.translation = world_position;
 
   character->AddToPhysicsSystem(JPH::EActivation::Activate);
 
@@ -3638,6 +3909,31 @@ auto Scene::create_vehicle(this Scene& self, flecs::entity entity, VehicleCompon
   auto* body = static_cast<JPH::Body*>(rb->runtime_body);
   auto* constraint = new JPH::VehicleConstraint(*body, settings);
 
+  // the controller reads this during the physics step and vehicle_input rewrites it on the main thread before each
+  // step, the two never overlap. The callback owns it, so it lives exactly as long as the constraint
+  auto grip = std::make_shared<std::vector<f32>>(wheel_entities.size(), 1.0f);
+  for (auto wheel_index = 0_sz; wheel_index < wheel_entities.size(); wheel_index++) {
+    (*grip)[wheel_index] = glm::max(0.0f, wheel_entities[wheel_index].get<VehicleWheelComponent>().grip);
+  }
+
+  constraint->SetUserData(reinterpret_cast<u64>(grip.get()));
+  static_cast<JPH::WheeledVehicleController*>(constraint->GetController())
+    ->SetTireMaxImpulseCallback([grip](
+                                  u32 wheel_index,
+                                  f32& longitudinal_impulse,
+                                  f32& lateral_impulse,
+                                  f32 suspension_impulse,
+                                  f32 longitudinal_friction,
+                                  f32 lateral_friction,
+                                  f32,
+                                  f32,
+                                  f32
+                                ) {
+      const auto scale = wheel_index < grip->size() ? (*grip)[wheel_index] : 1.0f;
+      longitudinal_impulse = longitudinal_friction * suspension_impulse * scale;
+      lateral_impulse = lateral_friction * suspension_impulse * scale;
+    });
+
   switch (component.collision_mode) {
     case VehicleComponent::CollisionMode::Ray:
       constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterRay(PhysicsLayers::MOVING));
@@ -3700,9 +3996,7 @@ auto Scene::render(
     self.rml_view->set_viewport(viewport_origin, viewport_size, keyboard_focused);
   }
 
-  for (auto& [_, system] : self.lua_systems) {
-    system->on_scene_render(&self, target.extent);
-  }
+  self.for_each_script([&self, &target](SceneScript& script) { script.on_scene_render(&self, target.extent); });
 
   // Paired with the render below: the GPU-side work is built here rather than in `runtime_update` so
   // that a scene which ticks without rendering never leaves an unsubmitted graph behind.
@@ -3763,7 +4057,7 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   writer["tags"].begin_array();
   auto components = std::vector<flecs::entity>{};
   e.each([&](flecs::id component_id) {
-    if (!component_id.is_entity()) {
+    if (!component_id.is_entity() || component_id == world.id<UnresolvedComponents>()) {
       return;
     }
 
@@ -3787,6 +4081,28 @@ auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
     serializer.serialize(component, component_data);
     writer.end_obj();
     writer.end_obj();
+  }
+
+  if (const auto* unresolved = e.try_get<UnresolvedComponents>()) {
+    for (const auto& component : unresolved->components) {
+      // defined and set on the entity since, which is newer than what the file said
+      if (const auto component_id = world.lookup(component.name.c_str()); component_id && e.has(component_id)) {
+        continue;
+      }
+
+      auto content = simdjson::padded_string(component.json);
+      auto parser = simdjson::ondemand::parser{};
+      auto doc = parser.iterate(content);
+      auto value = doc.get_value();
+      if (value.error()) {
+        continue;
+      }
+
+      writer.begin_obj();
+      writer.key(component.name);
+      copy_json_value(writer, value.value_unsafe());
+      writer.end_obj();
+    }
   }
   writer.end_array();
 
@@ -3849,13 +4165,21 @@ auto Scene::json_to_entity(
 
       const auto* component_name = stack.null_terminate_cstr(component_name_json.value_unsafe());
       auto component_id = world.lookup(component_name);
-      if (!component_id) {
-        OX_LOG_ERROR("Entity '{}' has invalid component named '{}'!", e.name().c_str(), component_name);
-        return flecs::entity::null();
-      }
+      if (!component_id || !self.component_db.is_component_known(component_id)) {
+        auto raw_component = field_json.value().raw_json();
+        if (raw_component.error()) {
+          OX_LOG_ERROR("Entity '{}' has corrupt components JSON array.", e.name().c_str());
+          return flecs::entity::null();
+        }
 
-      if (!self.component_db.is_component_known(component_id)) {
-        OX_LOG_WARN("Skipping unkown component {}:{}", component_name, (u64)component_id);
+        OX_LOG_WARN(
+          "Entity '{}' has component '{}' that nothing defines, it's kept as written",
+          e.name().c_str(),
+          component_name
+        );
+        e.ensure<UnresolvedComponents>().components.push_back(
+          {.name = std::string(component_name), .json = std::string(raw_component.value_unsafe())}
+        );
         continue;
       }
 
@@ -3903,9 +4227,9 @@ auto Scene::to_json(this const Scene& self) -> JsonWriter {
   self.renderer_cvar.to_json(writer);
 
   writer["scripts"].begin_array();
-  for (auto& [script_uuid, system] : self.lua_systems) {
+  for (const auto& [key, _] : self.scripts) {
     writer.begin_obj();
-    writer["uuid"] = script_uuid.str();
+    writer["type"] = key.type_name;
     writer.end_obj();
   }
   writer.end_array();
@@ -3976,15 +4300,19 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
 
   std::vector<UUID> requested_assets = {};
 
-  std::vector<UUID> requested_scripts = {};
+  std::vector<ScriptKey> requested_scripts = {};
   auto scripts_array = doc["scripts"];
   if (!scripts_array.error()) {
     for (auto script_json : scripts_array.get_array()) {
-      auto uuid_json = script_json.value_unsafe();
-      auto uuid_str = uuid_json["uuid"].get_string();
-      if (!uuid_str.error()) {
-        auto script_uuid = UUID::from_string(uuid_str.value_unsafe()).value();
-        requested_scripts.emplace_back(script_uuid);
+      auto script_obj = script_json.value_unsafe();
+      if (auto type_str = script_obj["type"].get_string(); !type_str.error()) {
+        requested_scripts.push_back({.type_name = std::string(type_str.value_unsafe())});
+      } else if (auto uuid_str = script_obj["uuid"].get_string(); !uuid_str.error()) {
+        OX_LOG_WARN(
+          "Skipping script {} in scene {}, Lua scene scripts were removed",
+          uuid_str.value_unsafe(),
+          self.scene_name
+        );
       }
     }
   } else {
@@ -3992,12 +4320,11 @@ auto Scene::from_json(this Scene& self, const std::string& json) -> bool {
   }
 
   // on_add callback of scripts should be called before entities are deserialized.
-  for (auto& script : requested_scripts) {
-    if (!asset_man.is_loaded(script)) {
-      asset_man.load_asset(script);
+  for (const auto& script : requested_scripts) {
+    auto result = self.add_script_type(script.type_name);
+    if (!result) {
+      OX_LOG_ERROR("{}", result.error());
     }
-
-    self.add_lua_system(script);
   }
 
   auto entities_array = doc["entities"];
@@ -4032,7 +4359,7 @@ auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> reques
   auto deferred = ankerl::svector<UUID, 8>();
 
   for (const auto& asset_uuid : requested_assets) {
-    // Snapshot the type and release the read guard before load_asset()/add_lua_system(),
+    // Snapshot the type and release the read guard before load_asset(),
     // which re-lock the registry.
     auto type = option<AssetType>(nullopt);
     if (auto asset = asset_man.get_asset(asset_uuid)) {

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
@@ -15,7 +16,7 @@
 
 namespace ox {
 EditorSettingsPanel::EditorSettingsPanel() : EditorPanelState("Editor Settings", ICON_MDI_COGS, false) {
-  this->window_default_size = {500, 300};
+  this->window_default_size = {500, 380};
   this->window_sizing_cond = ImGuiCond_Always;
   this->window_center_at_appear = true;
 }
@@ -89,6 +90,24 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
     if (UI::property("Undo history size", &current_history_size))
       undo_redo_system->set_max_history_size(current_history_size);
     UI::end_properties();
+
+    ImGui::SeparatorText("External editor");
+
+    auto external_editor = editor.editor_cvar.cvar_external_editor.get();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::InputText("##external_editor", &external_editor)) {
+      editor.editor_cvar.cvar_external_editor.set(std::move(external_editor));
+    }
+
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      editor.editor_cvar.save();
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Placeholders: {file}, {line}, {column}, {root}");
+    ImGui::TextWrapped("{root} is the project directory, empty uses the system default");
+    ImGui::TextWrapped("VS Code: code {root} --goto {file}:{line}:{column}");
+    ImGui::PopStyleColor();
   }
   ImGui::EndChild();
 }

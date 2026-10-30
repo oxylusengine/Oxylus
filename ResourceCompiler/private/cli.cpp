@@ -29,6 +29,7 @@ auto print_help() -> void {
   print_command("silent", "Do not output anything to the console.");
   print_command("config \"path\"", "TOML config file with resources to compile.");
   print_command("cook-assets \"path\"", "Asset directory to cook for a game build, into `--output`.");
+  print_command("force", "With `--cook-assets`, cook every asset again instead of only the ones that changed.");
   print_command("output \"path\"", "Output path for compiled resources. Overrides config file output.");
   print_command("debug-symbols", "Keep shader debug info in the SPIR-V, whatever the config says.");
   print_command("include-dir \"path\"", "Extra shader search path, appended to every session. Repeatable.");
@@ -104,11 +105,11 @@ static auto cook_assets(const AppCommandLineArgs& args, rc::Session& session, co
     output_arg = args.get(output_argi.value() + 1);
   }
   if (!assets_arg.has_value() || !output_arg.has_value()) {
-    log("Usage: `rcli --cook-assets <assets dir> --output <cooked dir>`");
+    log("Usage: `rcli --cook-assets <assets dir> --output <cooked dir> [--force]`");
     return 1;
   }
 
-  const auto succeeded = rc::cook_assets(session, assets_arg->arg_str, output_arg->arg_str);
+  const auto succeeded = rc::cook_assets(session, assets_arg->arg_str, output_arg->arg_str, args.contains("--force"));
 
   // errors print even when silent, a failed build step has to say why
   const auto diagnostics = session.take_diagnostics();

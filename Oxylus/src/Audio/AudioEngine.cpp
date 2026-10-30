@@ -2,8 +2,11 @@
 
 #define MINIAUDIO_IMPLEMENTATION
 
+#include <algorithm>
 #include <glm/common.hpp>
 #include <miniaudio.h>
+
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 static ma_attenuation_model get_attenuation_model(const AudioEngine::AttenuationModelType model) {
@@ -31,6 +34,12 @@ auto AudioEngine::init() -> std::expected<void, std::string> {
 }
 
 auto AudioEngine::deinit() -> std::expected<void, std::string> {
+  for (auto* sound : one_shots) {
+    ma_sound_uninit(sound);
+    delete sound;
+  }
+
+  one_shots.clear();
   ma_engine_uninit(engine);
   delete engine;
   return {};
@@ -169,6 +178,54 @@ auto AudioEngine::set_source_cone(ma_sound* sound, f32 inner_angle, f32 outer_an
 auto AudioEngine::set_source_doppler_factor(ma_sound* sound, f32 factor) -> void {
   ZoneScoped;
   ma_sound_set_doppler_factor(sound, glm::max(factor, 0.0f));
+}
+
+auto AudioEngine::update(this AudioEngine& self, const Timestep&) -> void {
+  ZoneScoped;
+
+  std::erase_if(self.one_shots, [](ma_sound* sound) {
+    if (ma_sound_is_playing(sound) && !ma_sound_at_end(sound)) {
+      return false;
+    }
+
+    ma_sound_uninit(sound);
+    delete sound;
+    return true;
+  });
+}
+
+auto AudioEngine::play_one_shot(this AudioEngine& self, ma_sound* sound, f32 volume, const glm::vec3* position)
+  -> bool {
+  ZoneScoped;
+
+  auto* copy = new ma_sound;
+  const auto flags = position ? 0_u32 : static_cast<u32>(MA_SOUND_FLAG_NO_SPATIALIZATION);
+  // shares the decoded data the resource manager already holds for `sound`
+  if (ma_sound_init_copy(self.engine, sound, flags, nullptr, copy) != MA_SUCCESS) {
+    delete copy;
+    return false;
+  }
+
+  ma_sound_set_volume(copy, volume);
+  ma_sound_set_looping(copy, MA_FALSE);
+  if (position) {
+    ma_sound_set_position(copy, position->x, position->y, position->z);
+  }
+
+  if (ma_sound_start(copy) != MA_SUCCESS) {
+    ma_sound_uninit(copy);
+    delete copy;
+    return false;
+  }
+
+  self.one_shots.push_back(copy);
+  return true;
+}
+
+auto AudioEngine::playing_one_shot_count(this const AudioEngine& self) -> usize {
+  return static_cast<usize>(std::ranges::count_if(self.one_shots, [](ma_sound* sound) {
+    return ma_sound_is_playing(sound) && !ma_sound_at_end(sound);
+  }));
 }
 
 auto AudioEngine::set_source_position(ma_sound* sound, const glm::vec3& position) -> void {

@@ -1,3 +1,6 @@
+#include <SDL3/SDL_process.h>
+#include <SDL3/SDL_properties.h>
+#include <fmt/format.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -10,6 +13,28 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+static auto path_to_utf8(const std::filesystem::path& path) -> std::string {
+  const auto utf8 = path.u8string();
+  return std::string(reinterpret_cast<const c8*>(utf8.data()), utf8.size());
+}
+
+static auto percent_encode_path(std::string_view path) -> std::string {
+  std::string result = {};
+  result.reserve(path.size());
+  for (const auto c : path) {
+    const auto is_unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+                               c == '.' || c == '_' || c == '~' || c == '/';
+    if (is_unreserved) {
+      result += c;
+      continue;
+    }
+
+    result += fmt::format("%{:02X}", static_cast<u8>(c));
+  }
+
+  return result;
+}
+
 auto os::mem_page_size() -> u64 { return sysconf(_SC_PAGESIZE); }
 
 auto os::mem_reserve(u64 size) -> void* {
@@ -60,13 +85,53 @@ auto os::set_thread_name(std::thread::native_handle_type thread, std::string_vie
 auto os::open_folder_select_file(const std::filesystem::path& path) -> void {
   ZoneScoped;
 
-  OX_LOG_WARN("Not implemented on this platform.");
+  const auto absolute = std::filesystem::absolute(path).lexically_normal();
+  const auto uri_arg = "array:string:file://" + percent_encode_path(path_to_utf8(absolute));
+
+  const c8* args[] = {
+    "dbus-send",
+    "--session",
+    "--dest=org.freedesktop.FileManager1",
+    "--type=method_call",
+    "/org/freedesktop/FileManager1",
+    "org.freedesktop.FileManager1.ShowItems",
+    uri_arg.c_str(),
+    "string:",
+    nullptr,
+  };
+
+  const auto properties = SDL_CreateProperties();
+  SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, static_cast<void*>(args));
+  SDL_SetNumberProperty(properties, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+  SDL_SetNumberProperty(properties, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_NULL);
+  SDL_SetNumberProperty(properties, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_NULL);
+
+  auto* process = SDL_CreateProcessWithProperties(properties);
+  SDL_DestroyProperties(properties);
+
+  i32 exit_code = -1;
+  if (process) {
+    SDL_WaitProcess(process, true, &exit_code);
+    SDL_DestroyProcess(process);
+  }
+
+  if (!process || exit_code != 0) {
+    const auto parent = path_to_utf8(absolute.parent_path());
+    const std::string_view fallback[] = {"xdg-open", parent};
+    if (auto result = spawn_detached(fallback); !result) {
+      OX_LOG_WARN("{}", result.error());
+    }
+  }
 }
 
 auto os::open_file_externally(const std::filesystem::path& path) -> void {
   ZoneScoped;
 
-  OX_LOG_WARN("Not implemented on this platform.");
+  const auto file = path_to_utf8(path);
+  const std::string_view args[] = {"xdg-open", file};
+  if (auto result = spawn_detached(args); !result) {
+    OX_LOG_WARN("{}", result.error());
+  }
 }
 
 auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError> {

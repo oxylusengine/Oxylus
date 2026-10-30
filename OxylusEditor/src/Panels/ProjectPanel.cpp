@@ -174,6 +174,13 @@ auto ProjectPanel::new_project(
   editor.reset_current_docking_layout();
   editor.editor_cvar.add_recent_project(active_project.get());
   editor.editor_panel_registry.get<ContentPanel>().init();
+#ifdef OX_DOTNET
+  if (auto created = CSharpScripts::create_project(*active_project); !created) {
+    OX_LOG_ERROR("Couldn't create the project's C# scripts: {}", created.error());
+  }
+
+  editor.csharp_scripts.open(*active_project);
+#endif
 
   self.panel_error.clear();
   self.creating_project = false;

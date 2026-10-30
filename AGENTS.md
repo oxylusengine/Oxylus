@@ -38,7 +38,8 @@ xmake r OxylusEditor         # run the editor
 On NixOS, use `nix-shell` (see `shell.nix`) and `--toolchain=nix-clang`; the shell pins libc++,
 Vulkan loader, and `shader-slang`.
 
-Configure options (`xmake f --<opt>=<val>`): `lua_bindings` (default true), `editor` (default true),
+Configure options (`xmake f --<opt>=<val>`): `editor` (default true), `csharp` (C# scripting, default true, needs
+the .NET 10 SDK; not `dotnet`, which xmake reads as the SDK's directory),
 `tests` (default false), `profile` (Tracy, default false), `llvmpipe` (force software Vulkan device).
 
 Build modes are `debug`, `release`, `dist`. Each defines `OX_DEBUG` / `OX_RELEASE` / `OX_DISTRIBUTION`.
@@ -93,8 +94,8 @@ Access modules statically: `App::mod<Renderer>()`, `App::has_mod<Physics>()`. Co
 modules and have their own accessors: `App::get_vfs()`, `get_job_manager()`, `get_event_system()`,
 `get_rendercontext()`, `get_window()`, `get_timestep()`. `App::defer_to_next_frame(fn)` queues work.
 
-`Core/DefaultModules.hpp` is the canonical registration order: LuaManager, AudioEngine, AssetManager,
-Physics, Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
+`Core/DefaultModules.hpp` is the canonical registration order: AudioEngine, AssetManager, Physics,
+Input, NetworkManager, Renderer, ImGuiRenderer, RmlUI.
 
 `EventSystem` (`Core/EventSystem.hpp`) is a typed pub/sub bus keyed on `std::type_index`; event types
 are plain copyable structs (`WindowResizeEvent`, `AppCloseEvent`, `Editor::ScenePlayEvent`, ...).
@@ -131,8 +132,6 @@ BC7, uncompressed) and Basis Universal KTX2 are accepted; plain-format KTX2 is n
 `Asset::path` (where the payload loads from) and `Asset::source_path` (the file it was imported
 from, looked up by `AssetManager::find_asset`) are stored virtual; `register_asset`/`create_asset`
 convert whatever they are given, and anything that opens the file calls `to_physical` first.
-Lua scripts load their siblings with `require_script("relative/to/this/file.lua")`, cached per
-`LuaSystem`, and name other assets relative to `ASSETS_DIR` (`Mod.AssetManager:acquire("Audio/x.wav")`).
 
 ### Scene / ECS
 
@@ -161,7 +160,7 @@ for reading and `JsonWriter` for writing.
 
 `AssetManager` is the single owner of loaded resources. Every asset is a `UUID` in an `AssetRegistry`
 map; the `Asset` struct holds a type tag plus a union of typed slot-map ids (`ModelID`, `TextureID`,
-`MaterialID`, `SceneID`, `AudioID`, `ScriptID`). Payloads live in per-type `SlotMap`s guarded by
+`MaterialID`, `SceneID`, `AudioID`). Payloads live in per-type `SlotMap`s guarded by
 per-type `std::shared_mutex`, and accessors return `ReadGuard<T>` (`Memory/ReadGuard.hpp`) which
 holds the lock — don't store a `ReadGuard` past its use site. Loading is reference-counted
 (`acquire_ref`/`release_ref`, atomic `ref_count`); `load_asset` acquires by default.
@@ -260,14 +259,20 @@ Rendering is configured through the CVar system (`Utils/CVars.hpp`): `RendererCV
 
 ### Scripting
 
-Lua via sol2, compiled only when `lua_bindings` is on (`OX_LUA_BINDINGS`; the option strips
-`src/Scripting/*Bindings*` when disabled). `LuaManager` is the module holding the `sol::state` and a
-name-keyed map of `LuaBinding` subclasses (`bind(sol::state*)`), one per subsystem
-(`LuaFlecsBindings`, `LuaSceneBindings`, `LuaPhysicsBindings`, ...).
+Every scene script implements `SceneScript` (`Scripting/SceneScript.hpp`). `Scene` keeps them in
+`scripts`, keyed by `ScriptKey`, the script's C# type name. It forwards
+`on_add`/`on_remove`, `on_scene_start`/`stop`/`update`/`render`, `on_scene_fixed_update` once per
+physics step, `on_contacts` with the contacts buffered during a step and handed over on the main
+thread after it, and body activations. Scene JSON lists them under `"scripts"` as `{ "type": ... }`
+entries.
 
-`LuaSystem` is a loaded script asset. `Scene` keeps `lua_systems` keyed by script UUID and forwards
-lifecycle hooks: `on_add`/`on_remove`, `on_scene_start`/`stop`/`update`/`fixed_update`/`render`, and
-Jolt contact callbacks. Scripts can define flecs systems, so gameplay can be written entirely in Lua.
+C# scripting lives in `OxylusScriptingDotNet/` behind the `csharp` option (`OX_DOTNET`); the
+`DotNetScripting` module hosts CoreCLR in the editor and a NativeAOT library in shipped games, over the
+blittable ABI in `DotNetAbi.hpp`. Oxylus doesn't link it, so it plugs in through `SceneScriptHost`
+(`Scene::set_script_host`): every scene gets the host's runtime, which attaches the scene's world and
+gets each hook before the scene's scripts, and `Scene::add_script_type` asks the host for C# scene
+scripts by name. A `ScriptComponent { type_name }` puts a C# behaviour on an entity while the scene
+runs.
 
 ## Conventions
 
@@ -332,7 +337,7 @@ introducing a PCH.
   strong ID enums, small POD structs, and opaque C typedefs (`typedef struct _ENetHost ENetHost;`)
   with no third-party include in sight. Add one when a module starts leaking its heavy header to
   name a handle.
-- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, ImGui, sol2, flecs,
+- **Never pull a heavy third-party header into `Oxylus/include/`** — Jolt, ImGui, flecs,
   simdjson. Existing heavy includes such as the Jolt headers in `Scene/Scene.hpp` are debt,
   not a precedent to copy. Render headers should use `Render/Fwd.hpp` and `<vir/Fwd.hpp>`
   for IDs and opaque graph types. Include recording and execution headers at their use sites.
@@ -366,8 +371,7 @@ preference:
    and use `stack.alloc<T>()`, `stack.alloc<T>(count)` (returns a `std::span<T>`), `stack.alloc_n<T>(...)`,
    or the string helpers `format`, `format_char`, `null_terminate_cstr`, `to_utf8`/`to_utf16`/`to_utf32`,
    `to_upper`/`to_lower`. It bump-allocates from a per-thread stack and rewinds in the destructor, so
-   it costs a pointer bump and no free. See `src/Asset/Texture.cpp`, `src/Render/Passes/CullGeometry.cpp`,
-   `src/Scripting/LuaFlecsBindings.cpp` for the idiom.
+   it costs a pointer bump and no free. See `src/Asset/Texture.cpp`, `src/Render/Passes/CullGeometry.cpp` for the idiom.
    **The memory dies with the `ScopedStack`** — never return, store, or hand to a job/deferred
    callback a pointer, `std::span`, or `std::string_view` that points into it. It is also per-thread
    and non-movable: allocate on the thread that consumes it.
@@ -416,7 +420,7 @@ preference:
   into those 64 bits. Always give it an `Invalid` member — that is what lets `ox::option<FooID>`
   collapse to a flag value with no extra storage.
 
-  The slot-map-backed set is `ModelID`, `TextureID`, `MaterialID`, `SceneID`, `AudioID`, `ScriptID`,
+  The slot-map-backed set is `ModelID`, `TextureID`, `MaterialID`, `SceneID`, `AudioID`,
   `TransformID`, `LightID`, `NetClientID`, `BufferID`, `ImageID`, `ImageViewID`, `SamplerID`,
   `PipelineID`. A new ID belongs next to the type it identifies.
 

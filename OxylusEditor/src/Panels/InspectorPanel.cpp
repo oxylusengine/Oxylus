@@ -20,6 +20,9 @@
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
 #include "Scene/EntitySerializer.hpp"
+#ifdef OX_DOTNET
+  #include "Scripting/DotNetScripting.hpp"
+#endif
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
@@ -55,8 +58,6 @@ static auto expected_asset_type(const std::string_view field_name) -> AssetType 
     return AssetType::ParticleSystem;
   if (has("terrain"))
     return AssetType::Terrain;
-  if (has("script"))
-    return AssetType::Script;
   if (has("scene") || has("prefab"))
     return AssetType::Scene;
 
@@ -67,6 +68,78 @@ static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> c
   const auto total = static_cast<i32>(seconds);
 
   return stack.format_char("{}:{:02}", total / 60, total % 60);
+}
+
+// no undo here, the observer only fires through `set`, which a property command writing through a pointer skips
+static auto draw_script_component(flecs::entity entity) -> void {
+  const auto current = entity.get<ScriptComponent>().type_name;
+
+  auto behaviours = std::vector<std::string>{};
+  auto is_loaded = false;
+#ifdef OX_DOTNET
+  if (App::has_mod<DotNetScripting>()) {
+    auto& dotnet = App::mod<DotNetScripting>();
+    is_loaded = dotnet.is_loaded();
+    for (const auto& script_type : dotnet.script_types) {
+      if (script_type.kind == OxScriptKind::EntityBehaviour) {
+        behaviours.push_back(script_type.name);
+      }
+    }
+  }
+#endif
+
+  const auto is_missing = !current.empty() && is_loaded && std::ranges::find(behaviours, current) == behaviours.end();
+  const auto warning_color = ImVec4{1.0f, 0.75f, 0.2f, 1.0f};
+
+  UI::begin_property_grid("Type", nullptr);
+  if (is_loaded) {
+    const auto preview = current.empty() ? std::string("None") : is_missing ? current + " (missing)" : current;
+    if (is_missing) {
+      ImGui::PushStyleColor(ImGuiCol_Text, warning_color);
+    }
+
+    const auto is_open = ImGui::BeginCombo("##script_type", preview.c_str());
+    if (is_missing) {
+      ImGui::PopStyleColor();
+    }
+
+    if (is_open) {
+      if (is_missing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, warning_color);
+        ImGui::Selectable((current + " (missing)").c_str(), true);
+        ImGui::PopStyleColor();
+      }
+
+      for (const auto& name : behaviours) {
+        const auto is_current = name == current;
+        if (ImGui::Selectable(name.c_str(), is_current) && !is_current) {
+          entity.set<ScriptComponent>({.type_name = name});
+        }
+      }
+
+      ImGui::EndCombo();
+    }
+  } else {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(current.empty() ? "None" : current.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(scripts aren't built yet)");
+  }
+
+  UI::end_property_grid();
+
+  static std::string typed_name = {};
+  UI::begin_property_grid("Name", "type a behaviour's full name, like Game.Spinner");
+  if (ImGui::GetActiveID() != ImGui::GetID("##script_type_name")) {
+    typed_name = current;
+  }
+
+  ImGui::InputText("##script_type_name", &typed_name);
+  if (ImGui::IsItemDeactivatedAfterEdit() && typed_name != current) {
+    entity.set<ScriptComponent>({.type_name = typed_name});
+  }
+
+  UI::end_property_grid();
 }
 
 struct EntityInspector : IEntitySerializer {
@@ -635,7 +708,12 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     }
     ImGui::PopID();
 
-    if (open && ty.has<flecs::TypeSerializer>()) {
+    if (open && fid == entity.world().id<ScriptComponent>()) {
+      UI::begin_properties(ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV);
+      draw_script_component(entity);
+      UI::end_properties();
+      ImGui::TreePop();
+    } else if (open && ty.has<flecs::TypeSerializer>()) {
       ImGuiTableFlags properties_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV;
 
       UI::begin_properties(properties_flags);
@@ -874,7 +952,6 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
   const auto path = App::get_vfs().to_physical(asset->path);
   const auto material_id = type == AssetType::Material ? asset->material_id : MaterialID::Invalid;
   const auto audio_id = type == AssetType::Audio ? asset->audio_id : AudioID::Invalid;
-  const auto script_id = type == AssetType::Script ? asset->script_id : ScriptID::Invalid;
   const auto skeleton_id = type == AssetType::Skeleton ? asset->skeleton_id : SkeletonID::Invalid;
   const auto animation_id = type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
   const auto cinematic_id = type == AssetType::Cinematic ? asset->cinematic_id : CinematicID::Invalid;
@@ -882,6 +959,7 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
 
   switch (type) {
     case AssetType::None   :
+    case AssetType::Script : // retired with Lua scripting
     case AssetType::Shader : // TODO: Shaders
     case AssetType::Texture: // TODO: Textures
     case AssetType::Font   : // TODO: Fonts
@@ -964,11 +1042,6 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
     case AssetType::Audio: {
       ImGui::SeparatorText("Audio");
       self.draw_audio_asset(path, asset_man.get_audio(audio_id));
-      break;
-    }
-    case AssetType::Script: {
-      ImGui::SeparatorText("Script");
-      self.draw_script_asset(asset_man.get_script(script_id));
       break;
     }
   }
@@ -1136,22 +1209,5 @@ auto InspectorPanel::draw_audio_asset(
   if (ImGui::SliderFloat("##preview_volume", &volume, 0.0f, 1.0f, "Volume %.2f")) {
     audio_engine.set_source_volume(source, volume);
   }
-}
-
-auto InspectorPanel::draw_script_asset(this InspectorPanel& self, ReadGuard<LuaScript> script) -> void {
-  ZoneScoped;
-  memory::ScopedStack stack;
-
-  if (!script) {
-    ImGui::TextUnformatted("Couldn't load script.");
-    return;
-  }
-
-  auto script_path_str = script->path.string();
-
-  UI::begin_properties(ImGuiTableFlags_SizingFixedFit);
-  UI::text("File", stack.format("{}", script->path.filename()));
-  UI::input_text("Path", &script_path_str, ImGuiInputTextFlags_ReadOnly);
-  UI::end_properties();
 }
 } // namespace ox

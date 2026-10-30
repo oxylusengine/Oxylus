@@ -19,7 +19,6 @@
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Scene/Scene.hpp"
-#include "Scripting/LuaScript.hpp"
 
 namespace ox {
 class AudioEngine;
@@ -39,7 +38,6 @@ struct Asset {
     MaterialID material_id;
     SceneID scene_id;
     AudioID audio_id;
-    ScriptID script_id;
     TerrainEditsID terrain_edits_id;
     ParticleSystemID particle_system_id;
     SkeletonID skeleton_id;
@@ -128,6 +126,10 @@ public:
   auto get_null_material(this AssetManager& self) -> ReadGuard<Asset>;
   auto get_material(this AssetManager& self, const UUID& uuid) -> ReadGuard<Material>;
   auto get_material(this AssetManager& self, MaterialID material_id) -> ReadGuard<Material>;
+  // replaces a loaded material's parameters and marks it dirty. Every texture it newly names is loaded and gets as many
+  // references as the material has holders, the ones it stops naming give those back, the way releasing the material
+  // would. False when `uuid` isn't a loaded material or a new texture won't load
+  auto set_material(this AssetManager& self, const UUID& uuid, const Material& material) -> bool;
   auto set_material_dirty(this AssetManager& self, MaterialID material_id) -> void;
   auto set_material_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
@@ -139,11 +141,6 @@ public:
   auto get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource>;
   auto get_audio(this AssetManager& self, AudioID audio_id) -> ReadGuard<AudioSource>;
 
-  auto get_script(this AssetManager& self, const UUID& uuid) -> ReadGuard<LuaScript>;
-  auto get_script(this AssetManager& self, ScriptID script_id) -> ReadGuard<LuaScript>;
-  // re-reads a loaded script's payload in place, for one that was cooked again while it was loaded
-  auto reload_script(this AssetManager& self, const UUID& uuid) -> bool;
-
   auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
   auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
   auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
@@ -152,6 +149,9 @@ public:
   // registry, and it takes no reference because holders acquire
   auto publish_skeleton(this AssetManager& self, const UUID& uuid, Skeleton&& skeleton) -> bool;
   auto publish_animation(this AssetManager& self, const UUID& uuid, AnimationClip&& clip) -> bool;
+  // for payloads built in code instead of read from the asset's file
+  auto publish_texture(this AssetManager& self, const UUID& uuid, Texture&& texture) -> bool;
+  auto publish_model(this AssetManager& self, const UUID& uuid, Model&& model) -> bool;
 
   auto get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton>;
   auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> ReadGuard<Skeleton>;
@@ -206,11 +206,6 @@ private:
   auto load_audio(this AssetManager& self, const std::filesystem::path& path) -> AudioID;
   auto unload_audio(this AssetManager& self, AudioID audio_id) -> bool;
 
-  auto load_script(
-    this AssetManager& self, const std::filesystem::path& path, const std::filesystem::path& source_path = {}
-  ) -> ScriptID;
-  auto unload_script(this AssetManager& self, ScriptID script_id) -> bool;
-
   auto load_terrain_edits(this AssetManager& self, const std::filesystem::path& path) -> TerrainEditsID;
   auto unload_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> bool;
 
@@ -237,7 +232,6 @@ private:
   std::shared_mutex materials_mutex = {};
   std::shared_mutex scenes_mutex = {};
   std::shared_mutex audio_mutex = {};
-  std::shared_mutex scripts_mutex = {};
   std::shared_mutex terrain_edits_mutex = {};
   std::shared_mutex particle_systems_mutex = {};
   std::shared_mutex skeletons_mutex = {};
@@ -260,7 +254,6 @@ private:
   SlotMap<Material, MaterialID> material_map = {};
   SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
   SlotMap<AudioSource, AudioID> audio_map = {};
-  SlotMap<std::unique_ptr<LuaScript>, ScriptID> script_map = {};
   SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
   SlotMap<ParticleSystem, ParticleSystemID> particle_system_map = {};
   SlotMap<Skeleton, SkeletonID> skeleton_map = {};

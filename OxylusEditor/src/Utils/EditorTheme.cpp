@@ -41,7 +41,7 @@ auto EditorTheme::init(this EditorTheme& self) -> void {
   auto icon_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/materialdesignicons-webfont.ttf");
   auto mono_font_path = vfs.resolve_physical_dir(VFS::APP_DIR, "Fonts/FiraMono-Regular.ttf");
 
-  // Only this font is loaded by default on editor for RmlUI. The rest of the user fonts should be loaded from lua.
+  // Only this font is loaded by default on editor for RmlUI. The rest of the user fonts should be loaded by the game.
   if (!Rml::LoadFontFace(regular_font_path.string())) {
     OX_LOG_ERROR("Couldn't load font face for RMLUI!");
   }

@@ -198,6 +198,10 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   self.editor_context.reset();
   self.scene_manager.reset();
 
+#ifdef OX_DOTNET
+  self.csharp_scripts.close();
+#endif
+
   Log::remove_callback("editor_notifications");
 
   ImPlot::DestroyContext();
@@ -213,9 +217,16 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   // the panels below read the notification containers, and workers only ever queue into them
   self.notification_system.drain_pending();
 
+#ifdef OX_DOTNET
+  const auto is_scripts_loading = self.csharp_scripts.is_loading();
+#else
+  const auto is_scripts_loading = false;
+#endif
+
   // A scene names its assets by UUID, and those only exist once the scan has registered them, so
-  // opening it waits for the import rather than landing on entities with missing meshes.
-  if (self.pending_start_scene.has_value() && !asset_scan_active()) {
+  // opening it waits for the import rather than landing on entities with missing meshes. Its C#
+  // components only exist once the scripts load, and a save would write the scene without them.
+  if (self.pending_start_scene.has_value() && !asset_scan_active() && !is_scripts_loading) {
     const auto scene_path = self.pending_start_scene.value();
     self.pending_start_scene = nullopt;
     if (!self.open_scene(scene_path)) {
@@ -227,6 +238,10 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
 
   auto& shp = self.editor_panel_registry.get<SceneHierarchyPanel>();
   self.main_viewport_panel.update(timestep, &shp);
+
+#ifdef OX_DOTNET
+  self.csharp_scripts.update(self.main_viewport_panel.is_any_scene_playing());
+#endif
 
   auto& render_context = App::get_rendercontext();
   auto& imgui_renderer = App::mod<ImGuiRenderer>();

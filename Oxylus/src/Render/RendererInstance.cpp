@@ -1891,6 +1891,9 @@ auto RendererInstance::record_frame(
         .height_edit = module.declare_image_var("terrain height edit", vir::Format::R32Sfloat, TERRAIN_EDIT_REST);
       prepared.terrain
         .splat_edit = module.declare_image_var("terrain splat edit", vir::Format::RGBA8Unorm, TERRAIN_EDIT_REST);
+      prepared.terrain.track = module.declare_buffer_var("terrain track", vir::Access::None);
+      prepared.terrain.track_points = module.declare_buffer_var("terrain track points", vir::Access::None);
+      prepared.terrain.stamps = module.declare_buffer_var("terrain stamps", vir::Access::None);
       terrain_brush_context.maps = TerrainMapValues{
         .heightmap = prepared.terrain.heightmap,
         .ridgemap = prepared.terrain.ridgemap,
@@ -1899,6 +1902,9 @@ auto RendererInstance::record_frame(
         .patch_minmax = prepared.terrain.patch_minmax,
         .height_edit = prepared.terrain.height_edit,
         .splat_edit = prepared.terrain.splat_edit,
+        .track = prepared.terrain.track,
+        .track_points = prepared.terrain.track_points,
+        .stamps = prepared.terrain.stamps,
       };
       self.apply_terrain_brush(module, recording, terrain_brush_context);
       terrain_context.heightmap_attachment = terrain_brush_context.maps.heightmap;

@@ -10,11 +10,6 @@ target("Oxylus")
 
     add_options("profile")
     add_options("llvmpipe")
-    if not has_config("lua_bindings") then
-        remove_files("./src/Scripting/*Bindings*")
-    else
-        add_defines("OX_LUA_BINDINGS")
-    end
 
     if is_plat("windows") then
         add_defines("_UNICODE", { force = true, public = true  })
@@ -62,10 +57,10 @@ target("Oxylus")
         target:add("includedirs", path.join(target:autogendir(), "version"))
 
         -- the rmlui package lists its libs in whatever order its install dir gives, and GNU ld needs the
-        -- bindings ahead of the core
+        -- debugger ahead of the core
         local rmlui = target:pkg("rmlui")
         if rmlui then
-            local bindings = {"rmlui_lua", "rmlui_debugger"}
+            local bindings = {"rmlui_debugger"}
             local links = table.wrap(rmlui:get("links"))
             local ordered = {}
             for _, link in ipairs(bindings) do
@@ -123,8 +118,6 @@ target("Oxylus")
         "simdutf",
         "joltphysics",
         "glm",
-        "lua",
-        "sol2",
         "toml++",
         "loguru",
         "simdjson",

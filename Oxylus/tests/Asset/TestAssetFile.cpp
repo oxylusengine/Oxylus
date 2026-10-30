@@ -363,8 +363,8 @@ TEST_F(AssetFileTest, RejectsACorruptCompressedPayload) {
     auto in = std::ifstream(path, std::ios::binary);
     bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
   }
-  // the header is the magic, the version and the flags, the zstd frame starts right after
-  constexpr auto header_size = sizeof(u32) + sizeof(u16) + sizeof(u32);
+  // the header is the magic, the version, the flags and the source hash, the zstd frame starts right after
+  constexpr auto header_size = sizeof(u32) + sizeof(u16) + sizeof(u32) + sizeof(u64);
   ASSERT_GT(bytes.size(), header_size + 4);
   for (auto i = header_size; i < header_size + 4; i++) {
     bytes[i] = 0xFF;
@@ -375,6 +375,22 @@ TEST_F(AssetFileTest, RejectsACorruptCompressedPayload) {
   }
 
   EXPECT_FALSE(AssetFile::unpack(path).has_value());
+}
+
+TEST_F(AssetFileTest, KeepsTheSourceHashInTheHeader) {
+  auto file = AssetFile{.source_hash = 0x0123456789ABCDEF_u64};
+  file.add_entry(make_model());
+
+  const auto path = directory / "hashed.oxpack";
+  ASSERT_TRUE(file.pack(path));
+  const auto read_hash = AssetFile::read_source_hash(path);
+  ASSERT_TRUE(read_hash.has_value());
+  EXPECT_EQ(*read_hash, 0x0123456789ABCDEF_u64);
+
+  const auto unpacked = AssetFile::unpack(path);
+  ASSERT_TRUE(unpacked.has_value());
+  EXPECT_EQ(unpacked->source_hash, 0x0123456789ABCDEF_u64);
+  EXPECT_FALSE(AssetFile::read_source_hash(directory / "missing.oxpack").has_value());
 }
 
 TEST_F(AssetFileTest, PacksAndUnpacksAScene) {

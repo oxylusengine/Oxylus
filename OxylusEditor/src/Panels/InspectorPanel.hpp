@@ -49,7 +49,6 @@ public:
 
   auto draw_audio_asset(this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio)
     -> void;
-  auto draw_script_asset(this InspectorPanel& self, ReadGuard<LuaScript> script) -> void;
 
 private:
   struct ComponentClipboard {

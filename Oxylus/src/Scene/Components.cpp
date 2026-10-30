@@ -2,23 +2,13 @@
 
 #include "Scene/ComponentRegistry.hpp"
 
-#ifdef OX_LUA_BINDINGS
-  #include "Core/App.hpp"
-  #include "Scripting/LuaManager.hpp"
-#endif
-
 namespace ox {
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
   world.module<CoreComponentsModule>("Core");
 
-#ifdef OX_LUA_BINDINGS
-  auto* state = App::mod<LuaManager>().get_state();
-  auto registry = ComponentRegistry{world, state, state->create_named_table("Core")};
-#else
   auto registry = ComponentRegistry{world};
-#endif
 
   // Math types
   registry.bind_value<&glm::vec2::x, &glm::vec2::y>("glm::vec2");
@@ -312,6 +302,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::attachment,
       &C::radius,
       &C::width,
+      &C::grip,
       &C::suspension_min_length,
       &C::suspension_max_length,
       &C::suspension_frequency,
@@ -378,6 +369,11 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   {
     using C = TonemappingComponent;
     registry.bind<&C::tonemap_type>();
+  }
+
+  {
+    using C = ScriptComponent;
+    registry.bind<&C::type_name>();
   }
 }
 } // namespace ox

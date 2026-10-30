@@ -53,13 +53,13 @@ bool ObjectVsBroadPhaseLayerFilterImpl::ShouldCollide(JPH::ObjectLayer inLayer1,
 void Physics3DBodyActivationListener::OnBodyActivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) {
   ZoneScoped;
 
-  /* Body Activated */
+  _scene->on_body_activated(inBodyID, inBodyUserData);
 }
 
 void Physics3DBodyActivationListener::OnBodyDeactivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) {
   ZoneScoped;
 
-  /* Body Deactivated */
+  _scene->on_body_deactivated(inBodyID, inBodyUserData);
 }
 
 void Physics3DContactListener::GetFrictionAndRestitution(
@@ -118,7 +118,7 @@ void Physics3DContactListener::OnContactAdded(
 
   OverrideContactSettings(inBody1, inBody2, inManifold, ioSettings);
 
-  _scene->on_contact_added(inBody1, inBody2, inManifold, ioSettings);
+  _scene->on_contact_added(inBody1, inBody2, inManifold);
 }
 
 void Physics3DContactListener::OnContactPersisted(
@@ -131,7 +131,7 @@ void Physics3DContactListener::OnContactPersisted(
 
   OverrideContactSettings(inBody1, inBody2, inManifold, ioSettings);
 
-  _scene->on_contact_persisted(inBody1, inBody2, inManifold, ioSettings);
+  _scene->on_contact_persisted(inBody1, inBody2, inManifold);
 }
 
 void Physics3DContactListener::OnContactRemoved(const JPH::SubShapeIDPair& inSubShapePair) {

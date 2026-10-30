@@ -1,6 +1,5 @@
 local fmt_version = "12.1.0"
 local fmt_configs = { header_only = false, shared = false }
-local lua_version = "v5.4.7"
 local imgui_version = "v1.92.9b-docking"
 local simdjson_version = "v4.2.4"
 local vulkan_headers_version = "1.4.335+0"
@@ -77,8 +76,6 @@ packages = {
     },
   },
   ["tracy " .. tracy_version] = { configs = tracy_configs },
-  ["lua " .. lua_version] = {},
-  ["sol2 c1f95a773c6f8f4fde8ca3efe872e7286afe4444"] = { configs = { includes_lua = false } },
   ["unordered_dense " .. unordered_dense_version] = {},
   ["svector " .. svector_version] = {},
   ["plf_colony v7.41"] = {},
@@ -86,7 +83,6 @@ packages = {
   ["rmlui f7b297e2c8fc44c5e85df498dbae91762c0769a5"] = {
     configs = {
       shared = false,
-      lua = true,
     },
     debug = is_mode("debug")
   },
@@ -125,16 +121,6 @@ confs = {
       version = simdjson_version,
       system = false,
     },
-  },
-
-  {
-    package = "lua",
-    override = "rmlui.lua",
-    configs = {
-      override = true,
-      version = lua_version,
-      system = false,
-    }
   },
 
   {
