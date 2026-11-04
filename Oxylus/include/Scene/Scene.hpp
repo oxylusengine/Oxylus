@@ -11,7 +11,11 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 // clang-format on
 
+#include <expected>
+#include <mutex>
 #include <simdjson.h>
+#include <span>
+#include <vector>
 
 #include "Animation/Pose.hpp"
 #include "Animation/PoseTaskSystem.hpp"
@@ -26,7 +30,7 @@
 #include "Scene/Components.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
-#include "Scripting/LuaSystem.hpp"
+#include "Scripting/SceneScript.hpp"
 #include "Utils/Timestep.hpp"
 
 namespace Rml {
@@ -61,6 +65,36 @@ struct ComponentDB {
   auto is_component_known(this ComponentDB&, flecs::id component_id) -> bool;
   auto get_components(this ComponentDB&) -> std::span<flecs::id>;
 };
+
+enum class ComponentFieldType : u8 {
+  F32,
+  F64,
+  I8,
+  I16,
+  I32,
+  I64,
+  U8,
+  U16,
+  U32,
+  U64,
+  Bool,
+  String,
+  Vec2,
+  Vec3,
+  Vec4,
+  Quat,
+};
+
+struct ComponentField {
+  std::string_view name = {};
+  ComponentFieldType type = ComponentFieldType::F32;
+};
+
+// a component a script defines at runtime. Registering it in `component_db` is what makes serialization and the
+// inspector see it, and defining one that already exists keeps its members, so data survives a script reload
+auto define_component(
+  flecs::world& world, ComponentDB* component_db, std::string_view name, std::span<const ComponentField> fields
+) -> flecs::entity;
 
 // kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
 struct AnimationInstance {
@@ -194,6 +228,10 @@ public:
   flecs::entity terrain_entity = {};
   bool terrain_dirty = false;
   UUID terrain_edits_ref = {};
+  // runtime state a script sets, never saved with the scene
+  std::vector<TerrainWaypoint> terrain_track = {};
+  f32 terrain_track_smoothing = 0.0f;
+  std::vector<TerrainStampDesc> terrain_stamps = {};
 
   bool meshes_dirty = false;
   u32 gpu_mesh_instance_count = 0;
@@ -304,31 +342,33 @@ public:
 
   auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
-  auto get_lua_system(this const Scene& self, const UUID& lua_script) -> LuaSystem*;
-  auto get_lua_systems(this const Scene& self) -> const ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>>&;
-  auto add_lua_system(this Scene& self, const UUID& lua_script) -> void;
-  auto remove_lua_system(this Scene& self, const UUID& lua_script) -> void;
+  auto define_component(this Scene& self, std::string_view name, std::span<const ComponentField> fields)
+    -> flecs::entity;
+  auto undefine_component(this Scene& self, flecs::entity component) -> void;
+
+  auto get_scripts(this const Scene& self)
+    -> const ankerl::unordered_dense::map<ScriptKey, std::unique_ptr<SceneScript>>&;
+  // a script the scene script host creates from its type name
+  auto add_script_type(this Scene& self, std::string_view type_name) -> std::expected<void, std::string>;
+  auto add_script(this Scene& self, ScriptKey key, std::unique_ptr<SceneScript> script) -> SceneScript*;
+  auto remove_script(this Scene& self, const ScriptKey& key) -> void;
+
+  // scenes created after this get the host's runtime, the ones already alive keep what they have
+  static auto set_script_host(SceneScriptHost* host) -> void;
 
   // Physics
   auto get_physics_system(this const Scene& self) -> JPH::PhysicsSystem*;
   auto cast_ray(this const Scene& self, const RayCast& ray_cast)
     -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>;
-  auto on_contact_added(
-    const JPH::Body& body1,
-    const JPH::Body& body2,
-    const JPH::ContactManifold& manifold,
-    const JPH::ContactSettings& settings
-  ) -> void;
-  auto on_contact_persisted(
-    const JPH::Body& body1,
-    const JPH::Body& body2,
-    const JPH::ContactManifold& manifold,
-    const JPH::ContactSettings& settings
-  ) -> void;
+  auto on_contact_added(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold) -> void;
+  auto on_contact_persisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
+    -> void;
   auto on_contact_removed(const JPH::SubShapeIDPair& sub_shape_pair) -> void;
 
-  auto on_body_activated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
-  auto on_body_deactivated(const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
+  // jolt reports these from inside its own body locks, on any thread and from any BodyInterface call, so they are
+  // queued and handed to scripts after the next physics step
+  auto on_body_activated(this Scene& self, const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
+  auto on_body_deactivated(this Scene& self, const JPH::BodyID& body_id, JPH::uint64 body_user_data) -> void;
 
   // Both read the entity's world transform, so neither takes a TransformComponent: a body on a child
   // entity has to be placed in world space, not at its local offset.
@@ -340,6 +380,9 @@ public:
   auto sync_terrain_edits(this Scene& self) -> void;
   auto set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void;
   auto clear_terrain_edits(this Scene& self) -> void;
+  // rebakes the terrain with the track pressed in, an empty track takes it back out
+  auto set_terrain_track(this Scene& self, std::span<const TerrainWaypoint> waypoints, f32 smoothing) -> void;
+  auto set_terrain_stamps(this Scene& self, std::span<const TerrainStampDesc> stamps) -> void;
 
   // Needs the chassis rigidbody to exist already, so it runs after create_rigidbody. Wheels are read
   // from child entities carrying VehicleWheelComponent, in hierarchy order.
@@ -411,8 +454,21 @@ private:
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 
-  // Lua. Owned per scene, not borrowed from the asset: a shared instance means two scenes share one environment.
-  ankerl::unordered_dense::map<UUID, std::unique_ptr<LuaSystem>> lua_systems = {};
+  // owned per scene, not borrowed from the asset: a shared instance means two scenes share one environment
+  ankerl::unordered_dense::map<ScriptKey, std::unique_ptr<SceneScript>> scripts = {};
+  // the script host's, neither serialized nor removable, so it is kept out of `scripts`
+  std::unique_ptr<SceneScript> script_runtime = nullptr;
+
+  template <typename F>
+  auto for_each_script(this Scene& self, F&& f) -> void {
+    if (self.script_runtime) {
+      f(*self.script_runtime);
+    }
+
+    for (auto& [_, script] : self.scripts) {
+      f(*script);
+    }
+  }
 
   // Renderer
   std::unique_ptr<RendererInstance> renderer_instance = nullptr;
@@ -420,11 +476,23 @@ private:
   glm::ivec2 rml_surface_size = {};
 
   // Physics
-  std::shared_mutex physics_mutex = {};
+  struct BodyActivation {
+    JPH::BodyID body_id = {};
+    u64 body_user_data = 0;
+    bool is_activated = false;
+  };
+
+  std::mutex body_activations_mutex = {};
+  std::vector<BodyActivation> pending_body_activations = {};
+  std::mutex contacts_mutex = {};
+  std::vector<PhysicsContact> pending_contacts = {};
   std::unique_ptr<JPH::PhysicsSystem> physics_system = nullptr;
   std::unique_ptr<Physics3DContactListener> contact_listener_3d = nullptr;
   std::unique_ptr<Physics3DBodyActivationListener> body_activation_listener_3d = nullptr;
   JPH::BodyID terrain_body_id = {};
+
+  auto dispatch_body_activations(this Scene& self) -> void;
+  auto dispatch_contacts(this Scene& self) -> void;
 
   auto add_transform(this Scene& self, flecs::entity entity) -> GPU::TransformID;
   auto remove_transform(this Scene& self, flecs::entity entity) -> void;

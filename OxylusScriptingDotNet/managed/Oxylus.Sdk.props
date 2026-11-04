@@ -1,0 +1,30 @@
+<Project>
+  <!-- what a game's C# project builds with, imported through the Oxylus.props next to it. It sits beside the
+       Oxylus.Scripting.dll it references, the editor's copy or the one an oxylus package installs -->
+  <PropertyGroup>
+    <OxylusSdkDir Condition="'$(OxylusSdkDir)' == ''">$(MSBuildThisFileDirectory)</OxylusSdkDir>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- a shipped game is one NativeAOT shared library, and this also turns on the AOT analyzers for every build, so
+         code that would break it fails in the editor -->
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- a build with its artifacts elsewhere would otherwise compile what an editor build left in obj -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2050;IL2055;IL2057;IL2058;IL2060;IL2067;IL2070;IL2072;IL2075;IL2077;IL2080;IL2087;IL2090;IL2091;IL2111;IL3050;IL3051;IL3055;IL3056</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the editor loads its own copy once for every project, so a build doesn't bring one, but NativeAOT compiles it
+         into the game -->
+    <Reference Include="Oxylus.Scripting" HintPath="$(OxylusSdkDir)Oxylus.Scripting.dll" Private="false"
+               Condition="'$(_IsPublishing)' != 'true'" />
+    <Reference Include="Oxylus.Scripting" HintPath="$(OxylusSdkDir)Oxylus.Scripting.dll"
+               Condition="'$(_IsPublishing)' == 'true'" />
+    <Analyzer Include="$(OxylusSdkDir)Oxylus.Scripting.Generators.dll" />
+    <Compile Include="$(OxylusAssetDir)**/*.cs" />
+  </ItemGroup>
+</Project>

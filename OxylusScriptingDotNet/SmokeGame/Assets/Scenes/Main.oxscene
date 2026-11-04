@@ -1,0 +1,223 @@
+{
+  "name": "Main",
+  "config": {
+    "debug": {
+      "enable_debug_renderer": true,
+      "draw_bounding_boxes": false,
+      "enable_physics_debug_renderer": false
+    },
+    "color": {
+      "tonemapper": 0,
+      "exposure": 1,
+      "gamma": 2.2
+    },
+    "gtao": {
+      "enabled": true,
+      "quality_level": 3,
+      "thickness": 0.25,
+      "radius": 0.5,
+      "final_power": 1.2
+    },
+    "raytracing": {
+      "skinned_rebuild_budget": 50000,
+      "skinned_max_refits": 8
+    },
+    "rtao": {
+      "enabled": false,
+      "ray_count": 2,
+      "radius": 1,
+      "power": 1
+    },
+    "ddgi": {
+      "enabled": true,
+      "rays_per_probe": 144,
+      "max_ray_distance": 50,
+      "max_ray_radiance": 25,
+      "update_max_interval": 8,
+      "update_full_rate_distance": 10,
+      "probe_relocation": true,
+      "min_frontface_distance": 0.5,
+      "shadow_ray_offset": 0.05,
+      "normal_bias": 0.25,
+      "view_bias": 0.1,
+      "hysteresis": 0.97,
+      "max_brightness_step": 0.1,
+      "firefly_ratio": 32,
+      "hysteresis_dark_bias": 0.15,
+      "intensity": 1,
+      "probe_debug_radius": 0.1,
+      "distance_culling": true
+    },
+    "bloom": {
+      "enabled": true,
+      "threshold": 1,
+      "soft_threshold": 0.125,
+      "radius": 0.75,
+      "intensity": 0.1,
+      "clamp": 4
+    },
+    "particles": {
+      "enabled": true,
+      "sort": true
+    },
+    "fxaa": {
+      "enabled": false
+    },
+    "upscaler": {
+      "backend": 1,
+      "quality": 0,
+      "sharpness": 0
+    },
+    "contact_shadows": {
+      "enabled": true,
+      "steps": 8,
+      "thickness": 0.1,
+      "length": 0.01
+    }
+  },
+  "scripts": [
+    {
+      "type": "SmokeGame.GameLoop"
+    }
+  ],
+  "entities": [
+    {
+      "name": "Sun",
+      "tags": [],
+      "components": [
+        {
+          "::ox::Core::TransformComponent": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotation": {
+              "x": 0.270598,
+              "y": 0.653281,
+              "z": -0.270598,
+              "w": 0.653281
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        },
+        {
+          "::ox::Core::LayerComponent": {
+            "layer": 1
+          }
+        },
+        {
+          "::ox::Core::LightComponent": {
+            "type": 0,
+            "color": {
+              "x": 0.02,
+              "y": 0.02,
+              "z": 0.02
+            },
+            "intensity": 10,
+            "radius": 1,
+            "outer_cone_angle": 70,
+            "inner_cone_angle": 0,
+            "cast_shadows": true,
+            "first_cascade_far_bound": 10,
+            "maximum_shadow_distance": 1000,
+            "minimum_shadow_distance": 0.01,
+            "first_clipmap_width": 10,
+            "clipmap_selection_bias": -0.5
+          }
+        },
+        {
+          "::ox::Core::AtmosphereComponent": {
+            "rayleigh_scattering": {
+              "x": 5.802,
+              "y": 13.558,
+              "z": 33.1
+            },
+            "rayleigh_density": 8,
+            "mie_scattering": {
+              "x": 3.996,
+              "y": 3.996,
+              "z": 3.996
+            },
+            "mie_density": 1.2,
+            "mie_extinction": 4.44,
+            "mie_asymmetry": 3.6,
+            "mie_haze_amount": 0.7,
+            "mie_haze_scale_height": 11,
+            "ozone_absorption": {
+              "x": 0.65,
+              "y": 1.881,
+              "z": 0.085
+            },
+            "ozone_height": 25,
+            "ozone_thickness": 15,
+            "aerial_perspective_start_km": 8,
+            "aerial_perspective_exposure": 1
+          }
+        },
+        {
+          "::ox::Core::AutoExposureComponent": {
+            "min_exposure": -11.5,
+            "max_exposure": 18,
+            "adaptation_speed": 1.1,
+            "ev100_bias": 1
+          }
+        }
+      ],
+      "children": []
+    },
+    {
+      "name": "Camera",
+      "tags": [],
+      "components": [
+        {
+          "::ox::Core::TransformComponent": {
+            "position": {
+              "x": 0,
+              "y": 1.5,
+              "z": 6
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        },
+        {
+          "::ox::Core::LayerComponent": {
+            "layer": 1
+          }
+        },
+        {
+          "::ox::Core::CameraComponent": {
+            "projection": 0,
+            "fov": 60,
+            "aspect": 1.77778,
+            "far_clip": 1000,
+            "near_clip": 0.01,
+            "tilt": 0,
+            "zoom": 1,
+            "active": true
+          }
+        },
+        {
+          "::ox::Core::ScriptComponent": {
+            "type_name": "SmokeGame.CameraBob"
+          }
+        }
+      ],
+      "children": []
+    }
+  ]
+}

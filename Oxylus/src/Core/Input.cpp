@@ -643,7 +643,7 @@ auto Input::set_gamepad_button_released(u32 instance_id, const GamepadButtonCode
   } else {
     auto data = InputData::GamepadData{};
     data.gamepad_released.insert_or_assign(button, state);
-    it->second.gamepad_held.insert_or_assign(button, !state);
+    data.gamepad_held.insert_or_assign(button, !state);
     input_data.gamepad_data_map.insert_or_assign(instance_id, data);
   }
 

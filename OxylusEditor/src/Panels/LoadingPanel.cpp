@@ -123,6 +123,9 @@ auto LoadingPanel::load_project(this LoadingPanel& self) -> void {
   editor.reset_current_docking_layout();
   editor.editor_cvar.add_recent_project(active_project.get());
   editor.editor_panel_registry.get<ContentPanel>().init();
+#ifdef OX_DOTNET
+  editor.csharp_scripts.open(*active_project);
+#endif
 
   self.project_name = active_project->get_config().name;
   self.phase = Phase::Cooking;
@@ -202,8 +205,8 @@ auto LoadingPanel::on_update(this LoadingPanel& self) -> void {
       break;
     }
     case Phase::OpeningScene: {
-      // `Editor::update` opens it on the same frame the scan clears, ahead of this panel's tick, so
-      // this is normally already satisfied on entry
+      // `Editor::update` opens it ahead of this panel's tick once the scan clears and the project's C#
+      // scripts have loaded
       if (editor.pending_start_scene.has_value()) {
         break;
       }

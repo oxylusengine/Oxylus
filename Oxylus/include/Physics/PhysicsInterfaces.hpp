@@ -59,11 +59,14 @@ public:
 
 class Physics3DBodyActivationListener : public JPH::BodyActivationListener {
 public:
-  void OnBodyActivated([[maybe_unused]] const JPH::BodyID& inBodyID,
-                       [[maybe_unused]] JPH::uint64 inBodyUserData) override;
+  Physics3DBodyActivationListener(ox::Scene* scene) : _scene(scene) {}
 
-  void OnBodyDeactivated([[maybe_unused]] const JPH::BodyID& inBodyID,
-                         [[maybe_unused]] JPH::uint64 inBodyUserData) override;
+  void OnBodyActivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) override;
+
+  void OnBodyDeactivated(const JPH::BodyID& inBodyID, JPH::uint64 inBodyUserData) override;
+
+private:
+  ox::Scene* _scene = nullptr;
 };
 
 class Physics3DContactListener : public JPH::ContactListener {

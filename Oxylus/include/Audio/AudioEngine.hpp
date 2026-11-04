@@ -3,12 +3,14 @@
 #include <expected>
 #include <glm/ext/vector_float3.hpp>
 #include <string>
+#include <vector>
 
 #include "Core/Types.hpp"
 struct ma_engine;
 struct ma_sound;
 
 namespace ox {
+class Timestep;
 
 class AudioEngine {
 public:
@@ -18,6 +20,8 @@ public:
 
   auto init() -> std::expected<void, std::string>;
   auto deinit() -> std::expected<void, std::string>;
+  // frees the one-shots that finished
+  auto update(this AudioEngine& self, const Timestep& timestep) -> void;
 
   auto get_engine() const -> ma_engine*;
 
@@ -53,6 +57,11 @@ public:
   auto set_source_direction(ma_sound* sound, const glm::vec3& forward) -> void;
   auto set_source_velocity(ma_sound* sound, const glm::vec3& velocity) -> void;
 
+  // plays a copy of `sound` once and frees it when it ends, so a sound can overlap itself. `sound` has to come from a
+  // file, as every AudioSource does. A null `position` plays it flat, any other spatializes it there
+  auto play_one_shot(this AudioEngine& self, ma_sound* sound, f32 volume, const glm::vec3* position) -> bool;
+  auto playing_one_shot_count(this const AudioEngine& self) -> usize;
+
   // -- Listener --
   auto set_listener_cone(u32 listener_index, f32 cone_inner_angle, f32 cone_outer_angle, f32 cone_outer_gain) -> void;
   auto set_listener_position(u32 listener_index, const glm::vec3& position) -> void;
@@ -60,5 +69,6 @@ public:
 
 private:
   ma_engine* engine = nullptr;
+  std::vector<ma_sound*> one_shots = {};
 };
 } // namespace ox

@@ -33,7 +33,6 @@ enum class AssetFileType : u32 {
   DDS,
   JSON,
   KTX2,
-  LUA,
   OXTERRAIN,
   OXPARTICLE,
   OXCINE,
@@ -92,15 +91,10 @@ struct ImportResult {
 // updates its sidecar, creating one (and so a UUID) for a file that has none. Safe to call from several threads, a
 // file reached twice at once is cooked once. Failures are pushed to the session's diagnostics.
 //
-// `assets_dir` is what gets mounted as `VFS::ASSETS_DIR` at runtime. A script's bytecode names its source by the
-// virtual path under it, so errors and `require_script` resolve the same everywhere; empty leaves scripts named by
-// their absolute path.
-//
 // `usage_directive` is how a model oversees its own resources: a glTF knows a sibling file is a normal map, which beats
 // whatever the file alone suggests. A hand-written "usage" in the sidecar still outranks both.
 OXRC_API auto import_asset(
   Session& session,
-  const std::filesystem::path& assets_dir,
   const std::filesystem::path& cooked_dir,
   const std::filesystem::path& path,
   option<TextureUsage> usage_directive = nullopt
@@ -108,8 +102,12 @@ OXRC_API auto import_asset(
 
 // What a game build runs instead of the editor: imports everything under `assets_dir`, cooking into `output_dir`,
 // removes packs there that no asset uses anymore, and writes the `AssetManifest` the game registers its assets from.
-// `output_dir` is mounted as `VFS::COOKED_DIR` at runtime, so it must be dedicated to this.
+// `output_dir` is mounted as `VFS::COOKED_DIR` at runtime, so it must be dedicated to this. `is_forced` throws away
+// every pack already there first, so all of them are cooked again
 OXRC_API auto cook_assets(
-  Session& session, const std::filesystem::path& assets_dir, const std::filesystem::path& output_dir
+  Session& session,
+  const std::filesystem::path& assets_dir,
+  const std::filesystem::path& output_dir,
+  bool is_forced = false
 ) -> bool;
 } // namespace ox::rc

@@ -3,10 +3,10 @@ option("profile")
     set_description("Enable application wide profiling.")
     add_defines("TRACY_ENABLE=1", { public = true })
 
-option("lua_bindings")
+option("csharp")
     set_default(true)
     set_showmenu(true)
-    set_description("Enable Lua bindings")
+    set_description("Enable C# scripting, needs the .NET 10 SDK")
 
 option("tests")
     set_default(false)

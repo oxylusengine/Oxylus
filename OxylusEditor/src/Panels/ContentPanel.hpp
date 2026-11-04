@@ -21,6 +21,10 @@ class FileWatch;
 } // namespace filewatch
 
 namespace ox {
+#ifdef OX_DOTNET
+enum class CSharpScriptKind : u8;
+#endif
+
 class Texture;
 
 enum class FileType {
@@ -33,12 +37,13 @@ enum class FileType {
   Texture,
   Model,
   Audio,
-  Script,
   Material,
   Terrain,
   ParticleSystem,
   Cinematic,
-  UI
+  UI,
+  CSharp,
+  Font
 };
 
 // Resolves what a file on disk is, including the meta-file case where a standalone `.oxasset`
@@ -95,6 +100,11 @@ private:
 
   std::string new_asset_name = {};
   bool should_open_new_asset_popup = false;
+  std::string new_script_name = {};
+#ifdef OX_DOTNET
+  CSharpScriptKind new_script_kind = {};
+#endif
+  bool should_open_new_script_popup = false;
   std::filesystem::path new_folder_parent;
   std::string new_folder_name = {};
   std::string new_folder_error = {};
@@ -110,6 +120,8 @@ private:
   std::filesystem::path directory_to_delete;
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch;
+
+  auto create_csharp_script(this ContentPanel& self) -> void;
 
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;

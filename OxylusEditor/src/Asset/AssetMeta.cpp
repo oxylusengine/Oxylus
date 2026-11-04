@@ -9,8 +9,6 @@
 namespace ox {
 auto write_texture_asset_meta(JsonWriter&, Texture*) -> bool { return true; }
 
-auto write_script_asset_meta(JsonWriter&, LuaScript*) -> bool { return true; }
-
 auto write_terrain_asset_meta(JsonWriter&, const TerrainEdits*) -> bool { return true; }
 
 auto write_particle_system_asset_meta(JsonWriter&, const ParticleSystem*) -> bool { return true; }
@@ -170,10 +168,6 @@ auto export_asset(AssetManager& asset_man, const UUID& uuid, const std::filesyst
       if (material) {
         asset_man.set_pending_load_info(uuid, *material.value);
       }
-    } break;
-    case AssetType::Script: {
-      if (!write_script_asset_meta(writer, nullptr))
-        return false;
     } break;
     case AssetType::Terrain: {
       if (!export_terrain_edits(asset_man, uuid, writer, path))

@@ -909,7 +909,7 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
   if (ImGui::Begin(overlay_id.c_str(), nullptr, window_flags)) {
     ImGui::Text("%.1f FPS (%.1f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
     if (draw) {
-      ImGui::Text("Scripts in scene: %zu", self.editor_scene->get_scene()->get_lua_systems().size());
+      ImGui::Text("Scripts in scene: %zu", self.editor_scene->get_scene()->get_scripts().size());
       const auto transform_entities_count = self.editor_scene->get_scene()->world.count<TransformComponent>();
       ImGui::Text("Entities with transforms: %d", transform_entities_count);
       const auto mesh_entities_count = self.editor_scene->get_scene()->world.count<MeshComponent>();
@@ -2501,7 +2501,15 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
 
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
-      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+#ifdef OX_DOTNET
+      // waits for the build when the C# scripts changed, and stays in edit mode while they don't compile
+      const auto is_ready = App::mod<Editor>().csharp_scripts.prepare_for_play();
+#else
+      const auto is_ready = true;
+#endif
+      if (is_ready) {
+        std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+      }
     }
     ImGui::EndDisabled();
 

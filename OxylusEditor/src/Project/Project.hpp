@@ -27,6 +27,8 @@ struct ProjectConfig {
 
   std::string start_scene = {};
   std::filesystem::path asset_directory = {};
+  // the C# project relative to the project directory, empty when the project has no C# scripts
+  std::filesystem::path scripts_project = {};
 };
 
 struct AssetDirectory {

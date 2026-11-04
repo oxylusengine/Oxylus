@@ -33,6 +33,7 @@ enum class AssetType : u32 {
   Font,
   Scene,
   Audio,
+  // retired with Lua scripting, kept so the values after it stay put
   Script,
   Terrain,
   ParticleSystem,
@@ -97,15 +98,6 @@ struct TextureData {
   // vir::ComponentSwizzle per channel for the view, all identity unless the pack stores fewer channels than it is
   // sampled with (a one-channel BC4 reads back as rrr1)
   std::array<u8, 4> components = {};
-};
-
-struct ScriptData {
-  using serialize_id = zpp::bits::serialization_id<AssetType::Script>;
-
-  std::string name = {};
-  // what `lua_dump` wrote, debug info kept. The chunk name is baked in, and it is the source's virtual path, which is
-  // what errors print and `require_script` resolves siblings against
-  std::vector<u8> bytecode = {};
 };
 
 struct SceneData {
@@ -295,7 +287,7 @@ static_assert(GPU::Mesh::MAX_LODS == 8);
 struct AssetFileEntry {
   PackedUUID uuid = {};
   AssetType type = AssetType::None;
-  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData, ScriptData, SceneData, UIData, FontData> data;
+  std::variant<NoneAsset, ShaderPipelineData, TextureData, ModelData, SceneData, UIData, FontData> data;
 
   constexpr static auto serialize(auto& archive, auto& self) -> zpp::bits::errc {
     if constexpr (std::remove_cvref_t<decltype(archive)>::kind() == zpp::bits::kind::out) {
@@ -320,23 +312,28 @@ consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 6_u16;
+  static constexpr auto VERSION = 7_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;
   AssetFileFlags flags = AssetFileFlags::None;
+  // what the cook made the pack from, so each output can tell whether its own pack is current. The sidecar's hash is
+  // shared by every output that cooks the asset. 0 for a pack no source file produced, like a shader pack
+  u64 source_hash = 0;
 };
 
 struct AssetFile {
   AssetFileFlags flags = AssetFileFlags::Zstd;
+  u64 source_hash = 0;
   std::vector<AssetFileEntry> entries = {};
 
   static auto unpack(const std::filesystem::path& path) -> option<AssetFile>;
+  // the header's source_hash without unpacking the rest, nullopt for a file that isn't a pack of this version
+  static auto read_source_hash(const std::filesystem::path& path) -> option<u64>;
   auto pack(this AssetFile& self, const std::filesystem::path& path) -> bool;
   auto add_entry(this AssetFile& self, ShaderPipelineData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, TextureData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, ModelData&& entry, const PackedUUID& uuid = {}) -> void;
-  auto add_entry(this AssetFile& self, ScriptData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, SceneData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, UIData&& entry, const PackedUUID& uuid = {}) -> void;
   auto add_entry(this AssetFile& self, FontData&& entry, const PackedUUID& uuid = {}) -> void;

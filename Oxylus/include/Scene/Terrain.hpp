@@ -29,6 +29,29 @@ struct TerrainMapValues {
   vir::ValueID height_edit = vir::ValueID::Invalid;
   vir::ValueID splat_edit = vir::ValueID::Invalid;
   vir::ValueID region = vir::ValueID::Invalid;
+  vir::ValueID track = vir::ValueID::Invalid;
+  vir::ValueID track_points = vir::ValueID::Invalid;
+  vir::ValueID stamps = vir::ValueID::Invalid;
+};
+
+// every texel the generate pass writes tests every segment
+constexpr u32 TERRAIN_TRACK_MAX_POINTS = 1024;
+
+constexpr u32 TERRAIN_STAMP_MAX = 64;
+
+// x and y are the world's x and z, the height is in metres and negative presses a trench
+struct TerrainStampDesc {
+  glm::vec2 start = {};
+  glm::vec2 end = {};
+  f32 radius = 0.0f;
+  f32 height = 0.0f;
+};
+
+// x and y are the world's x and z, the track follows the ground
+struct TerrainWaypoint {
+  glm::vec2 position = {};
+  f32 width = 0.0f;
+  f32 shoulder = 0.0f;
 };
 
 auto record_terrain_generate(
@@ -130,6 +153,11 @@ struct Terrain {
 
   TerrainBrush brush = {};
 
+  // the generate pass presses these into the heightmap, in metres from `world_min`
+  std::vector<GPU::TerrainTrackPoint> track_points = {};
+  f32 track_smoothing = 0.0f;
+  std::vector<GPU::TerrainStamp> stamps = {};
+
   // The heightmap only ever exists on the GPU, so the collider is built from a CPU mirror
   // of it, resampled down to `collision_resolution`. `Scene` owns the Jolt body made out of it.
   bool collision_enabled = true;
@@ -173,5 +201,14 @@ struct Terrain {
   auto base_height(this const Terrain& self) -> f32 { return self.world_origin.y + self.height_range.x; }
 
   auto height_scale(this const Terrain& self) -> f32 { return self.height_range.y - self.height_range.x; }
+
+  auto track(this const Terrain& self) -> GPU::TerrainTrack {
+    return {
+      .point_count = static_cast<u32>(self.track_points.size()),
+      .smoothing = self.track_smoothing,
+      .world_size = self.world_size,
+      .stamp_count = static_cast<u32>(self.stamps.size()),
+    };
+  }
 };
 } // namespace ox

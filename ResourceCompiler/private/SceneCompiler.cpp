@@ -66,7 +66,51 @@ static auto collect_entity_references(
   }
 }
 
-auto compile_scene(std::string_view source) -> std::expected<std::string, std::string> {
+static auto append_json_string(std::string& out, std::string_view value) -> void {
+  out += '"';
+  for (const auto c : value) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (static_cast<unsigned char>(c) < 0x20) {
+      out += fmt::format("\\u{:04x}", static_cast<unsigned>(c));
+    } else {
+      out += c;
+    }
+  }
+
+  out += '"';
+}
+
+// the scripts array minified, minus the entries that name a Lua asset
+static auto minify_scripts(simdjson::dom::array scripts, std::vector<std::string>& warnings) -> std::string {
+  auto out = std::string("[");
+  auto is_first = true;
+  for (const auto script : scripts) {
+    if (script["type"].error()) {
+      if (auto uuid_json = script["uuid"].get_string(); !uuid_json.error()) {
+        warnings.push_back(
+          fmt::format("Dropped script {}, Lua scene scripts were removed.", std::string(uuid_json.value_unsafe()))
+        );
+        continue;
+      }
+    }
+
+    if (!is_first) {
+      out += ',';
+    }
+
+    is_first = false;
+    out += simdjson::to_string(script);
+  }
+
+  out += ']';
+
+  return out;
+}
+
+auto compile_scene(std::string_view source, std::vector<std::string>& warnings)
+  -> std::expected<std::string, std::string> {
   ZoneScoped;
 
   // the whole document up front: the loader reads on demand, so a truncated or hand-broken file would only trip it
@@ -78,17 +122,32 @@ auto compile_scene(std::string_view source) -> std::expected<std::string, std::s
     return std::unexpected(std::string(simdjson::error_message(document.error())));
   }
 
-  if (!document.value_unsafe().is_object()) {
+  const auto root = document.value_unsafe().get_object();
+  if (root.error()) {
     return std::unexpected("A scene is a JSON object.");
   }
 
-  auto minified = std::string(source.size(), '\0');
-  auto minified_size = 0_sz;
-  if (const auto error = simdjson::minify(source.data(), source.size(), minified.data(), minified_size); error) {
-    return std::unexpected(std::string(simdjson::error_message(error)));
+  auto minified = std::string("{");
+  auto is_first_field = true;
+  for (const auto field : root.value_unsafe()) {
+    if (!is_first_field) {
+      minified += ',';
+    }
+
+    is_first_field = false;
+
+    append_json_string(minified, field.key);
+    minified += ':';
+
+    const auto scripts = field.value.get_array();
+    if (std::string_view(field.key) == "scripts" && !scripts.error()) {
+      minified += minify_scripts(scripts.value_unsafe(), warnings);
+    } else {
+      minified += simdjson::to_string(field.value);
+    }
   }
 
-  minified.resize(minified_size);
+  minified += '}';
 
   return minified;
 }
@@ -104,24 +163,6 @@ auto scene_references(std::string_view source) -> std::expected<std::vector<Scen
   }
 
   auto references = std::vector<SceneReference>{};
-  if (auto scripts = document["scripts"].get_array(); !scripts.error()) {
-    auto index = 0_sz;
-    for (const auto script : scripts.value_unsafe()) {
-      if (auto uuid_json = script["uuid"].get_string(); !uuid_json.error()) {
-        if (const auto uuid = UUID::from_string(uuid_json.value_unsafe()); uuid.has_value() && *uuid) {
-          references.push_back(
-            SceneReference{
-              .uuid = *uuid,
-              .where = fmt::format("scripts[{}]", index),
-              .expected_type = AssetType::Script,
-            }
-          );
-        }
-      }
-      index += 1;
-    }
-  }
-
   if (auto entities = document["entities"].get_array(); !entities.error()) {
     for (const auto entity : entities.value_unsafe()) {
       collect_entity_references(entity, {}, references);

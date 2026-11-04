@@ -2,7 +2,6 @@
 
 #include <imgui_internal.h>
 
-#include "AssetManagerPanel.hpp"
 #include "EditorPanelState.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/SceneManager.hpp"
@@ -21,7 +20,7 @@ public:
   };
 
   SelectedEntity selected_entity_ = {};
-  const UUID* selected_script_ = nullptr;
+  const ScriptKey* selected_script_ = nullptr;
 
   bool table_hovered_ = false;
   bool table_hovered_scripts = false;
@@ -47,9 +46,6 @@ private:
   ImGuiTextFilter scripts_filter_;
   ImGuiTextFilter entities_filter_;
 
-  AssetBrowser script_picker_ = {};
-  bool script_picker_open_ = false;
-
   auto draw_entity_node(
     this SceneHierarchyPanel& self,
     flecs::entity entity,
@@ -60,6 +56,5 @@ private:
 
   auto draw_entities_context_menu(this SceneHierarchyPanel& self) -> void;
   auto draw_scripts_context_menu(this SceneHierarchyPanel& self) -> void;
-  auto draw_script_picker(this SceneHierarchyPanel& self) -> void;
 };
 } // namespace ox

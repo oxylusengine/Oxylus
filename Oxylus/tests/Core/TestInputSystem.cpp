@@ -1,3 +1,4 @@
+#include <SDL3/SDL_hints.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -15,6 +16,10 @@ protected:
     static char* test_argv[] = {arg0, nullptr};
     int argc = 1;
     char** argv = test_argv;
+
+    // SDL drops gamepad input while none of the app's windows has focus, which a test window running beside others or
+    // behind the developer's own often doesn't. The virtual keyboard and mouse push their events and aren't affected
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
     app = std::make_unique<ox::App>(argc, argv);
     app->with_name("InputManagerTestApp")

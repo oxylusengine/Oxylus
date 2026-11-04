@@ -245,8 +245,34 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
 
   return AssetFile{
     .flags = header.flags,
+    .source_hash = header.source_hash,
     .entries = std::move(entries),
   };
+}
+
+auto AssetFile::read_source_hash(const std::filesystem::path& path) -> option<u64> {
+  ZoneScoped;
+
+  auto file = File(path, FileAccess::Read);
+  if (!file) {
+    return nullopt;
+  }
+
+  auto* mapped_data = file.map();
+  if (!mapped_data) {
+    return nullopt;
+  }
+
+  auto header_deser = zpp::bits::in(std::span(static_cast<u8*>(mapped_data), file.size));
+  auto header = AssetFileHeader{};
+  if (
+    zpp::bits::failure(header_deser(header)) || header.magic != AssetFileHeader::SIGNATURE ||
+    header.version != AssetFileHeader::VERSION
+  ) {
+    return nullopt;
+  }
+
+  return header.source_hash;
 }
 
 auto AssetFile::pack(this AssetFile& self, const std::filesystem::path& path) -> bool {
@@ -254,6 +280,7 @@ auto AssetFile::pack(this AssetFile& self, const std::filesystem::path& path) ->
 
   auto header = AssetFileHeader{
     .flags = self.flags,
+    .source_hash = self.source_hash,
   };
 
   auto [data, ser] = zpp::bits::data_out();
@@ -331,18 +358,6 @@ auto AssetFile::add_entry(this AssetFile& self, ModelData&& entry, const PackedU
     AssetFileEntry{
       .uuid = uuid,
       .type = AssetType::Model,
-      .data = std::move(entry),
-    }
-  );
-}
-
-auto AssetFile::add_entry(this AssetFile& self, ScriptData&& entry, const PackedUUID& uuid) -> void {
-  ZoneScoped;
-
-  self.entries.push_back(
-    AssetFileEntry{
-      .uuid = uuid,
-      .type = AssetType::Script,
       .data = std::move(entry),
     }
   );

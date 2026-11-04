@@ -2,6 +2,8 @@
 
 #include <expected>
 #include <filesystem>
+#include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 
@@ -45,6 +47,9 @@ auto thread_id() -> i64;
 auto set_thread_name(std::string_view name) -> void;
 auto set_thread_name(std::thread::native_handle_type thread, std::string_view name) -> void;
 
+// Process
+auto spawn_detached(std::span<const std::string_view> args) -> std::expected<void, std::string>;
+
 // IO
 auto open_folder_select_file(const std::filesystem::path& path) -> void;
 auto open_file_externally(const std::filesystem::path& path) -> void;
@@ -56,7 +61,7 @@ auto file_write(FileDescriptor file, const void* data, usize size) -> usize;
 auto file_seek(FileDescriptor file, i64 offset) -> void;
 auto file_stdout(std::string_view str) -> void;
 auto file_stderr(std::string_view str) -> void;
-auto file_map(FileDescriptor file, usize size) -> std::expected<void *, FileError>;
-auto file_unmap(FileDescriptor file, void *data, usize size) -> void;
+auto file_map(FileDescriptor file, usize size) -> std::expected<void*, FileError>;
+auto file_unmap(FileDescriptor file, void* data, usize size) -> void;
 } // namespace os
 } // namespace ox

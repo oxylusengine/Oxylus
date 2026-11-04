@@ -46,6 +46,8 @@ in pkgs.mkShell.override {
     pkgs.vulkan-loader
 
     pkgs.shader-slang
+
+    pkgs.dotnetCorePackages.sdk_10_0
   ];
 
   buildInputs = [
@@ -62,6 +64,7 @@ in pkgs.mkShell.override {
   ];
 
   PKG_CONFIG_PATH = "${xssWrapper}/lib/pkgconfig:$PKG_CONFIG_PATH";
+  DOTNET_ROOT = "${pkgs.dotnetCorePackages.sdk_10_0}/share/dotnet";
   LIBCXX_PATH="${pkgs.llvmPackages_23.libcxx.dev}";
   LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
     pkgs.llvmPackages_23.libcxx
@@ -69,6 +72,7 @@ in pkgs.mkShell.override {
     pkgs.vulkan-loader
     pkgs.alsa-lib
     pkgs.libpulseaudio
+    pkgs.icu
     # SDL3
     pkgs.libX11
     pkgs.libxcb

@@ -56,6 +56,7 @@ auto RmlView::update(this RmlView& self, glm::ivec2 surface_size_) -> void {
 
   self.renderer->begin_frame();
   self.rml_context->SetDimensions(Rml::Vector2i(surface_size_.x, surface_size_.y));
+  self.rml_context->Update();
   self.rml_context->Render();
 }
 

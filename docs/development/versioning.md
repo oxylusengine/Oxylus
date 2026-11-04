@@ -4,7 +4,7 @@
 
 The engine release version is declared once in the root [xmake.lua](../../xmake.lua), starting at `0.1.0`.
 Releases use [Semantic Versioning](https://semver.org/). During `0.x` development, bump the minor
-version for features or breaking C++/Lua API changes, and the patch version for compatible fixes.
+version for features or breaking C++/C# API changes, and the patch version for compatible fixes.
 From `1.0.0`, breaking API changes require a major version bump.
 
 ## Build identity

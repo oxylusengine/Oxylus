@@ -44,6 +44,7 @@ public:
   AutoCVar_Int cvar_content_type_filter;
   AutoCVar_Int cvar_show_style_editor;
   AutoCVar_Int cvar_show_imgui_demo;
+  AutoCVar_String cvar_external_editor;
 
 private:
   std::vector<std::filesystem::path> recent_projects{};

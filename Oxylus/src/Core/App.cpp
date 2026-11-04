@@ -306,6 +306,11 @@ auto App::with_assets_directory(this App& self, const std::filesystem::path& dir
   return self;
 }
 
+auto App::with_scripts(this App& self, const std::filesystem::path& path) -> App& {
+  self.scripts_path = path;
+  return self;
+}
+
 auto App::with_workers(this App& self, const u32 count) -> App& {
   self.job_manager.set_thread_count(count);
   return self;
@@ -328,6 +333,10 @@ auto App::run_deferred_tasks(this App& self) -> void {
 
 auto App::get_command_line_args(this const App& self) -> const AppCommandLineArgs& {
   return self.command_line_args; //
+}
+
+auto App::get_scripts_path(this const App& self) -> const std::filesystem::path& {
+  return self.scripts_path; //
 }
 
 auto App::get_window() -> const Window& {

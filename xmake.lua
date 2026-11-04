@@ -42,6 +42,9 @@ require_confs()
 
 includes("Oxylus")
 includes("ResourceCompiler")
+if has_config("csharp") then
+  includes("OxylusScriptingDotNet")
+end
 if has_config("editor") then
   includes("OxylusEditor")
 end

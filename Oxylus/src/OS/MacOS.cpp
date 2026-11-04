@@ -83,7 +83,12 @@ auto os::open_folder_select_file(const std::filesystem::path& path) -> void {
 auto os::open_file_externally(const std::filesystem::path& path) -> void {
   ZoneScoped;
 
-  OX_LOG_WARN("Not implemented on this platform.");
+  const auto utf8 = path.u8string();
+  const auto file = std::string(reinterpret_cast<const c8*>(utf8.data()), utf8.size());
+  const std::string_view args[] = {"open", file};
+  if (auto result = spawn_detached(args); !result) {
+    OX_LOG_WARN("{}", result.error());
+  }
 }
 
 auto os::file_open(const std::filesystem::path& path, FileAccess access) -> std::expected<FileDescriptor, FileError> {

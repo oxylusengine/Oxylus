@@ -1,3 +1,4 @@
+#include <SDL3/SDL_filesystem.h>
 #include <VkBootstrap.h>
 #include <algorithm>
 #include <array>
@@ -60,10 +61,16 @@ static auto retain_hiz_driver_modules() -> void {
 #endif
 }
 
+// the build puts the pack next to the test binary, which may not be where it was started from
 static auto hiz_gpu_pack() -> option<AssetFile> {
   auto error = std::error_code{};
-  for (const auto& directory :
-       {std::filesystem::current_path(error), std::filesystem::canonical("/proc/self/exe", error).parent_path()}) {
+  const auto* base_path = SDL_GetBasePath();
+  const auto binary_dir = base_path ? std::filesystem::path(base_path) : std::filesystem::path();
+  for (const auto& directory : {std::filesystem::current_path(error), binary_dir}) {
+    if (directory.empty()) {
+      continue;
+    }
+
     const auto path = directory / "Assets" / "Shaders" / "engine.oxpack";
     if (std::filesystem::exists(path, error)) {
       return AssetFile::unpack(path);
