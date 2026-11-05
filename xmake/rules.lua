@@ -203,12 +203,13 @@ after_build(function(target)
   })
 end)
 
--- Publishes a game's C# scripts with NativeAOT into `<targetdir>/<output_dir>` (default "scripts") and installs them
--- next to the game, one native library with no .NET runtime behind it. NativeAOT can't cross compile between operating
--- systems, so each platform publishes its own. `source_roots` are walked for the C# that decides whether to publish
--- again, the generated component mirrors always count. `properties` are MSBuild properties as "Name=Value", each
--- expanded with vformat so $(builddir) and friends work, a game points OxylusSdkDir and OxylusAssetDir this way. The
--- target depends on OxylusManaged, which writes those
+-- Publishes a game's C# scripts with NativeAOT and copies the library into `<targetdir>/<output_dir>`, by default next
+-- to the executable with the game's other shared libraries, and installs it the same way: one native library named
+-- after the project, with no .NET runtime behind it. NativeAOT can't cross compile between operating systems, so each
+-- platform publishes its own. `source_roots` are walked for the C# that decides whether to publish again, the generated
+-- component mirrors always count. `properties` are MSBuild properties as "Name=Value", each expanded with vformat so
+-- $(builddir) and friends work, a game points OxylusSdkDir and OxylusAssetDir this way. The target depends on
+-- OxylusManaged, which writes those
 rule("ox.publish_csharp")
 after_build(function(target)
   import("core.project.depend")
@@ -216,7 +217,11 @@ after_build(function(target)
 
   local project = target:extraconf("rules", "ox.publish_csharp", "project")
   local output_dir = path.absolute(path.join(target:targetdir(),
-    target:extraconf("rules", "ox.publish_csharp", "output_dir") or "scripts"))
+    target:extraconf("rules", "ox.publish_csharp", "output_dir") or "."))
+  local library = path.basename(project)
+    .. (target:is_plat("windows") and ".dll" or target:is_plat("macosx") and ".dylib" or ".so")
+  -- on the side, the pdb and import library a publish leaves would overwrite the executable's own next to it
+  local publish_dir = path.absolute(path.join(target:autogendir(), "publish_csharp"))
   local source_roots = target:extraconf("rules", "ox.publish_csharp", "source_roots") or { path.directory(project) }
 
   local sources = { dotnet.generated_components() }
@@ -233,30 +238,26 @@ after_build(function(target)
 
   depend.on_changed(function()
     cprint("${color.build.object}publishing C# %s with NativeAOT", path.filename(project))
-    dotnet.publish_aot(target, project, output_dir, table.join({
+    dotnet.publish_aot(target, project, publish_dir, table.join({
       -- a game needs no culture data or exception message resources, and trades size for speed
       "-p:InvariantGlobalization=true",
       "-p:UseSystemResourceKeys=true",
       "-p:OptimizationPreference=Speed",
     }, properties))
+    os.vcp(path.join(publish_dir, library), path.join(output_dir, library))
   end, {
     dependfile = target:dependfile("ox.publish_csharp"),
     files = sources,
     values = table.join({ output_dir }, properties, sources),
-    changed = not os.isdir(output_dir),
+    changed = not os.isfile(path.join(output_dir, library)),
   })
 end)
 after_install(function(target)
-  local output_dir = target:extraconf("rules", "ox.publish_csharp", "output_dir") or "scripts"
-  local published = path.join(target:targetdir(), output_dir)
-  local destination = path.join(target:installdir(), output_dir)
-  os.mkdir(destination)
-  -- the library alone, the debug symbols and import library the publish leaves next to it don't ship
-  local libraries = table.join(os.files(path.join(published, "*.dll")), os.files(path.join(published, "*.so")),
-    os.files(path.join(published, "*.dylib")))
-  for _, library in ipairs(libraries) do
-    os.vcp(library, destination)
-  end
+  local output_dir = target:extraconf("rules", "ox.publish_csharp", "output_dir") or "."
+  local library = path.basename(target:extraconf("rules", "ox.publish_csharp", "project"))
+    .. (target:is_plat("windows") and ".dll" or target:is_plat("macosx") and ".dylib" or ".so")
+  -- bindir, App::with_scripts is relative to the executable wherever an install puts that
+  os.vcp(path.join(target:targetdir(), output_dir, library), path.join(target:bindir(), output_dir, library))
 end)
 
 -- Copies nethost next to the binary, the hostfxr host loads it from there to find the installed runtime

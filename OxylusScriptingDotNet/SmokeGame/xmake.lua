@@ -9,7 +9,9 @@ target("SmokeGame")
     -- a folder of its own, its shader pack, cooked assets and scripts would land on the editor's in the shared one
     set_targetdir(path.join("$(builddir)", "$(plat)", "$(arch)", "$(mode)", "SmokeGame"))
 
-    add_deps("Oxylus", "OxylusDotNet", "OxylusManaged", "rcli")
+    add_deps("Oxylus", "OxylusDotNet", "OxylusManaged")
+    -- a build tool only, inheriting would link its ResourceCompiler into the game and that doesn't ship
+    add_deps("rcli", { inherit = false })
     if has_config("tests") then
         -- SmokeGameScripts publishes the same C# project for the tests, and two restores of it at once collide
         add_deps("SmokeGameScripts")

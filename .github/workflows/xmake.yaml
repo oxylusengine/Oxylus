@@ -232,8 +232,8 @@ jobs:
       - name: Check SmokeGame's scripts don't need .NET (Linux)
         if: matrix.platform.os == 'linux'
         run: |
-          ldd dest-smokegame/scripts/SmokeGame.so
-          if ldd dest-smokegame/scripts/SmokeGame.so | grep -Ei "coreclr|hostfxr|nethost"; then
+          ldd dest-smokegame/SmokeGame.so
+          if ldd dest-smokegame/SmokeGame.so | grep -Ei "coreclr|hostfxr|nethost"; then
             echo "SmokeGame.so links the .NET runtime" >&2
             exit 1
           fi
@@ -241,8 +241,8 @@ jobs:
       - name: Check SmokeGame's scripts don't need .NET (macOS)
         if: matrix.platform.os == 'macos'
         run: |
-          otool -L dest-smokegame/scripts/SmokeGame.dylib
-          if otool -L dest-smokegame/scripts/SmokeGame.dylib | grep -Ei "coreclr|hostfxr|nethost"; then
+          otool -L dest-smokegame/SmokeGame.dylib
+          if otool -L dest-smokegame/SmokeGame.dylib | grep -Ei "coreclr|hostfxr|nethost"; then
             echo "SmokeGame.dylib links the .NET runtime" >&2
             exit 1
           fi
@@ -253,10 +253,41 @@ jobs:
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          $imports = & $dumpbin /dependents dest-smokegame\scripts\SmokeGame.dll
+          $imports = & $dumpbin /dependents dest-smokegame\SmokeGame.dll
           $imports
           if ($imports -match 'coreclr|hostfxr|nethost') {
             throw "SmokeGame.dll links the .NET runtime"
+          }
+
+      # rcli is only a build tool, an install doesn't copy ResourceCompiler so a game linking it can't start
+      - name: Check SmokeGame doesn't link ResourceCompiler (Linux)
+        if: matrix.platform.os == 'linux'
+        run: |
+          ldd dest-smokegame/SmokeGame
+          if ldd dest-smokegame/SmokeGame | grep -i "ResourceCompiler"; then
+            echo "SmokeGame links ResourceCompiler" >&2
+            exit 1
+          fi
+
+      - name: Check SmokeGame doesn't link ResourceCompiler (macOS)
+        if: matrix.platform.os == 'macos'
+        run: |
+          otool -L dest-smokegame/SmokeGame
+          if otool -L dest-smokegame/SmokeGame | grep -i "ResourceCompiler"; then
+            echo "SmokeGame links ResourceCompiler" >&2
+            exit 1
+          fi
+
+      - name: Check SmokeGame doesn't link ResourceCompiler (Windows)
+        if: matrix.platform.os == 'windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $imports = & $dumpbin /dependents dest-smokegame\SmokeGame.exe
+          $imports
+          if ($imports -match 'ResourceCompiler') {
+            throw "SmokeGame.exe links ResourceCompiler"
           }
 
       - name: Archive production artifacts

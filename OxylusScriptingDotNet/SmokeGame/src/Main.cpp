@@ -223,7 +223,7 @@ auto main(int argc, char** argv) -> int {
     )
     // next to the executable whatever directory the game was started from
     .with_assets_directory(base_dir / "Assets")
-    .with_scripts("scripts/SmokeGame")
+    .with_scripts("SmokeGame")
     .with(ox::DefaultModules{});
 
   const auto is_smoke_test = app.get_command_line_args().contains("--smoke-test");
