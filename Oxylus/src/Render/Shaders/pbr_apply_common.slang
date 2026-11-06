@@ -73,9 +73,9 @@ func sun_visibility(
 ) -> f32 {
     var directional = 1.0;
     if (has_directional_light && has_directional_shadows != 0 && depth != 0.0) {
-        let resources = VSMDirectionalResources(vsm_clipmaps, vsm_page_table, vsm_physical_pages);
+        let resources = VSMDirectionalResources(vsm_clipmaps, vsm_page_table, vsm_physical_pages, nearest_clamp_sampler);
         directional = vsm_directional_visibility(
-            lighting.vsm, resources, camera, uv, frag_coord, depth, normalize(smooth_normal), world_position);
+            lighting, resources, camera, uv, frag_coord, depth, normalize(smooth_normal), world_position);
     }
 
     var contact = 1.0;
@@ -88,83 +88,126 @@ func sun_visibility(
 
 func point_spot_lighting(
     f32x2 uv,
-    u32x2 pixel_coords,
     f32 depth,
     f32x3 world_position,
     f32x3 N,
     f32x3 V,
     f32x3 smooth_normal,
     f32x3 albedo_color,
-    f32 roughness,
     f32 metallic,
+    in BRDFSetup brdf,
     in PBRLighting lighting,
     Light *lights,
-    u32x4 *light_grid,
+    LightGridCell *light_grid,
     VSMPointSpotView *vsm_pointspot_views,
     inout f32x3 color
 ) -> void {
     let grid_cell = light_grid_cell_coords(world_position, lighting.light_grid_origin);
-    let grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
-    let grid_mask = grid_cell_in_bounds ? light_grid[light_grid_cell_index(grid_cell)] : u32x4(0);
+    let is_grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
+    let grid_cell_index = light_grid_cell_index(grid_cell);
 
-    // must match the VSM marking footprint
-    let footprint_uv_offset = (1.0 / camera.resolution) * 0.5;
-    let footprint_left = camera.unproject_uv(uv + f32x2(-footprint_uv_offset.x, footprint_uv_offset.y), depth);
-    let footprint_right = camera.unproject_uv(uv + f32x2(footprint_uv_offset.x, footprint_uv_offset.y), depth);
+    let light_count = min(lighting.light_count, MAX_LIGHTS);
+    let word_count = (light_count + 31u) / 32u;
+    [loop]
+    for (u32 word = 0; word < word_count; word++) {
+        var lane_word = 0xFFFFFFFFu;
+        if (is_grid_cell_in_bounds) {
+            lane_word = light_grid[grid_cell_index].light_word(word);
+        } else {
+            let remaining = light_count - word * 32u;
+            lane_word = remaining >= 32u ? 0xFFFFFFFFu : (1u << remaining) - 1u;
+        }
 
-    let pcf_rotation = 6.28318530718 *
-                       fract(52.9829189 * fract(dot(f32x2(pixel_coords), f32x2(0.06711056, 0.00583715))));
-
-    for (u32 light_index = 0; light_index < lighting.light_count; light_index++) {
-        let light = lights[light_index];
-
-        // a clear in-grid bit proves this light cannot affect the pixel
-        if (light.shadow_map_index >= 0 && grid_cell_in_bounds) {
-            let word = light_grid_mask_word(light.kind, light.shadow_map_index);
-            if ((grid_mask[word] & light_grid_mask_bit(light.shadow_map_index)) == 0) {
+        var wave_bits = WaveActiveBitOr(lane_word);
+        while (wave_bits != 0u) {
+            let bit = firstbitlow(wave_bits);
+            wave_bits &= wave_bits - 1u;
+            if (((lane_word >> bit) & 1u) == 0u) {
                 continue;
             }
-        }
 
-        var shadow = 1.0;
-        if (light.shadow_map_index >= 0) {
-            let to_pixel = world_position - light.position;
-            var layer = 0;
-            if (light.kind == LightKind::Point) {
-                layer = vsm_point_layer(light.shadow_map_index, vsm_point_face_index(to_pixel));
-            } else {
-                layer = vsm_spot_layer(light.shadow_map_index);
+            let light = lights[word * 32u + bit];
+
+            let light_vector = light.position - world_position;
+            let distance_sq = dot(light_vector, light_vector);
+            if (light.intensity <= 0.0 || (light.range > 0.0 && distance_sq >= light.range * light.range)) {
+                continue;
             }
 
-            let view = vsm_pointspot_views[layer];
-            if (view.range > 0.0 && dot(to_pixel, to_pixel) <= view.range * view.range) {
-                let center = view.project(world_position);
-                if (center.valid) {
-                    let uv_left = view.project(footprint_left).uv;
-                    let uv_right = view.project(footprint_right).uv;
-                    let mip = vsm_pointspot_mip(uv_left, uv_right, lighting.vsm_mip_bias_min);
+            let light_distance = sqrt(distance_sq);
+            let L = light_vector / light_distance;
 
-                    shadow = vsm_sample_pointspot_shadow(
-                        view,
-                        layer,
-                        mip,
-                        vsm_pointspot_page_tables,
-                        vsm_physical_pages,
-                        world_position,
-                        smooth_normal,
-                        -normalize(to_pixel),
-                        pcf_rotation
-                    );
+            var attenuation = light.intensity * lights_attenuate_point(light_distance, light.range);
+            if (light.kind == LightKind::Spot) {
+                attenuation *= calculate_spot_light_attenuation(L, light.direction, light.inner_cone_angle, light.outer_cone_angle);
+            }
+
+            if (attenuation <= 0.0) {
+                continue;
+            }
+
+            let NoL = saturate(dot(N, L));
+            if (NoL <= 0.0) {
+                continue;
+            }
+
+            let weight = attenuation * NoL;
+
+            var shadow = 1.0;
+            if (light.shadow_map_index >= 0) {
+                let to_pixel = -light_vector;
+                let my_face = light.kind == LightKind::Point ? vsm_point_face_index(to_pixel) : 0;
+                var is_pending = true;
+                while (WaveActiveAnyTrue(is_pending)) {
+                    if (!is_pending) {
+                        continue;
+                    }
+
+                    let face = WaveReadLaneFirst(my_face);
+                    if (my_face != face) {
+                        continue;
+                    }
+
+                    is_pending = false;
+                    let layer = light.kind == LightKind::Point
+                        ? vsm_point_layer(light.shadow_map_index, face)
+                        : vsm_spot_layer(light.shadow_map_index);
+
+                    let view = vsm_pointspot_views[layer];
+                    if (view.range > 0.0 && distance_sq <= view.range * view.range) {
+                        let center = view.project(world_position);
+                        if (center.valid) {
+                            // must match the VSM marking footprint
+                            let footprint_uv_offset = (1.0 / camera.resolution) * 0.5;
+                            let footprint_left = camera.unproject_uv(
+                                uv + f32x2(-footprint_uv_offset.x, footprint_uv_offset.y), depth);
+                            let footprint_right = camera.unproject_uv(
+                                uv + f32x2(footprint_uv_offset.x, footprint_uv_offset.y), depth);
+                            let uv_left = view.project(footprint_left).uv;
+                            let uv_right = view.project(footprint_right).uv;
+                            let mip = vsm_pointspot_mip(uv_left, uv_right, lighting.vsm_mip_bias_min);
+
+                            let pcf_rotation = 6.28318530718 *
+                                               fract(52.9829189 * fract(dot(floor(uv * camera.resolution), f32x2(0.06711056, 0.00583715))));
+
+                            shadow = vsm_sample_pointspot_shadow(
+                                view,
+                                layer,
+                                mip,
+                                vsm_pointspot_page_tables,
+                                vsm_physical_pages,
+                                world_position,
+                                smooth_normal,
+                                L,
+                                pcf_rotation
+                            );
+                        }
+                    }
                 }
             }
-        }
 
-        if (light.kind == LightKind::Point) {
-            color += shadow * point_light_contribution(
-                world_position, N, V, albedo_color, roughness, metallic, light.position, light);
-        } else if (light.kind == LightKind::Spot) {
-            color += shadow * calculate_spot_light_contribution(
-                world_position, N, V, albedo_color, roughness, metallic, light.position, light.direction, light);
+            let result = brdf_evaluate(brdf, V, N, L, albedo_color, metallic);
+            color += shadow * (result.diffuse + result.specular) * light.color * weight;
         }
     }
 }

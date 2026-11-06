@@ -94,16 +94,46 @@ func vsm_sample_pointspot_shadow(
     let texel_uv = 1.0 / f32(VSM_POINT_SPOT_VIRTUAL_SIZE >> mip);
     let filter_radius_uv = texel_uv * 1.5;
 
+    let clamped_center_uv = clamp(center.uv, 0.0, 0.99999);
+    let center_page_coords = vsm_pointspot_page_coords(center.uv, mip);
+    var resolved_mip = VSM_POINT_SPOT_MIP_COUNT;
+    var resolved_physical_page = u32x2(0);
+    for (var m = mip; m < VSM_POINT_SPOT_MIP_COUNT; m++) {
+        let page_coords = i32x2(clamped_center_uv * f32(VSM_POINT_SPOT_PAGE_TABLE_SIZE >> m));
+        let page = VSMPageMetadata(page_tables.Load(i32x4(page_coords, layer, m)));
+        if (page.is_backed()) {
+            resolved_mip = m;
+            resolved_physical_page = page.get_physical_coords(VSM_PHYSICAL_PAGE_TABLE_SIZE, VSM_PAGE_SIZE);
+            break;
+        }
+    }
+
     constexpr static i32 TAP_COUNT = 9;
+    constexpr static f32 RING_STEP = 0.70710678118;
+    var ring_sin = 0.0;
+    var ring_cos = 0.0;
+    sincos(noise_rotation, ring_sin, ring_cos);
+    var ring_dir = f32x2(ring_cos, ring_sin);
+
     var lit = 0.0;
     for (var i = 0; i < TAP_COUNT; i++) {
-        var offset = f32x2(0.0);
+        var tap_uv = center.uv;
         if (i > 0) {
-            let angle = noise_rotation + f32(i - 1) * (TAU / f32(TAP_COUNT - 1));
-            offset = f32x2(cos(angle), sin(angle)) * filter_radius_uv;
+            tap_uv += ring_dir * filter_radius_uv;
+            ring_dir = f32x2(ring_dir.x - ring_dir.y, ring_dir.x + ring_dir.y) * RING_STEP;
         }
 
-        let depth = vsm_pointspot_load_depth(page_tables, physical_pages, layer, mip, center.uv + offset);
+        var depth = 1.0;
+        if (all(vsm_pointspot_page_coords(tap_uv, mip) == center_page_coords)) {
+            if (resolved_mip < VSM_POINT_SPOT_MIP_COUNT) {
+                let virtual_texel_coord = i32x2(clamp(tap_uv, 0.0, 0.99999) * f32(VSM_POINT_SPOT_VIRTUAL_SIZE >> resolved_mip));
+                let physical_texel_coord = i32x2(resolved_physical_page) * VSM_PAGE_SIZE + virtual_texel_coord % VSM_PAGE_SIZE;
+                depth = physical_pages.Load(i32x3(physical_texel_coord, 0));
+            }
+        } else {
+            depth = vsm_pointspot_load_depth(page_tables, physical_pages, layer, mip, tap_uv);
+        }
+
         lit += depth < reference_depth ? 0.0 : 1.0;
     }
 

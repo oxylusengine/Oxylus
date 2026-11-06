@@ -46,7 +46,7 @@ struct TraceConstants {
     f32 sun_intensity;
     f32x3 ambient_color;
     f32 max_ray_radiance;
-    u32x4 *light_grid;
+    LightGridCell *light_grid;
     VSMPointSpotView *pointspot_views;
     u32 radiance_atlas_y_offset;
     u32 distance_culling_enabled;
@@ -224,7 +224,7 @@ func shade_hit(
 
     let grid_cell = light_grid_cell_coords(hit.position, constants.light_grid_origin);
     let grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
-    let grid_mask = grid_cell_in_bounds ? constants.light_grid[light_grid_cell_index(grid_cell)] : u32x4(0);
+    let grid_mask = grid_cell_in_bounds ? constants.light_grid[light_grid_cell_index(grid_cell)].shadow_mask : u32x4(0);
 
     for (u32 light_index = 0; light_index < light_count; light_index++) {
         let light = lights[light_index];

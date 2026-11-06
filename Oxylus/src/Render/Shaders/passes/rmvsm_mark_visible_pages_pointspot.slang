@@ -7,7 +7,7 @@ import rmvsm;
 
 [[vk::binding(0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1)]] StructuredBuffer<VSMPointSpotView> views;
-[[vk::binding(2)]] StructuredBuffer<u32x4> light_grid;
+[[vk::binding(2)]] StructuredBuffer<LightGridCell> light_grid;
 
 [[vk::binding(3)]] Texture2D<f32> depth_image;
 
@@ -106,7 +106,7 @@ func cs_main(
     var point_mask = u32x2(0);
     var spot_mask = u32x2(0);
     if (light_grid_cell_in_bounds(grid_cell)) {
-        let cell_mask = light_grid[light_grid_cell_index(grid_cell)];
+        let cell_mask = light_grid[light_grid_cell_index(grid_cell)].shadow_mask;
         point_mask = cell_mask.xy;
         spot_mask = cell_mask.zw;
     } else {

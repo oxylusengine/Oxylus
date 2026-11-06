@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
@@ -19,7 +20,10 @@ auto RendererInstance::bind_light_grid_variables(
   if (!program.has_variable(variables.push)) {
     return;
   }
-  program.set_bytes(variables.push, LightGridPush(static_cast<u32>(self.scene.lights.size()), self.light_grid_origin));
+  program.set_bytes(
+    variables.push,
+    LightGridPush(static_cast<u32>(std::min<usize>(self.scene.lights.size(), GPU::MAX_LIGHTS)), self.light_grid_origin)
+  );
 }
 
 auto RendererInstance::build_light_grid(
@@ -28,19 +32,13 @@ auto RendererInstance::build_light_grid(
   ZoneScoped;
   auto& prepared = recording.prepared;
   auto& values = recording.values;
-  const auto& shape = recording.shape;
 
   context.light_grid_buffer = module.transient_buffer({
-    .size = GPU::LIGHT_GRID_CELL_COUNT * sizeof(glm::uvec4),
+    .size = GPU::LIGHT_GRID_CELL_COUNT * sizeof(GPU::LightGridCell),
     .usage = TRANSIENT_BUFFER_USAGE,
     .location = vir::MemoryLocation::GpuOnly,
     .name = "light grid",
   });
-
-  if (!shape.has_pointspot_shadows) {
-    context.light_grid_buffer = module.fill_buffer(context.light_grid_buffer, 0);
-    return;
-  }
 
   auto& variables = prepared.light_grid;
   variables.push = module.declare_bytes_var("light grid push", sizeof(LightGridPush));

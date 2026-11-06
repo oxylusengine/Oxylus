@@ -316,6 +316,14 @@ OX_CONST u32 MAX_SHADOW_SPOT_LIGHTS = 64;
 OX_CONST i32x3 LIGHT_GRID_RESOLUTION = i32x3(64, 32, 64);
 OX_CONST f32 LIGHT_GRID_CELL_SIZE = 8.0f;
 OX_CONST u32 LIGHT_GRID_CELL_COUNT = 64u * 32u * 64u;
+OX_CONST u32 LIGHT_GRID_LIGHT_WORDS = MAX_LIGHTS / 32;
+
+struct LightGridCell {
+  u32x4 shadow_mask = {};
+  // bit i is light index i, lo holds lights 0-127 and hi 128-255
+  u32x4 light_mask_lo = {};
+  u32x4 light_mask_hi = {};
+};
 
 struct DirectionalLight {
   f32x3 color = f32x3(0.02f, 0.02f, 0.02f);
@@ -413,6 +421,7 @@ enum class SceneFlags : u32 {
   HasParticleSorting = 1 << 14,
   HasLetterbox = 1 << 15,
   HasScreenFade = 1 << 16,
+  HasTemporalUpscaler = 1 << 17,
 };
 OX_BITMASK(SceneFlags)
 
@@ -559,6 +568,7 @@ struct PBRLighting {
   u32 contact_shadow_steps = 0;
   f32 contact_shadow_thickness = 0.0f;
   f32 contact_shadow_length = 0.0f;
+  u32 frame_index = 0;
 };
 
 struct VirtualClipmap {

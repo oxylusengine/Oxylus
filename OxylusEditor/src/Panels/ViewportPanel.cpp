@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -20,6 +21,7 @@
 #include "Core/Input.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Camera.hpp"
 #include "Render/RenderContext.hpp"
@@ -33,9 +35,28 @@
 #include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorGrid.hpp"
+#include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
+static auto dump_frame_ir(const RendererInstance& renderer_instance) -> void {
+  const auto ir = renderer_instance.dump_program();
+  if (ir.empty()) {
+    OX_LOG_WARN("no frame program has been compiled yet");
+    return;
+  }
+
+  const auto path = std::filesystem::absolute("logs/frame_ir.txt");
+  auto file = File(path, FileAccess::Write);
+  if (file.error != FileError::None) {
+    OX_LOG_ERROR("failed to open {}: {}", path.string(), file_error_to_str(file.error));
+    return;
+  }
+
+  file.write(ir);
+  OX_LOG_INFO("wrote frame IR to {}", path.string());
+}
+
 struct GizmoInfo {
   f32 icon_size;
   f32 width;
@@ -931,6 +952,10 @@ auto ViewportPanel::draw_stats_overlay(this const ViewportPanel& self, bool draw
         ImGui::Text("Compiles: %u (last %.1f ms)", stats.compile_count, stats.last_compile_ms);
         if (stats.recompile_count > 0) {
           ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "Evicted recompiles: %u", stats.recompile_count);
+        }
+
+        if (ImGui::SmallButton("Dump frame IR")) {
+          dump_frame_ir(*renderer_instance);
         }
       }
     }

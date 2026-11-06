@@ -258,6 +258,13 @@ public func light_grid_mask_bit(i32 shadow_map_index) -> u32 {
   return 1u << (u32(shadow_map_index) & 31u);
 }
 
+public extension LightGridCell {
+
+  public func light_word(u32 word) -> u32 {
+    return word < 4u ? this.light_mask_lo[word & 3u] : this.light_mask_hi[word & 3u];
+  }
+};
+
 public extension TransformWorld {
 
   public func to_world_position(in f32x3 position) -> f32x4 {

@@ -1027,6 +1027,9 @@ public:
   // so anything indexing the visbuffer or g-buffer by pixel has to go through this
   auto get_render_size(this const RendererInstance& self) -> glm::uvec2 { return self.render_size_; }
 
+  // IR of the most recently used frame program, empty before the first frame
+  auto dump_program(this const RendererInstance& self) -> std::string;
+
   // the record half of every pass, run once per frame shape
   static auto record_upload(vir::Module& module, std::string_view name, vir::ValueID dst, UploadVariables& upload)
     -> vir::ValueID;

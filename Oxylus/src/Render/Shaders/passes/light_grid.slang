@@ -3,7 +3,7 @@ import gpu;
 import scene;
 
 [[vk::binding(0)]] StructuredBuffer<Light> lights;
-[[vk::binding(1)]] RWStructuredBuffer<u32x4> light_grid;
+[[vk::binding(1)]] RWStructuredBuffer<LightGridCell> light_grid;
 
 // cone vs sphere test by Bart Wronski
 // https://bartwronski.com/2017/04/13/cull-that-cone/
@@ -47,29 +47,44 @@ func cs_main(
     let cell_center = (cell_min + cell_max) * 0.5;
     let cell_radius = LIGHT_GRID_CELL_SIZE * 0.5 * sqrt(3.0);
 
-    var mask = u32x4(0);
+    var shadow_mask = u32x4(0);
+    var light_mask_lo = u32x4(0);
+    var light_mask_hi = u32x4(0);
     for (var light_index = 0u; light_index < light_count; light_index++) {
         let light = lights[light_index];
-        if (light.shadow_map_index < 0 || light.range <= 0.0) {
+
+        var affects_cell = true;
+        if (light.range > 0.0) {
+            affects_cell = aabb_dist_sq_to_point(cell_min, cell_max, light.position) <= light.range * light.range;
+            if (affects_cell && light.kind == LightKind::Spot) {
+                affects_cell = cone_intersects_sphere(
+                    light.position,
+                    normalize(light.direction),
+                    light.range,
+                    light.outer_cone_angle,
+                    cell_center,
+                    cell_radius
+                );
+            }
+        }
+
+        if (!affects_cell) {
             continue;
         }
 
-        var affects_cell = aabb_dist_sq_to_point(cell_min, cell_max, light.position) <= light.range * light.range;
-        if (affects_cell && light.kind == LightKind::Spot) {
-            affects_cell = cone_intersects_sphere(
-                light.position,
-                normalize(light.direction),
-                light.range,
-                light.outer_cone_angle,
-                cell_center,
-                cell_radius
-            );
+        let word = light_index >> 5u;
+        let bit = 1u << (light_index & 31u);
+        if (word < 4u) {
+            light_mask_lo[word] |= bit;
+        } else {
+            light_mask_hi[word - 4u] |= bit;
         }
 
-        if (affects_cell) {
-            mask[light_grid_mask_word(light.kind, light.shadow_map_index)] |= light_grid_mask_bit(light.shadow_map_index);
+        if (light.shadow_map_index >= 0 && light.range > 0.0) {
+            shadow_mask[light_grid_mask_word(light.kind, light.shadow_map_index)] |=
+                light_grid_mask_bit(light.shadow_map_index);
         }
     }
 
-    light_grid[thread_id] = mask;
+    light_grid[thread_id] = { shadow_mask, light_mask_lo, light_mask_hi };
 }

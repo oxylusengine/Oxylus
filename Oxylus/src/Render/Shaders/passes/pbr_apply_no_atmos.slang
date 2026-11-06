@@ -15,12 +15,13 @@ func fs_main(
   uniform Sky *sky,
   uniform PBRLighting *lighting,
   uniform Light *lights,
-  uniform u32x4 *light_grid,
+  uniform LightGridCell *light_grid,
   uniform VSMPointSpotView *vsm_pointspot_views,
   uniform VirtualClipmap *vsm_clipmaps,
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
+    let mapped_smooth_normal = normal_image.Load(pixel_pos);
 
     if ((scene_flags & SceneFlags::TransparentBackground) != 0 && depth == 0.0) {
         return f32x4(0.0);
@@ -38,7 +39,6 @@ func fs_main(
     let Li = lighting.sun_intensity;
     let has_directional_light = (scene_flags & SceneFlags::HasDirectionalLight) != 0;
 
-    let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
     let smooth_normal = com::oct_to_vec3(mapped_smooth_normal.ba);
     let N = normalize(mapped_normal);
@@ -67,6 +67,9 @@ func fs_main(
     let V = normalize(camera.position.xyz - world_position);
     let R = reflect(-V, N);
     let NoV = abs(dot(N, V)) + 1e-5;
+    let alpha = perceptual_roughness_to_alpha(roughness);
+    let AB = GGX_directional_albedo(NoV, alpha);
+    let brdf_params = brdf_setup(alpha, AB);
 
     // no atmosphere, so no transmittance to attenuate the sun
     let direct_illuminance = has_directional_light ? f32x3(Li) : f32x3(0.0);
@@ -79,8 +82,6 @@ func fs_main(
         let dielectric_F0 = f32x3(0.04);
         let F0 = lerp(dielectric_F0, albedo_color, metallic);
 
-        let alpha = perceptual_roughness_to_alpha(roughness);
-        let AB = GGX_directional_albedo(NoV, alpha);
         let kS = F0 * AB.x + AB.y;
         let kD = (1.0 - metallic) * (1.0 - kS);
 
@@ -97,14 +98,14 @@ func fs_main(
 
     var material_surface_color = f32x3(0.0);
     if (NoL > 0.0) {
-        let result = BRDF(V, N, L, albedo_color, roughness, metallic);
+        let result = brdf_evaluate(brdf_params, V, N, L, albedo_color, metallic);
         material_surface_color = (result.diffuse + result.specular * horizon) * direct_illuminance * NoL * visibility;
     }
 
     var color = material_surface_color + indirect_illuminance + emission;
     if (depth != 0.0) {
         point_spot_lighting(
-            input.tex_coord, u32x2(input.position.xy), depth, world_position, N, V, smooth_normal, albedo_color, roughness, metallic,
+            input.tex_coord, depth, world_position, N, V, smooth_normal, albedo_color, metallic, brdf_params,
             *lighting, lights, light_grid, vsm_pointspot_views, color);
     }
 

@@ -191,7 +191,8 @@ auto bind_vsm_pointspot_spec_constants(vir::Module& module) -> vir::Module& {
     .specialize_constant(51, RMVSMContext::POINT_SPOT_PAGE_TABLE_SIZE)
     .specialize_constant(52, RMVSMContext::POINT_SPOT_MIP_COUNT)
     .specialize_constant(53, RMVSMContext::PAGE_SIZE)
-    .specialize_constant(54, RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE);
+    .specialize_constant(54, RMVSMContext::PHYSICAL_PAGE_TABLE_SIZE)
+    .specialize_constant(55, RMVSMContext::DIRECTIONAL_PAGE_TABLE_SIZE);
 }
 
 // between frames, scene buffers are only read, state the GPU carries over is read and written, and
@@ -990,6 +991,10 @@ auto RendererInstance::frame_shape(
     self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
   }
 
+  if (is_upscaling) {
+    self.gpu_scene_flags |= GPU::SceneFlags::HasTemporalUpscaler;
+  }
+
   const auto flags = self.gpu_scene_flags;
   auto total_probe_count = 0_u32;
   for (const auto& volume : self.probe_volumes) {
@@ -1133,6 +1138,15 @@ auto RendererInstance::prepare_frame_params(
 
   self.prepare_virtual_shadowmap();
   self.prepare_ddgi(cvar);
+}
+
+auto RendererInstance::dump_program(this const RendererInstance& self) -> std::string {
+  if (self.program_order.empty()) {
+    return {};
+  }
+
+  const auto it = self.programs.find(self.program_order.back());
+  return it != self.programs.end() ? it->second->program.dump() : std::string{};
 }
 
 auto RendererInstance::program_for(this RendererInstance& self, const FrameShape& shape) -> RecordedFrame* {

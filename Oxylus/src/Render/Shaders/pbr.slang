@@ -53,12 +53,33 @@ public f32 specular_occlusion_horizon(f32 NoV, f32 ao, f32 perceptual_roughness)
     return saturate(pow(NoV + ao, exp2(-16.0 * perceptual_roughness - 1.0)) - 1.0 + ao);
 }
 
+public func sky_cubemap_specular(
+    TextureCube<f32x4> cubemap, SamplerState cubemap_sampler, f32x3 N, f32x3 R, f32 perceptual_roughness, f32 horizon_darkening
+) -> f32x3 {
+    let reflection_dir = normalize(lerp(N, R, 1.0 - perceptual_roughness));
+    let specular_sample = cubemap.SampleLevel(cubemap_sampler, reflection_dir, 0.0);
+    return specular_sample.rgb * specular_sample.a * horizon_darkening;
+}
+
 public struct BRDFResult {
     public f32x3 diffuse;
     public f32x3 specular;
 };
 
-public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 perceptual_roughness, f32 metallic) -> BRDFResult {
+public struct BRDFSetup {
+    public f32 alpha2;
+    public f32 energy;
+};
+
+public func brdf_setup(f32 alpha, f32x2 AB) -> BRDFSetup {
+    let Ess = saturate(AB.x + AB.y);
+    BRDFSetup setup;
+    setup.alpha2 = alpha * alpha;
+    setup.energy = (1.0 - Ess) / max(Ess, 1e-4);
+    return setup;
+}
+
+public func brdf_evaluate(in BRDFSetup setup, f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 metallic) -> BRDFResult {
     let VL = V + L;
     let H = dot(VL, VL) > 1e-8 ? normalize(VL) : N;
     let NoV = abs(dot(N, V)) + 1e-5;
@@ -69,13 +90,10 @@ public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 perceptual_roughne
     let dielectric_F0 = f32x3(0.04);
     let F0 = lerp(dielectric_F0, albedo, metallic);
 
-    let alpha = perceptual_roughness_to_alpha(perceptual_roughness);
-    let alpha2 = alpha * alpha;
-
-    let D = D_GGX(NoH, alpha2);
-    let Vis = V_SmithGGXCorrelated(NoV, NoL, alpha2);
+    let D = D_GGX(NoH, setup.alpha2);
+    let Vis = V_SmithGGXCorrelated(NoV, NoL, setup.alpha2);
     let F = F_Schlick(LoH, F0);
-    let energy_compensation = GGX_energy_compensation(NoV, alpha, F0);
+    let energy_compensation = 1.0 + F0 * setup.energy;
 
     BRDFResult result;
     result.specular = D * Vis * F * energy_compensation;
@@ -84,6 +102,13 @@ public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 perceptual_roughne
     result.diffuse = kd * albedo * Fd_Lambert();
 
     return result;
+}
+
+public func BRDF(f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 perceptual_roughness, f32 metallic) -> BRDFResult {
+    let NoV = abs(dot(N, V)) + 1e-5;
+    let alpha = perceptual_roughness_to_alpha(perceptual_roughness);
+    let setup = brdf_setup(alpha, GGX_directional_albedo(NoV, alpha));
+    return brdf_evaluate(setup, V, N, L, albedo, metallic);
 }
 
 public func lights_attenuate_point(f32 to_light_dist, f32 cutoff) -> f32 {

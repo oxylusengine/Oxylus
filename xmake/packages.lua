@@ -49,7 +49,7 @@ packages = {
   },
   ["vk-bootstrap v1.4.354"] = { system = false, debug = is_mode("debug") },
   ["vulkan-headers " .. vulkan_headers_version] = { system = false },
-  ["vir 2026.10.19"] = {
+  ["vir 2026.11.05"] = {
     debug = is_mode("debug"),
     system = false,
     -- vir's logging macros use __VA_OPT__, which MSVC's traditional preprocessor rejects
