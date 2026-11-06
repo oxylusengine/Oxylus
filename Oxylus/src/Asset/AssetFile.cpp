@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
+#include <system_error>
 #include <zstd.h>
 
 #include "Animation/AnimationClip.hpp"
@@ -252,6 +254,12 @@ auto AssetFile::unpack(const std::filesystem::path& path) -> option<AssetFile> {
 
 auto AssetFile::read_source_hash(const std::filesystem::path& path) -> option<u64> {
   ZoneScoped;
+
+  // a missing pack only means it isn't cooked yet, but `File` logs every failed open as an error
+  auto exists_error = std::error_code{};
+  if (!std::filesystem::exists(path, exists_error)) {
+    return nullopt;
+  }
 
   auto file = File(path, FileAccess::Read);
   if (!file) {
