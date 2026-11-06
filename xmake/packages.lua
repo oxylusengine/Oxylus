@@ -19,7 +19,7 @@ local tracy_configs = {
 
 packages = {
   ["miniaudio 0.11.25"] = {},
-  ["fastgltf-ox v0.8.0"] = { system = false, debug = is_mode("debug") },
+  ["fastgltf-ox v0.8.0+ox.1"] = { system = false, debug = is_mode("debug") },
   ["meshoptimizer v1.2"] = {},
   ["libsdl3 3.4.12"] = { configs = { x11 = true, wayland = false } },
   -- release even in debug builds, an unoptimized BC7 encoder makes every texture import crawl
