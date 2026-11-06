@@ -7,7 +7,7 @@
 
 namespace ox {
 struct EditorContext {
-  enum class Type { None = 0, Entity, File };
+  enum class Type { None = 0, Entity, File, Script };
 
   Type type = Type::None;
   option<std::string> str = ox::nullopt;

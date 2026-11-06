@@ -24,6 +24,8 @@ public:
   auto on_add(Scene* scene) -> void override;
   auto on_remove(Scene* scene) -> void override;
 
+  auto visit_fields(ScriptFieldVisitor visitor, void* user_data) const -> void override;
+
 private:
   DotNetScripting& module_;
   ecs_world_t* world_ = nullptr;

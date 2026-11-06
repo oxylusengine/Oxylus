@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 14;
+    public const uint Version = 15;
 }
 
 public enum OxStatus : int
@@ -607,6 +607,7 @@ public unsafe struct ManagedApi
     public delegate* unmanaged<ScriptTypeInfo*, int, int> ListScriptTypes;
     public delegate* unmanaged<nint, StringView, ulong*, OxStatus> ScriptCreate;
     public delegate* unmanaged<ulong, void> ScriptDestroy;
+    public delegate* unmanaged<ulong, delegate* unmanaged<void*, StringView, StringView, void>, void*, void> ScriptFields;
     public delegate* unmanaged<nint, ulong, StringView, OxStatus> BehaviourAdd;
     public delegate* unmanaged<nint, ulong, void> BehaviourRemove;
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 
 using Oxylus;
@@ -1117,5 +1118,80 @@ public static class PhysicsProbes
         {
             probe.Threw = 1;
         }
+    }
+}
+
+internal enum FieldMode
+{
+    Slow,
+    Fast,
+}
+
+internal struct FieldPoint
+{
+    public int X { get; init; }
+}
+
+public sealed class FieldThrower
+{
+    public override string ToString() => throw new InvalidOperationException("ToString must not run");
+}
+
+public abstract class FieldProbeRoot : SceneBehaviour
+{
+    int inherited = 7;
+
+    public int InheritedValue => inherited;
+}
+
+public abstract class FieldProbeMiddle<T> : FieldProbeRoot
+{
+    T? generic = default;
+
+    public T? GenericValue => generic;
+}
+
+// every kind of field the inspector shows, in declaration order
+public sealed class FieldProbe : FieldProbeMiddle<int>
+{
+    class Hidden;
+
+    enum HiddenMode
+    {
+        None,
+    }
+
+    const int Limit = 3;
+    static int shared;
+
+    int ticks;
+    FieldMode mode = FieldMode.Fast;
+    bool isReady = true;
+    float ratio = 2.5f;
+    Vector3 position = new(1.0f, 2.5f, 3.0f);
+    string? missing = null;
+    string text = "hello";
+    string longText = new('x', 300);
+    readonly int locked = 42;
+    List<int> list = [1, 2, 3];
+    HashSet<int> set = [1, 2];
+    Dictionary<int, int> map = new() { [1] = 2 };
+    int[] numbers = [1, 2, 3, 4];
+    int[]? noNumbers = null;
+    FieldThrower? nothing = null;
+    FieldThrower thrower = new();
+    Entity entity = default;
+    int? maybe = 5;
+    Hidden hidden = new();
+    HiddenMode hiddenMode = HiddenMode.None;
+    FieldPoint point = default;
+
+    public int Auto { get; set; } = 1;
+
+    public override void OnUpdate(float deltaTime)
+    {
+        ticks++;
+        shared += Limit + Auto;
+        _ = (nothing, noNumbers, missing, locked, hiddenMode, point, hidden, thrower, entity, map, set, list, numbers, text, longText, position, ratio, isReady, mode, maybe);
     }
 }

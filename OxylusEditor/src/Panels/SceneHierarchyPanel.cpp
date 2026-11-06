@@ -39,6 +39,15 @@ static auto add_mesh_colliders_to_hierarchy(flecs::entity entity) -> void {
   entity.children([](flecs::entity child) { add_mesh_colliders_to_hierarchy(child); });
 }
 
+static auto is_script_selected(const EditorContext& context) -> bool {
+  return context.type == EditorContext::Type::Script && context.str.has_value();
+}
+
+static auto remove_selected_script(Scene& scene, EditorContext& context) -> void {
+  scene.remove_script(ScriptKey{.type_name = context.str.value()});
+  context.reset();
+}
+
 auto SceneHierarchyPanel::SelectedEntity::set(this SelectedEntity& self, flecs::entity e) -> void {
   self.entity = e;
   App::mod<Editor>().get_context().reset(EditorContext::Type::Entity, nullopt, e);
@@ -98,10 +107,10 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   }
 
   if (
-    self.selected_script_ && ImGui::IsKeyPressed(ImGuiKey_Delete) && (self.table_hovered_ || self.table_hovered_scripts)
+    self.scene_ && is_script_selected(editor_context) && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+    (self.table_hovered_ || self.table_hovered_scripts)
   ) {
-    self.scene_->remove_script(*self.selected_script_);
-    self.selected_script_ = nullptr;
+    remove_selected_script(*self.scene_, editor_context);
   }
 
   if (self.deleted_entity_) {
@@ -164,6 +173,8 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       if (ImGui::BeginTable("ScriptsTable", 1, table_flags, ImVec2(0.0f, UI::scale(100.0f)))) {
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_NoClip);
 
+        auto& editor_context = App::mod<Editor>().get_context();
+
         for (const auto& [key, script] : self.scene_->get_scripts()) {
           auto system_name = script->display_name();
           if (self.scripts_filter_.IsActive() && !self.scripts_filter_.PassFilter(system_name.c_str())) {
@@ -174,7 +185,7 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
 
           ImGui::TableNextColumn();
 
-          bool is_selected = self.selected_script_ != nullptr && *self.selected_script_ == key;
+          const auto is_selected = is_script_selected(editor_context) && editor_context.str.value() == key.type_name;
 
           ImGuiTreeNodeFlags flags = (is_selected ? ImGuiTreeNodeFlags_Selected : 0);
           flags |= ImGuiTreeNodeFlags_OpenOnArrow;
@@ -200,7 +211,7 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
           // Select
           if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
             self.selected_entity_.reset();
-            self.selected_script_ = &key;
+            editor_context.reset(EditorContext::Type::Script, key.type_name);
           }
         }
 
@@ -211,7 +222,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
           )
         ) {
           self.selected_entity_.reset();
-          self.selected_script_ = nullptr;
           self.draw_scripts_context_menu();
           ImGui::EndPopup();
         }
@@ -220,9 +230,8 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
 
         if (ImGui::BeginPopupContextItem()) {
           if (ImGui::MenuItem("Remove", "Del")) {
-            if (self.selected_script_) {
-              self.scene_->remove_script(*self.selected_script_);
-              self.selected_script_ = nullptr;
+            if (is_script_selected(editor_context)) {
+              remove_selected_script(*self.scene_, editor_context);
             }
           }
 
@@ -233,7 +242,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
 
         if (ImGui::IsItemClicked()) {
           self.selected_entity_.reset();
-          self.selected_script_ = nullptr;
         }
       }
       ImGui::TreePop();
@@ -282,7 +290,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
                 auto new_entity = self.scene_->create_particle_system_entity(asset);
                 if (new_entity != flecs::entity::null()) {
                   self.selected_entity_.set(new_entity);
-                  self.selected_script_ = nullptr;
                 }
               }
             }
@@ -317,7 +324,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
           )
         ) {
           self.selected_entity_.reset();
-          self.selected_script_ = nullptr;
           self.draw_entities_context_menu();
           ImGui::EndPopup();
         }
@@ -328,13 +334,11 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
 
         if (ImGui::IsItemClicked()) {
           self.selected_entity_.reset();
-          self.selected_script_ = nullptr;
         }
       }
 
       if (ImGui::IsMouseDown(0) && self.window_hovered_) {
         self.selected_entity_.reset();
-        self.selected_script_ = nullptr;
       }
 
       if (self.dragged_entity_ != flecs::entity::null() && self.dragged_entity_target_ != flecs::entity::null()) {
@@ -411,7 +415,6 @@ auto SceneHierarchyPanel::draw_entity_node(
   // Select
   if (!ImGui::IsItemToggledOpen() && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
     self.selected_entity_.set(entity);
-    self.selected_script_ = nullptr;
   }
 
   // Expand recursively
@@ -425,7 +428,6 @@ auto SceneHierarchyPanel::draw_entity_node(
       self.renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
       self.selected_entity_.set(self.scene_->duplicate_entity(entity));
-      self.selected_script_ = nullptr;
     }
     if (ImGui::MenuItem("Delete", "Del"))
       entity_deleted = true;
@@ -467,7 +469,6 @@ auto SceneHierarchyPanel::draw_entity_node(
             if (new_entity != flecs::entity::null()) {
               new_entity.child_of(entity);
               self.selected_entity_.set(new_entity);
-              self.selected_script_ = nullptr;
             }
           }
         }
@@ -666,7 +667,6 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
 
   if (to_select != flecs::entity::null()) {
     self.selected_entity_.set(to_select);
-    self.selected_script_ = nullptr;
   }
 }
 
@@ -715,7 +715,6 @@ auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene*
   self.scene_ = scene != nullptr ? scene->get_scene().get() : nullptr;
 
   self.selected_entity_.reset();
-  self.selected_script_ = nullptr;
   self.renaming_entity_ = {};
   self.dragged_entity_ = {};
   self.dragged_entity_target_ = {};

@@ -2,6 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Unicode;
 
 using Oxylus.Interop;
 
@@ -32,6 +33,7 @@ internal static unsafe class Scenes
         managed->ListScriptTypes = &ListScriptTypes;
         managed->ScriptCreate = &ScriptCreate;
         managed->ScriptDestroy = &ScriptDestroy;
+        managed->ScriptFields = &ScriptFields;
         managed->BehaviourAdd = &BehaviourAdd;
         managed->BehaviourRemove = &BehaviourRemove;
         managed->WorldStart = &WorldStart;
@@ -202,6 +204,46 @@ internal static unsafe class Scenes
         catch (Exception e)
         {
             Log.Error($"Couldn't destroy a scene behaviour: {e}");
+        }
+    }
+
+    // longest value is 256 chars plus "..." at up to 3 bytes each, longer text is cut
+    const int FieldTextCapacity = 1024;
+
+    [UnmanagedCallersOnly]
+    static void ScriptFields(ulong handle, delegate* unmanaged<void*, StringView, StringView, void> visit, void* userData)
+    {
+        try
+        {
+            if (GCHandle.FromIntPtr((nint)handle).Target is not SceneBehaviour script)
+            {
+                return;
+            }
+
+            Span<byte> buffer = stackalloc byte[FieldTextCapacity];
+            foreach (var field in script.Type.Fields)
+            {
+                string text;
+                try
+                {
+                    text = field.Read(script);
+                }
+                catch
+                {
+                    text = "<error>";
+                }
+
+                Utf8.FromUtf16(text, buffer, out _, out var written, replaceInvalidSequences: true, isFinalBlock: true);
+                fixed (byte* name = field.Name)
+                fixed (byte* value = buffer)
+                {
+                    visit(userData, new StringView(name, field.Name.Length), new StringView(value, written));
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Error($"Couldn't read the fields of a scene behaviour: {e}");
         }
     }
 

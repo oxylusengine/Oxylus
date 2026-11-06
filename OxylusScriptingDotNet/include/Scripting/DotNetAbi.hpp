@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 14u
+#define OX_DOTNET_ABI_VERSION 15u
 
 struct ecs_world_t;
 
@@ -56,6 +56,9 @@ struct OxStringView {
   const c8* data = nullptr;
   usize length = 0;
 };
+
+// the views are only valid during the call
+using OxScriptFieldVisitor = auto (*)(void* user_data, OxStringView name, OxStringView value) -> void;
 
 // `name` points into managed memory that stays put until the scripts unload
 struct OxScriptTypeInfo {
@@ -669,6 +672,7 @@ struct OxManagedApi {
   // a scene behaviour instance, `handle` names it from then on. Its systems register in `world` with it
   auto (*script_create)(ecs_world_t* world, OxStringView type_name, u64* handle) -> OxStatus = nullptr;
   auto (*script_destroy)(u64 handle) -> void = nullptr;
+  auto (*script_fields)(u64 handle, OxScriptFieldVisitor visitor, void* user_data) -> void = nullptr;
   // replaces whatever behaviour the entity had
   auto (*behaviour_add)(ecs_world_t* world, u64 entity, OxStringView type_name) -> OxStatus = nullptr;
   auto (*behaviour_remove)(ecs_world_t* world, u64 entity) -> void = nullptr;

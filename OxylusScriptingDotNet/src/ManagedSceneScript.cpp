@@ -149,4 +149,29 @@ auto ManagedSceneScript::display_name() const -> std::string { return type_name;
 auto ManagedSceneScript::on_add(Scene*) -> void { module_.add_scene_script(world_, *this); }
 
 auto ManagedSceneScript::on_remove(Scene*) -> void { module_.remove_scene_script(world_, *this); }
+
+auto ManagedSceneScript::visit_fields(ScriptFieldVisitor visitor, void* user_data) const -> void {
+  if (!module_.is_loaded() || handle == 0) {
+    return;
+  }
+
+  struct Forward {
+    ScriptFieldVisitor visitor;
+    void* user_data;
+  };
+
+  auto forward = Forward{.visitor = visitor, .user_data = user_data};
+  module_.managed_api.script_fields(
+    handle,
+    [](void* data, OxStringView name, OxStringView value) -> void {
+      const auto& target = *static_cast<Forward*>(data);
+      target.visitor(
+        target.user_data,
+        std::string_view(name.data, name.length),
+        std::string_view(value.data, value.length)
+      );
+    },
+    &forward
+  );
+}
 } // namespace ox

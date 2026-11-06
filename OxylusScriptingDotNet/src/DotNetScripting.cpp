@@ -45,8 +45,8 @@ static auto attach_managed(const OxManagedApi& managed_api, const DotNetScriptin
 static auto is_complete(const OxManagedApi& api) -> bool {
   return api.size == sizeof(OxManagedApi) && api.shutdown && api.attach_world && api.detach_world &&
          api.allocated_bytes && api.find_script_type && api.list_script_types && api.script_create &&
-         api.script_destroy && api.behaviour_add && api.behaviour_remove && api.world_start && api.world_stop &&
-         api.world_update && api.world_fixed_update && api.world_render && api.world_contacts &&
+         api.script_destroy && api.script_fields && api.behaviour_add && api.behaviour_remove && api.world_start &&
+         api.world_stop && api.world_update && api.world_fixed_update && api.world_render && api.world_contacts &&
          api.world_body_activation && api.ui_event && api.ui_model_get && api.ui_model_set && api.ui_model_event &&
          api.net_rpc && api.net_event && api.net_snapshot && api.window_resized;
 }

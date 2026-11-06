@@ -222,12 +222,17 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
             var kind = scriptType.IsBehaviour ? "EntityBehaviour" : "SceneBehaviour";
             source.AppendLine(
                 $"            new(name{i}, global::Oxylus.Interop.ScriptKind.{kind}, {hooks}, " +
-                $"static () => new {scriptType.Type}(), [{ownSystems}]),");
+                $"static () => new {scriptType.Type}(), [{ownSystems}], [{FieldDescriptors(scriptType, i)}]),");
         }
 
         source.AppendLine("        ];");
         source.AppendLine("    }");
         source.AppendLine();
+
+        for (var i = 0; i < validScriptTypes.Count; i++)
+        {
+            EmitFieldAccessors(source, i, validScriptTypes[i]);
+        }
 
         for (var i = 0; i < validSystems.Count; i++)
         {
@@ -256,6 +261,43 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
 
         context.AddSource("ScriptRegistry.g.cs", source.ToString());
     }
+
+    static string FieldDescriptors(ScriptTypeModel scriptType, int scriptIndex) =>
+        string.Join(", ", scriptType.Fields.Select((field, fieldIndex) =>
+        {
+            var call = $"{AccessorName(scriptIndex, fieldIndex, field)}(({scriptType.Type})s)";
+            var read = field.Kind switch
+            {
+                FieldTextKind.Fixed => $"static _ => \"{Literal(field.Display)}\"",
+                FieldTextKind.Value => $"static s => global::Oxylus.Hosting.ScriptFieldText.Value({call})",
+                FieldTextKind.Array => $"static s => global::Oxylus.Hosting.ScriptFieldText.Count({call}?.Length, \"{Literal(field.Display)}\")",
+                FieldTextKind.Collection => $"static s => global::Oxylus.Hosting.ScriptFieldText.Count((({field.CollectionInterface}?){call})?.Count, \"{Literal(field.Display)}\")",
+                _ => $"static s => global::Oxylus.Hosting.ScriptFieldText.Reference({call}, \"{Literal(field.Display)}\")",
+            };
+            return $"new(\"{Literal(field.Name)}\"u8.ToArray(), {read})";
+        }));
+
+    static string AccessorName(int scriptIndex, int fieldIndex, ScriptFieldModel field) =>
+        $"ScriptField{scriptIndex}_{fieldIndex}_{field.Name}";
+
+    // generated code can't touch private members, so fields are read through the runtime's field accessors
+    static void EmitFieldAccessors(StringBuilder source, int scriptIndex, ScriptTypeModel scriptType)
+    {
+        for (var i = 0; i < scriptType.Fields.Length; i++)
+        {
+            var field = scriptType.Fields[i];
+            if (field.Kind == FieldTextKind.Fixed)
+            {
+                continue;
+            }
+
+            source.AppendLine($"    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = \"{field.Name}\")]");
+            source.AppendLine($"    static extern ref {field.FieldType} {AccessorName(scriptIndex, i, field)}({field.DeclaringType} self);");
+            source.AppendLine();
+        }
+    }
+
+    static string Literal(string text) => text.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     static string SystemDescriptor(SystemModel system, int index)
     {
@@ -450,11 +492,154 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
         }
     }
 
+    enum FieldTextKind
+    {
+        Fixed,
+        Value,
+        Array,
+        Collection,
+        Reference,
+    }
+
+    sealed record ScriptFieldModel(
+        string Name,
+        string Display,
+        string DeclaringType,
+        string FieldType,
+        FieldTextKind Kind,
+        string CollectionInterface)
+    {
+        public static ScriptFieldModel From(IFieldSymbol field, IAssemblySymbol assembly)
+        {
+            var (kind, collectionInterface) = Classify(field, assembly);
+            return new ScriptFieldModel(
+                field.Name,
+                field.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                field.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                field.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                kind,
+                collectionInterface);
+        }
+
+        static (FieldTextKind Kind, string CollectionInterface) Classify(IFieldSymbol field, IAssemblySymbol assembly)
+        {
+            var type = field.Type;
+            for (var container = field.ContainingType; container is not null; container = container.ContainingType)
+            {
+                if (container.IsGenericType)
+                {
+                    return (FieldTextKind.Fixed, "");
+                }
+            }
+
+            if (!IsNameable(field.ContainingType, assembly) || !IsNameable(type, assembly))
+            {
+                return (FieldTextKind.Fixed, "");
+            }
+
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            {
+                type = nullable.TypeArguments[0];
+            }
+
+            if (IsValueText(type))
+            {
+                return (FieldTextKind.Value, "");
+            }
+
+            if (type.TypeKind == TypeKind.Array)
+            {
+                return (FieldTextKind.Array, "");
+            }
+
+            if (type.IsValueType)
+            {
+                return (FieldTextKind.Fixed, "");
+            }
+
+            var isBclCollection = type.TypeKind == TypeKind.Class
+                && type.ContainingNamespace?.ToDisplayString().StartsWith("System.Collections", System.StringComparison.Ordinal) == true;
+            if (isBclCollection)
+            {
+                var countInterface = type.AllInterfaces
+                    .Where(i => i.OriginalDefinition.ToDisplayString() is "System.Collections.Generic.ICollection<T>" or "System.Collections.Generic.IReadOnlyCollection<T>")
+                    .OrderBy(i => i.OriginalDefinition.Name, System.StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (countInterface is not null)
+                {
+                    return (FieldTextKind.Collection, countInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                }
+            }
+
+            return (FieldTextKind.Reference, "");
+        }
+
+        static bool IsValueText(ITypeSymbol type)
+        {
+            switch (type.SpecialType)
+            {
+                case SpecialType.System_Boolean:
+                case SpecialType.System_Char:
+                case SpecialType.System_SByte:
+                case SpecialType.System_Byte:
+                case SpecialType.System_Int16:
+                case SpecialType.System_UInt16:
+                case SpecialType.System_Int32:
+                case SpecialType.System_UInt32:
+                case SpecialType.System_Int64:
+                case SpecialType.System_UInt64:
+                case SpecialType.System_Single:
+                case SpecialType.System_Double:
+                case SpecialType.System_Decimal:
+                case SpecialType.System_String:
+                    return true;
+            }
+
+            return type.TypeKind == TypeKind.Enum
+                || type.ToDisplayString() is "System.Numerics.Vector2" or "System.Numerics.Vector3" or "System.Numerics.Vector4"
+                    or "System.Numerics.Quaternion" or "Oxylus.Entity";
+        }
+
+        static bool IsNameable(ITypeSymbol type, IAssemblySymbol assembly)
+        {
+            switch (type.TypeKind)
+            {
+                case TypeKind.Pointer:
+                case TypeKind.FunctionPointer:
+                case TypeKind.Dynamic:
+                case TypeKind.TypeParameter:
+                case TypeKind.Error:
+                    return false;
+                case TypeKind.Array:
+                    return IsNameable(((IArrayTypeSymbol)type).ElementType, assembly);
+            }
+
+            if (type is not INamedTypeSymbol named)
+            {
+                return false;
+            }
+
+            for (var current = named; current is not null; current = current.ContainingType)
+            {
+                var isVisible = current.DeclaredAccessibility == Accessibility.Public
+                    || (current.DeclaredAccessibility == Accessibility.Internal
+                        && SymbolEqualityComparer.Default.Equals(current.ContainingAssembly, assembly));
+                if (!isVisible)
+                {
+                    return false;
+                }
+            }
+
+            return named.TypeArguments.All(a => IsNameable(a, assembly));
+        }
+    }
+
     sealed record ScriptTypeModel(
         string Type,
         string Name,
         bool IsBehaviour,
         ImmutableArray<string> Hooks,
+        ImmutableArray<ScriptFieldModel> Fields,
         string? Error,
         Location? Location)
     {
@@ -494,11 +679,27 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
                 }
             }
 
+            var fields = ImmutableArray.CreateBuilder<ScriptFieldModel>();
+            if (!isBehaviour && error is null)
+            {
+                for (var current = type; current is not null && current.ToDisplayString() != SceneBehaviourType; current = current.BaseType)
+                {
+                    foreach (var field in current.GetMembers().OfType<IFieldSymbol>())
+                    {
+                        if (!field.IsStatic && !field.IsConst && !field.IsImplicitlyDeclared)
+                        {
+                            fields.Add(ScriptFieldModel.From(field, type.ContainingAssembly));
+                        }
+                    }
+                }
+            }
+
             return new ScriptTypeModel(
                 type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                 isBehaviour,
                 hooks.ToImmutable(),
+                fields.ToImmutable(),
                 error,
                 type.Locations.FirstOrDefault());
         }

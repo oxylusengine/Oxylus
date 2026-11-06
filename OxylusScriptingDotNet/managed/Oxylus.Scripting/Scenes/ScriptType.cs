@@ -13,14 +13,27 @@ public enum ScriptHooks
     FixedUpdate = 1 << 1,
 }
 
+public sealed class ScriptField(byte[] name, Func<object, string> read)
+{
+    public byte[] Name { get; } = name;
+    public Func<object, string> Read { get; } = read;
+}
+
 // a SceneBehaviour or EntityBehaviour class, described by the generator so nothing is found by reflection
-public sealed class ScriptType(byte[] name, ScriptKind kind, ScriptHooks hooks, Func<object> create, SystemDescriptor[] systems)
+public sealed class ScriptType(
+    byte[] name,
+    ScriptKind kind,
+    ScriptHooks hooks,
+    Func<object> create,
+    SystemDescriptor[] systems,
+    ScriptField[] fields)
 {
     public byte[] Name { get; } = name;
     public ScriptKind Kind { get; } = kind;
     public ScriptHooks Hooks { get; } = hooks;
     public Func<object> Create { get; } = create;
     public SystemDescriptor[] Systems { get; } = systems;
+    public ScriptField[] Fields { get; } = fields;
 }
 
 public static class BehaviourType<T> where T : EntityBehaviour

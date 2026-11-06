@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 // clang-format off
 #include <Jolt/Jolt.h>
@@ -630,6 +631,82 @@ TEST_F(DotNetSceneTest, RecreatesScriptsAndBehavioursOnReload) {
 
   step();
   EXPECT_FLOAT_EQ(spun.get<ox::TransformComponent>().position.x, 2.0f);
+}
+
+using FieldRows = std::vector<std::pair<std::string, std::string>>;
+
+static auto field_rows(const ox::Scene& scene, std::string_view type_name) -> FieldRows {
+  auto rows = FieldRows();
+  const auto& scripts = scene.get_scripts();
+  const auto it = scripts.find(ox::ScriptKey{.type_name = std::string(type_name)});
+  if (it == scripts.end()) {
+    return rows;
+  }
+
+  it->second->visit_fields(
+    [](void* data, std::string_view name, std::string_view value) -> void {
+      static_cast<FieldRows*>(data)->emplace_back(std::string(name), std::string(value));
+    },
+    &rows
+  );
+  return rows;
+}
+
+TEST_F(DotNetSceneTest, ListsASceneBehavioursFieldsAsText) {
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.FieldProbe").has_value());
+
+  const auto expected = FieldRows{
+    {"ticks", "0"},
+    {"mode", "Fast"},
+    {"isReady", "true"},
+    {"ratio", "2.5"},
+    {"position", "1, 2.5, 3"},
+    {"missing", "null"},
+    {"text", "hello"},
+    {"longText", std::string(256, 'x') + "..."},
+    {"locked", "42"},
+    {"list", "List<int> (3)"},
+    {"set", "HashSet<int> (2)"},
+    {"map", "Dictionary<int, int> (1)"},
+    {"numbers", "int[] (4)"},
+    {"noNumbers", "null"},
+    {"nothing", "null"},
+    {"thrower", "FieldThrower"},
+    {"entity", "Entity(0)"},
+    {"maybe", "5"},
+    {"hidden", "Hidden"},
+    {"hiddenMode", "HiddenMode"},
+    {"point", "FieldPoint"},
+    {"generic", "int"},
+    {"inherited", "7"},
+  };
+  EXPECT_EQ(field_rows(*scene, "SmokeGame.FieldProbe"), expected);
+
+  scene->runtime_start();
+  step();
+  const auto rows = field_rows(*scene, "SmokeGame.FieldProbe");
+  ASSERT_EQ(rows.size(), expected.size());
+  EXPECT_EQ(rows.front(), (std::pair<std::string, std::string>{"ticks", "1"}));
+
+  // nothing from SceneBehaviour itself, and no constants, statics or auto-property backing fields
+  for (const auto& [name, value] : rows) {
+    EXPECT_FALSE(name == "Type" || name == "Systems" || name == "World" || name == "Limit" || name == "shared") << name;
+    EXPECT_EQ(name.find("BackingField"), std::string::npos) << name;
+  }
+
+  EXPECT_TRUE(field_rows(*scene, "SmokeGame.LevelLogic").empty());
+}
+
+TEST_F(DotNetSceneTest, ListsNoFieldsOfAnUnloadedScript) {
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.FieldProbe").has_value());
+  EXPECT_FALSE(field_rows(*scene, "SmokeGame.FieldProbe").empty());
+
+  scripting().unload();
+  EXPECT_TRUE(field_rows(*scene, "SmokeGame.FieldProbe").empty());
+
+  const auto loaded = scripting().load(smoke_game(), capturing_native_api());
+  ASSERT_TRUE(loaded.has_value()) << loaded.error();
+  EXPECT_FALSE(field_rows(*scene, "SmokeGame.FieldProbe").empty());
 }
 
 TEST_F(DotNetSceneTest, UpdatesManyBehavioursWithoutAllocating) {

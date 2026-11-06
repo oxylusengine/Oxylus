@@ -142,6 +142,45 @@ static auto draw_script_component(flecs::entity entity) -> void {
   UI::end_property_grid();
 }
 
+static auto draw_script_field(void* user_data, std::string_view name, std::string_view value) -> void {
+  memory::ScopedStack stack;
+
+  ++*static_cast<u32*>(user_data);
+  UI::begin_property_grid(stack.null_terminate_cstr(name), nullptr);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted(value.data(), value.data() + value.size());
+  UI::end_property_grid();
+}
+
+static auto draw_scene_script(const Scene& scene, const std::string& type_name) -> void {
+  memory::ScopedStack stack;
+
+  ImGui::TextUnformatted(stack.format_char("{} {}", ICON_MDI_SCRIPT, type_name));
+
+  const auto& scripts = scene.get_scripts();
+  const auto it = scripts.find(ScriptKey{.type_name = type_name});
+  if (it == scripts.end()) {
+    return;
+  }
+
+  auto field_count = 0_u32;
+  if (UI::begin_properties(ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV)) {
+    it->second->visit_fields(draw_script_field, &field_count);
+    UI::end_properties();
+  }
+
+  if (field_count != 0) {
+    return;
+  }
+
+  auto is_loaded = false;
+#ifdef OX_DOTNET
+  is_loaded = App::has_mod<DotNetScripting>() && App::mod<DotNetScripting>().is_loaded();
+#endif
+
+  ImGui::TextDisabled(is_loaded ? "No fields" : "Scripts aren't built yet");
+}
+
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
@@ -377,6 +416,10 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
     }
 
     self.draw_components(e);
+  } else if (editor_context.type == EditorContext::Type::Script) {
+    if (self.scene_ && editor_context.str.has_value()) {
+      draw_scene_script(*self.scene_, editor_context.str.value());
+    }
   } else if (editor_context.type == EditorContext::Type::File) {
     if (!editor_context.str.has_value()) {
       return;

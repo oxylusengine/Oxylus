@@ -20,7 +20,6 @@ public:
   };
 
   SelectedEntity selected_entity_ = {};
-  const ScriptKey* selected_script_ = nullptr;
 
   bool table_hovered_ = false;
   bool table_hovered_scripts = false;

@@ -44,6 +44,9 @@ struct PhysicsContact {
   ContactEvent event = ContactEvent::Added;
 };
 
+// `name` and `value` are only valid during the call
+using ScriptFieldVisitor = auto (*)(void* user_data, std::string_view name, std::string_view value) -> void;
+
 // one scene's live instance of a script, whichever language it is written in
 class SceneScript {
 public:
@@ -67,6 +70,8 @@ public:
 
   virtual auto on_body_activated(Scene*, const JPH::BodyID&, u64) -> void {}
   virtual auto on_body_deactivated(Scene*, const JPH::BodyID&, u64) -> void {}
+
+  virtual auto visit_fields(ScriptFieldVisitor, void*) const -> void {}
 };
 
 // how a scripting module Oxylus doesn't link against plugs into scenes. Its runtime is created with every scene and
