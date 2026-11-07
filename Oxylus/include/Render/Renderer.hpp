@@ -21,6 +21,7 @@ public:
 
   BufferID quad_vertex_buffer = BufferID::Invalid;
   BufferID quad_index_buffer = BufferID::Invalid;
+  BufferID blue_noise_buffer = BufferID::Invalid;
 
   auto init(this Renderer& self) -> std::expected<void, std::string>;
   auto deinit(this Renderer& self) -> std::expected<void, std::string>;

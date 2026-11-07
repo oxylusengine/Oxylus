@@ -475,6 +475,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_contact_shadows,
     shape.has_eye_adaptation,
     shape.has_ddgi,
+    shape.has_sssr,
     shape.has_tlas,
     shape.has_debug_renderer,
     shape.use_mesh_shaders,
@@ -932,6 +933,12 @@ auto RendererInstance::render(
   if (shape.has_ddgi) {
     self.ddgi_history_valid = ticket.has_value();
   }
+  if (shape.has_sssr && ticket) {
+    self.sssr_history_ping = !self.sssr_history_ping;
+    self.sssr_history_valid = true;
+  } else {
+    self.sssr_history_valid = false;
+  }
   if (self.frame_params.is_upscaling) {
     if (ticket) {
       self.fsr3_history_ping = !self.fsr3_history_ping;
@@ -957,7 +964,10 @@ auto RendererInstance::frame_shape(
   );
   const auto is_upscaling = upscaler != UpscalerBackend::None;
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
-  const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
+  const auto is_sssr_debug_view = debug_view >= GPU::DebugView::SSSRReflection &&
+                                  debug_view <= GPU::DebugView::SSSRSampleCount;
+  const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
+                            (!is_sssr_debug_view || cvar.cvar_sssr_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
@@ -989,6 +999,9 @@ auto RendererInstance::frame_shape(
   }
   if (has_ddgi) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
+  }
+  if (cvar.cvar_sssr_enable.as_bool()) {
+    self.gpu_scene_flags |= GPU::SceneFlags::HasSSSR;
   }
 
   if (is_upscaling) {
@@ -1027,6 +1040,7 @@ auto RendererInstance::frame_shape(
     .has_contact_shadows = static_cast<bool>(flags & GPU::SceneFlags::HasContactShadows),
     .has_eye_adaptation = static_cast<bool>(flags & GPU::SceneFlags::HasEyeAdaptation),
     .has_ddgi = has_ddgi,
+    .has_sssr = static_cast<bool>(flags & GPU::SceneFlags::HasSSSR),
     .has_tlas = has_tlas,
     .has_debug_renderer = cvar.cvar_enable_debug_renderer.as_bool(),
     .use_mesh_shaders = self.frame_data.use_mesh_shaders,
@@ -1120,6 +1134,13 @@ auto RendererInstance::prepare_frame_params(
     params.fsr3_reset = is_reset;
     params.fsr3_debug_view = static_cast<u32>(std::max(cvar.cvar_upscaler_debug_view.get(), 0));
     params.fsr3_history_ping = self.fsr3_history_ping;
+  }
+
+  params.sssr_reset = false;
+  if (shape.has_sssr) {
+    self.allocate_sssr_resources(shape.render_size);
+    params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.sssr_history_ping = self.sssr_history_ping;
   }
 
   params.is_terrain_brush_active = false;
@@ -1387,6 +1408,7 @@ auto RendererInstance::bind_frame(
   self.bind_pbr_variables(program, prepared.pbr);
   self.bind_ddgi_variables(program, prepared.ddgi);
   self.bind_fsr3_variables(program, prepared.fsr3);
+  self.bind_sssr_variables(program, prepared.sssr);
   self.bind_eye_adaptation_variables(program, prepared.post_process);
   self.bind_bloom_variables(program, prepared.post_process);
   self.bind_tonemap_variables(program, prepared.post_process);
@@ -1794,7 +1816,9 @@ auto RendererInstance::record_frame(
 
   albedo_attachment = module.clear(albedo_attachment, black);
   auto normal_attachment = module.transient_image(
-    {.extent = render_extent, .format = vir::Format::RGBA8Snorm, .name = "normal"}
+    {.extent = render_extent,
+     .format = shape.has_sssr ? vir::Format::RGBA16Sfloat : vir::Format::RGBA8Snorm,
+     .name = "normal"}
   );
 
   normal_attachment = module.clear(normal_attachment, black);
@@ -2224,6 +2248,38 @@ auto RendererInstance::record_frame(
     ddgi_distance_attachment = ddgi_apply_context.distance_attachment;
   }
 
+  // --- SSSR ---
+  auto sssr_context = SSSRContext{};
+  if (shape.has_sssr) {
+    sssr_context.final_attachment = final_attachment;
+    sssr_context.depth_attachment = depth_attachment;
+    sssr_context.albedo_attachment = albedo_attachment;
+    sssr_context.normal_attachment = normal_attachment;
+    sssr_context.metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment;
+    sssr_context.ambient_occlusion_attachment = ambient_occlusion_attachment;
+    sssr_context.velocity_attachment = velocity_attachment;
+    sssr_context.probe_volumes_buffer = probe_volumes_buffer;
+    sssr_context.probe_states_buffer = probe_states_buffer;
+    sssr_context.irradiance_attachment = ddgi_irradiance_attachment;
+    sssr_context.distance_attachment = ddgi_distance_attachment;
+    sssr_context.sky_cubemap_attachment = sky_cubemap_attachment;
+    sssr_context.sky_view_lut_attachment = sky_view_lut_attachment;
+    record_sssr(module, render_context, recording, sssr_context);
+    final_attachment = sssr_context.final_attachment;
+    depth_attachment = sssr_context.depth_attachment;
+    albedo_attachment = sssr_context.albedo_attachment;
+    normal_attachment = sssr_context.normal_attachment;
+    metallic_roughness_occlusion_attachment = sssr_context.metallic_roughness_occlusion_attachment;
+    ambient_occlusion_attachment = sssr_context.ambient_occlusion_attachment;
+    velocity_attachment = sssr_context.velocity_attachment;
+    probe_volumes_buffer = sssr_context.probe_volumes_buffer;
+    probe_states_buffer = sssr_context.probe_states_buffer;
+    ddgi_irradiance_attachment = sssr_context.irradiance_attachment;
+    ddgi_distance_attachment = sssr_context.distance_attachment;
+    sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
+    sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
+  }
+
   // --- 2D ---
   if (shape.has_sprites) {
     prepared.sprites = module.declare_buffer_var("sprites", vir::Access::None);
@@ -2480,8 +2536,16 @@ auto RendererInstance::record_frame(
       .pointspot_views_buffer = pointspot_views_buffer,
       .light_grid_buffer = light_grid_buffer,
       .vsm_pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .sssr_reflection_attachment = sssr_context.radiance,
+      .sssr_confidence_attachment = sssr_context.confidence,
+      .sssr_variance_attachment = sssr_context.variance,
+      .sssr_sample_count_attachment = sssr_context.sample_count,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
+    sssr_context.radiance = debug_context.sssr_reflection_attachment;
+    sssr_context.confidence = debug_context.sssr_confidence_attachment;
+    sssr_context.variance = debug_context.sssr_variance_attachment;
+    sssr_context.sample_count = debug_context.sssr_sample_count_attachment;
     vsm_virtual_page_table_attachment = debug_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = debug_context.vsm_pointspot_page_table_attachment;
     if (module.resource_root(dst_attachment) == render_target_root) {
@@ -2545,6 +2609,26 @@ auto RendererInstance::record_frame(
          values.skinned_vertices,
        }) {
     module.export_to(buffer, GPU_STATE_REST);
+  }
+
+  if (shape.has_sssr) {
+    for (const auto history :
+         {sssr_context.depth_hierarchy,
+          sssr_context.previous_depth_hierarchy,
+          sssr_context.radiance,
+          sssr_context.previous_radiance,
+          sssr_context.variance,
+          sssr_context.previous_variance,
+          sssr_context.sample_count,
+          sssr_context.previous_sample_count,
+          sssr_context.roughness,
+          sssr_context.previous_roughness,
+          sssr_context.normal,
+          sssr_context.previous_normal,
+          sssr_context.average_radiance}) {
+      module.export_to(history, SSSRContext::HISTORY_REST);
+    }
+    module.export_to(sssr_context.blue_noise_tables, vir::Access::MemoryRead);
   }
 
   if (shape.has_tlas) {

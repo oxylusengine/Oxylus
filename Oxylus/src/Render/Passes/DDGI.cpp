@@ -629,6 +629,7 @@ auto RendererInstance::apply_ddgi(
       .bind_image(0, 8, context.irradiance_attachment)
       .bind_image(0, 9, context.distance_attachment)
       .bind_buffer(0, 10, context.probe_states_buffer)
+      .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
       .push_constants_from(prepared.ddgi.apply_push)
       .draw(3, 1)
       .end_rendering()

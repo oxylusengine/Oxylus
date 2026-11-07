@@ -68,6 +68,26 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_rtao_radius.init(self.system, "pp.rtao_radius", "rtao world space ray length", 1.0f);
   self.cvar_rtao_power.init(self.system, "pp.rtao_power", "rtao final power", 1.0f);
 
+  self.cvar_sssr_enable.init(self.system, "rr.sssr", "enable stochastic screen space reflections", 0);
+  self.cvar_sssr_roughness_threshold
+    .init(self.system, "sssr.roughness_threshold", "GGX alpha above which pixels get no reflection ray", 0.2f);
+  self.cvar_sssr_depth_thickness
+    .init(self.system, "sssr.depth_thickness", "depth thickness used to validate hits", 0.015f);
+  self.cvar_sssr_max_traversal_intersections
+    .init(self.system, "sssr.max_traversal_intersections", "hierarchical traversal iteration cap", 128);
+  self.cvar_sssr_min_traversal_occupancy
+    .init(self.system, "sssr.min_traversal_occupancy", "wave occupancy below which rough rays stop traversing", 4);
+  self.cvar_sssr_most_detailed_mip
+    .init(self.system, "sssr.most_detailed_mip", "most detailed depth hierarchy mip the traversal starts from", 0);
+  self.cvar_sssr_samples_per_quad
+    .init(self.system, "sssr.samples_per_quad", "rays traced per 2x2 quad, one of 1, 2 or 4", 1);
+  self.cvar_sssr_temporal_variance_guided
+    .init(self.system, "sssr.temporal_variance_guided", "trace extra rays where last frame's variance is high", 1);
+  self.cvar_sssr_variance_threshold
+    .init(self.system, "sssr.variance_threshold", "variance above which a pixel gets an extra ray", 0.0f);
+  self.cvar_sssr_temporal_stability
+    .init(self.system, "sssr.temporal_stability", "how strongly the temporal pass favours history", 0.7f);
+
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
   self.cvar_ddgi_rays_per_probe
     .init(self.system, "rr.ddgi_rays_per_probe", "rays traced per probe each frame", GPU::DDGI_RAYS_PER_PROBE);
@@ -199,6 +219,19 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["power"] = self.cvar_rtao_power.get();
   writer.end_obj();
 
+  writer["sssr"].begin_obj();
+  writer["enabled"] = self.cvar_sssr_enable.as_bool();
+  writer["roughness_threshold"] = self.cvar_sssr_roughness_threshold.get();
+  writer["depth_thickness"] = self.cvar_sssr_depth_thickness.get();
+  writer["max_traversal_intersections"] = self.cvar_sssr_max_traversal_intersections.get();
+  writer["min_traversal_occupancy"] = self.cvar_sssr_min_traversal_occupancy.get();
+  writer["most_detailed_mip"] = self.cvar_sssr_most_detailed_mip.get();
+  writer["samples_per_quad"] = self.cvar_sssr_samples_per_quad.get();
+  writer["temporal_variance_guided"] = self.cvar_sssr_temporal_variance_guided.as_bool();
+  writer["variance_threshold"] = self.cvar_sssr_variance_threshold.get();
+  writer["temporal_stability"] = self.cvar_sssr_temporal_stability.get();
+  writer.end_obj();
+
   writer["ddgi"].begin_obj();
   writer["enabled"] = self.cvar_ddgi_enable.as_bool();
   writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
@@ -296,6 +329,22 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_rtao_ray_count.set(static_cast<i32>(rtao_obj["ray_count"].get_int64()));
     self.cvar_rtao_radius.set(static_cast<f32>(rtao_obj["radius"].get_double()));
     self.cvar_rtao_power.set(static_cast<f32>(rtao_obj["power"].get_double()));
+  }
+
+  auto sssr_obj = json["sssr"];
+  if (!sssr_obj.error()) {
+    self.cvar_sssr_enable.set(sssr_obj["enabled"].get_bool());
+    self.cvar_sssr_roughness_threshold.set(static_cast<f32>(sssr_obj["roughness_threshold"].get_double()));
+    self.cvar_sssr_depth_thickness.set(static_cast<f32>(sssr_obj["depth_thickness"].get_double()));
+    self.cvar_sssr_max_traversal_intersections.set(
+      static_cast<i32>(sssr_obj["max_traversal_intersections"].get_int64())
+    );
+    self.cvar_sssr_min_traversal_occupancy.set(static_cast<i32>(sssr_obj["min_traversal_occupancy"].get_int64()));
+    self.cvar_sssr_most_detailed_mip.set(static_cast<i32>(sssr_obj["most_detailed_mip"].get_int64()));
+    self.cvar_sssr_samples_per_quad.set(static_cast<i32>(sssr_obj["samples_per_quad"].get_int64()));
+    self.cvar_sssr_temporal_variance_guided.set(sssr_obj["temporal_variance_guided"].get_bool());
+    self.cvar_sssr_variance_threshold.set(static_cast<f32>(sssr_obj["variance_threshold"].get_double()));
+    self.cvar_sssr_temporal_stability.set(static_cast<f32>(sssr_obj["temporal_stability"].get_double()));
   }
 
   auto ddgi_obj = json["ddgi"];

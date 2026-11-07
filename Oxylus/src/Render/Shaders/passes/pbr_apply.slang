@@ -63,20 +63,13 @@ func fs_main(
 
     if (depth == 0.0) {
         let eye_pos = atmosphere.get_eye_pos(camera.position.xyz);
-        let h = eye_pos.y;
-        let right = normalize(cross(up, -V));
-        let forward = normalize(cross(right, up));
-        let light_on_plane = normalize(f32x2(dot(L, forward), dot(L, right)));
-        let view_zenith_cos_angle = dot(-V, up);
-        let planet_intersection = com::ray_sphere_intersect_nearest(eye_pos, -V, atmosphere.planet_radius);
-        let sky_view_uv = sky_view_params_to_lut_uv(
-            atmosphere, planet_intersection.hasValue, h, view_zenith_cos_angle, light_on_plane);
-        var sky_view = sky_view_lut.SampleLevel(linear_clamp_sampler, sky_view_uv, 0.0);
-        if (!planet_intersection.hasValue) {
-            sky_view.rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
+        let sky_view = sample_sky_view(atmosphere, linear_clamp_sampler, sky_view_lut, L, eye_pos, -V);
+        var sky_rgb = sky_view.value.rgb;
+        if (!sky_view.is_planet_hit) {
+            sky_rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
         }
 
-        return f32x4(sky_view.rgb * sky_view.a, 1.0);
+        return f32x4(sky_rgb * sky_view.value.a, 1.0);
     }
 
     let mapped_normal = com::oct_to_vec3(mapped_smooth_normal.rg);
@@ -134,7 +127,9 @@ func fs_main(
 
         let ibl_diffuse = kD * diffuse_sky * albedo_color;
         let specular_sky = sky_cubemap_specular(sky_cubemap, linear_clamp_sampler, N, R, roughness, horizon_darkening);
-        indirect_illuminance = (ibl_diffuse * occlusion) + kS * specular_sky * spec_occlusion;
+        let is_sssr = (scene_flags & SceneFlags::HasSSSR) != 0;
+        let ibl_specular = is_sssr ? f32x3(0.0) : kS * specular_sky * spec_occlusion;
+        indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }
 
     let horizon_fade = 1.3;

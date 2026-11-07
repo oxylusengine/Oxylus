@@ -126,6 +126,10 @@ enum class DebugView : i32 {
   RMVSM,
   RMVSMPointSpot,
   DDGIProbes,
+  SSSRReflection,
+  SSSRConfidence,
+  SSSRVariance,
+  SSSRSampleCount,
 
   Count,
 };
@@ -422,6 +426,7 @@ enum class SceneFlags : u32 {
   HasLetterbox = 1 << 15,
   HasScreenFade = 1 << 16,
   HasTemporalUpscaler = 1 << 17,
+  HasSSSR = 1 << 18,
 };
 OX_BITMASK(SceneFlags)
 
@@ -438,6 +443,30 @@ struct VBGTAOSettings {
   f32 effect_radius = 0.5f;
   u32 noise_index = 0;
   f32 final_power = 2.2f;
+};
+
+struct SSSRSettings {
+  u32x2 render_size = {};
+  f32 roughness_threshold = 0.2f;
+  f32 depth_thickness = 0.015f;
+  u32 max_traversal_intersections = 128;
+  u32 min_traversal_occupancy = 4;
+  u32 most_detailed_mip = 0;
+  u32 samples_per_quad = 1;
+  u32 is_temporal_variance_guided = 1;
+  f32 variance_threshold = 0.0f;
+  f32 temporal_stability = 0.7f;
+  u32 frame_index = 0;
+  u32 ddgi_volume_count = 0;
+  f32 ddgi_normal_bias = 0.0f;
+  f32 ddgi_view_bias = 0.0f;
+  f32 ddgi_intensity = 1.0f;
+  f32 horizon_darkening = 1.0f;
+  f32x3 sky_ambient_color = {};
+  f32x3 base_ambient_color = {};
+  f32x3 sun_direction = {};
+  u32 is_eye_adapted = 0;
+  f32 fixed_exposure = 1.0f;
 };
 
 struct PostProcessSettings {

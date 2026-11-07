@@ -439,7 +439,7 @@ auto RendererInstance::bind_pbr_variables(
     .vsm = self.frame_params.vsm,
     .sun_direction = self.directional_light.direction,
     .sun_intensity = self.directional_light.intensity,
-    .base_ambient_color = glm::vec3(0.02f, 0.03f, 0.04f),
+    .base_ambient_color = BASE_AMBIENT_COLOR,
     .light_count = static_cast<u32>(self.scene.lights.size()),
     .light_grid_origin = self.light_grid_origin,
     .vsm_mip_bias_min = 0,

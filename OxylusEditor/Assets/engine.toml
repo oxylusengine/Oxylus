@@ -290,6 +290,76 @@ path = "passes/hiz.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "sssr_blue_noise"
+path = "passes/sssr/blue_noise.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_classify_ddgi"
+path = "passes/sssr/classify_ddgi.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_classify_sky"
+path = "passes/sssr/classify_sky.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_classify_ambient"
+path = "passes/sssr/classify_ambient.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_indirect_args"
+path = "passes/sssr/indirect_args.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_intersect_ddgi"
+path = "passes/sssr/intersect_ddgi.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_intersect_ddgi_sky"
+path = "passes/sssr/intersect_ddgi_sky.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_intersect_sky"
+path = "passes/sssr/intersect_sky.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_intersect_ambient"
+path = "passes/sssr/intersect_ambient.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_reproject"
+path = "passes/sssr/reproject.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_prefilter"
+path = "passes/sssr/prefilter.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_resolve_temporal"
+path = "passes/sssr/resolve_temporal.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_composite"
+path = "passes/sssr/composite.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "sssr_debug"
+path = "passes/sssr/debug.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "histogram_generate"
 path = "passes/histogram_generate.slang"
 entry_points = ["cs_main"]

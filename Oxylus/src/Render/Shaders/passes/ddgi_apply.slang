@@ -6,6 +6,8 @@ import ddgi;
 
 #include <fullscreen.slang>
 
+[[vk::constant_id(0)]] const u32 scene_flags = 0;
+
 [[vk::binding(0, 0)]] Sampler linear_clamp_sampler;
 [[vk::binding(1, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(2, 0)]] StructuredBuffer<ProbeVolume> probe_volumes;
@@ -53,6 +55,8 @@ func fs_main(
     let R = reflect(-V, N);
     let reflection_direction = normalize(lerp(N, R, 1.0 - roughness));
 
+    let is_sssr = (scene_flags & SceneFlags::HasSSSR) != 0;
+
     ProbeSampleParams params;
     params.world_position = world_position;
     params.normal = N;
@@ -60,7 +64,7 @@ func fs_main(
     params.view_direction = V;
     params.view_distance = view_distance;
     params.specular_direction = reflection_direction;
-    params.want_specular = true;
+    params.want_specular = !is_sssr;
     params.normal_bias = normal_bias;
     params.view_bias = view_bias;
 
@@ -85,7 +89,7 @@ func fs_main(
     let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
     let indirect_diffuse = kD * diffuse * albedo_color * occlusion;
-    let indirect_specular = kS * specular * spec_occlusion;
+    let indirect_specular = is_sssr ? f32x3(0.0) : kS * specular * spec_occlusion;
 
     return f32x4(indirect_diffuse + indirect_specular, 1.0);
 }
