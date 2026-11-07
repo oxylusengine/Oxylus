@@ -680,6 +680,25 @@ void Editor::draw_menubar(this Editor& self) {
       }
       ImGui::EndMenu();
     }
+#ifdef OX_DOTNET
+    if (self.csharp_scripts.is_open() && ImGui::BeginMenu("Scripts")) {
+      ImGui::BeginDisabled(!self.csharp_scripts.can_attach_debugger());
+      if (ImGui::MenuItem("Attach Debugger...")) {
+        self.csharp_scripts.attach_debugger();
+      }
+      ImGui::EndDisabled();
+
+      auto is_waiting_on_play = self.editor_cvar.cvar_wait_for_debugger.as_bool();
+      if (ImGui::MenuItem("Wait for Debugger on Play", nullptr, &is_waiting_on_play)) {
+        self.editor_cvar.cvar_wait_for_debugger.set(is_waiting_on_play);
+        self.editor_cvar.save();
+      }
+
+      ImGui::Separator();
+      ImGui::TextDisabled(self.csharp_scripts.is_debugger_attached() ? "Debugger attached" : "No debugger attached");
+      ImGui::EndMenu();
+    }
+#endif
     if (ImGui::BeginMenu("Window")) {
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);

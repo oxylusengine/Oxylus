@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 15;
+    public const uint Version = 16;
 }
 
 public enum OxStatus : int
@@ -602,6 +602,8 @@ public unsafe struct ManagedApi
     public delegate* unmanaged<nint, OxStatus> AttachWorld;
     public delegate* unmanaged<nint, OxStatus> DetachWorld;
     public delegate* unmanaged<ulong> AllocatedBytes;
+    public delegate* unmanaged<bool> IsDebuggerAttached;
+    public delegate* unmanaged<bool> LaunchDebugger;
 
     public delegate* unmanaged<StringView, ScriptKind> FindScriptType;
     public delegate* unmanaged<ScriptTypeInfo*, int, int> ListScriptTypes;

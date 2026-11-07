@@ -186,6 +186,34 @@ auto write_scripts_solution(const std::filesystem::path& project_dir, const std:
   return write_file(project_dir / csproj.stem().concat(".sln"), content);
 }
 
+auto write_scripts_launch_config(const std::filesystem::path& project_dir) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  const auto path = project_dir / ".vscode" / "launch.json";
+  if (std::filesystem::exists(path)) {
+    return {};
+  }
+
+  // scripts load from a stream so a rebuild can replace the files, which leaves the debugger no path to find symbols by
+  constexpr auto CONTENT = R"({
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to Oxylus",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}",
+      "symbolOptions": {
+        "searchPaths": ["${workspaceFolder}/.oxeditor/managed"]
+      }
+    }
+  ]
+}
+)";
+
+  return write_file(path, CONTENT);
+}
+
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)
   -> std::filesystem::path {
   // the default AssemblyName is the project file's name

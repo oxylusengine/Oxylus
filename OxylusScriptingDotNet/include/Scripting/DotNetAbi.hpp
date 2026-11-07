@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 15u
+#define OX_DOTNET_ABI_VERSION 16u
 
 struct ecs_world_t;
 
@@ -665,6 +665,9 @@ struct OxManagedApi {
   auto (*attach_world)(ecs_world_t* world) -> OxStatus = nullptr;
   auto (*detach_world)(ecs_world_t* world) -> OxStatus = nullptr;
   auto (*allocated_bytes)() -> u64 = nullptr;
+  auto (*is_debugger_attached)() -> bool = nullptr;
+  // blocks until a debugger attaches or the choice is cancelled, false when none did
+  auto (*launch_debugger)() -> bool = nullptr;
 
   auto (*find_script_type)(OxStringView type_name) -> OxScriptKind = nullptr;
   // fills up to `capacity` entries and returns how many types there are

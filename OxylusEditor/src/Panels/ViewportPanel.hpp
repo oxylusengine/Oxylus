@@ -50,6 +50,8 @@ private:
 
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
+  // Play was pressed and is held until a debugger attaches
+  bool is_waiting_for_debugger = false;
 
   RuntimeConsole runtime_console = {};
 

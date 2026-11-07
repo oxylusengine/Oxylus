@@ -7,6 +7,11 @@ class Timer;
 
 class Timestep {
 public:
+  static constexpr f64 NO_MAX_STEP = -1.0;
+
+  // the longest step on_update reports, however much time really passed
+  f64 max_step_millis = NO_MAX_STEP;
+
   Timestep();
   // reports `fixed_millis` until the first on_update, so frames can be simulated without a clock
   explicit Timestep(f64 fixed_millis);

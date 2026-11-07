@@ -51,6 +51,9 @@ auto write_scripts_props(
 auto write_scripts_solution(const std::filesystem::path& project_dir, const std::filesystem::path& csproj)
   -> std::expected<void, std::string>;
 
+// writes <project_dir>/.vscode/launch.json unless it exists, which the developer owns
+auto write_scripts_launch_config(const std::filesystem::path& project_dir) -> std::expected<void, std::string>;
+
 // the dll a build of `csproj` into `output_dir` produces
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)
   -> std::filesystem::path;
