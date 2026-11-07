@@ -107,6 +107,7 @@ static auto usage_name(TextureUsage usage) -> std::string_view {
     case TextureUsage::Linear: return "linear";
     case TextureUsage::Normal: return "normal";
     case TextureUsage::Mask  : return "mask";
+    case TextureUsage::Lut   : return "lut";
   }
 
   return "color";
@@ -125,6 +126,9 @@ static auto parse_usage(std::string_view name) -> option<TextureUsage> {
   }
   if (name == "mask") {
     return TextureUsage::Mask;
+  }
+  if (name == "lut") {
+    return TextureUsage::Lut;
   }
 
   return nullopt;
@@ -237,6 +241,7 @@ auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType {
     case fnv64_c(".JSON")      : return AssetFileType::JSON;
     case fnv64_c(".OXASSET")   : return AssetFileType::Meta;
     case fnv64_c(".KTX2")      : return AssetFileType::KTX2;
+    case fnv64_c(".CUBE")      : return AssetFileType::CUBE;
     case fnv64_c(".OXTERRAIN") : return AssetFileType::OXTERRAIN;
     case fnv64_c(".OXPARTICLE"): return AssetFileType::OXPARTICLE;
     case fnv64_c(".OXCINE")    : return AssetFileType::OXCINE;
@@ -260,7 +265,8 @@ auto to_asset_type(AssetFileType file_type) -> AssetType {
     case AssetFileType::PNG       :
     case AssetFileType::JPEG      :
     case AssetFileType::DDS       :
-    case AssetFileType::KTX2      : return AssetType::Texture;
+    case AssetFileType::KTX2      :
+    case AssetFileType::CUBE      : return AssetType::Texture;
     case AssetFileType::OXTERRAIN : return AssetType::Terrain;
     case AssetFileType::OXPARTICLE: return AssetType::ParticleSystem;
     case AssetFileType::OXCINE    : return AssetType::Cinematic;
@@ -282,6 +288,7 @@ auto needs_compiling(AssetFileType file_type) -> bool {
     case AssetFileType::GLB    :
     case AssetFileType::GLTF   :
     case AssetFileType::KTX2   :
+    case AssetFileType::CUBE   :
     case AssetFileType::DDS    :
     case AssetFileType::PNG    :
     case AssetFileType::JPEG   :

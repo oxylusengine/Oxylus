@@ -1,6 +1,8 @@
 #include "InspectorPanel.hpp"
 
 #include <ankerl/svector.h>
+#include <basisu/encoder/basisu_enc.h>
+#include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -19,6 +21,7 @@
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/EntitySerializer.hpp"
 #ifdef OX_DOTNET
   #include "Scripting/DotNetScripting.hpp"
@@ -50,7 +53,7 @@ static auto expected_asset_type(const std::string_view field_name) -> AssetType 
     return AssetType::Model;
   if (has("material"))
     return AssetType::Material;
-  if (has("texture") || has("layer_"))
+  if (has("texture") || has("layer_") || has("lut"))
     return AssetType::Texture;
   if (has("audio") || has("sound"))
     return AssetType::Audio;
@@ -62,6 +65,45 @@ static auto expected_asset_type(const std::string_view field_name) -> AssetType 
     return AssetType::Scene;
 
   return AssetType::None;
+}
+
+// strip layout the importer and the grading bake share, the entry for (r, g, b) at pixel (b * N + r, g)
+static auto save_neutral_lut() -> void {
+  ZoneScoped;
+  memory::ScopedStack stack;
+
+  constexpr auto LUT_SIZE = 32_u32;
+  const auto to_unorm8 = [](u32 v) {
+    return static_cast<i32>((v * 255_u32 + (LUT_SIZE - 1) / 2) / (LUT_SIZE - 1));
+  };
+
+  auto image = basisu::image(LUT_SIZE * LUT_SIZE, LUT_SIZE);
+  for (auto g = 0_u32; g < LUT_SIZE; g++) {
+    for (auto b = 0_u32; b < LUT_SIZE; b++) {
+      for (auto r = 0_u32; r < LUT_SIZE; r++) {
+        image(b * LUT_SIZE + r, g) = basisu::color_rgba(to_unorm8(r), to_unorm8(g), to_unorm8(b), 255);
+      }
+    }
+  }
+
+  auto& vfs = App::get_vfs();
+  if (!vfs.is_mounted_dir(VFS::ASSETS_DIR)) {
+    OX_LOG_ERROR("No project is open, so there is no assets directory to save the neutral LUT into.");
+    return;
+  }
+
+  const auto assets_dir = std::filesystem::path(VFS::ASSETS_DIR);
+  auto path = vfs.to_physical(assets_dir / "neutral_lut_32.png");
+  for (auto i = 1_u32; std::filesystem::exists(path); i++) {
+    path = vfs.to_physical(assets_dir / stack.format("neutral_lut_32_{}.png", i));
+  }
+
+  if (!basisu::save_png(path.string().c_str(), image)) {
+    OX_LOG_ERROR("Failed to write the neutral LUT to {}", path.string());
+    return;
+  }
+
+  OX_LOG_INFO("Saved a neutral LUT to {}", path.string());
 }
 
 static auto format_timestamp(memory::ScopedStack& stack, const f32 seconds) -> const c8* {
@@ -770,6 +812,17 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       }
 
       UI::end_properties();
+
+      if (fid == world.id<ColorGradingComponent>()) {
+        static constexpr auto
+          NEUTRAL_LUT_TOOLTIP = "Saves a neutral 1024x32 LUT strip into the project's assets.\n"
+                                "Paste it into a screenshot of the viewport, grade both together in an image editor,\n"
+                                "then crop the strip back out, save it as a PNG and assign it to lut.";
+        if (UI::button(stack.format_char("{} Save neutral LUT", ICON_MDI_CONTENT_SAVE), {}, NEUTRAL_LUT_TOOLTIP)) {
+          save_neutral_lut();
+        }
+      }
+
       ImGui::TreePop();
     }
 

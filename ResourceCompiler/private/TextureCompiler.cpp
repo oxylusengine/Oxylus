@@ -7,10 +7,12 @@
 #include <basisu/encoder/basisu_enc.h>
 #include <basisu/encoder/pvpngreader.h>
 #include <basisu/transcoder/basisu_transcoder.h>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <fmt/format.h>
 #include <fmt/std.h>
+#include <glm/gtc/packing.hpp>
 #include <mutex>
 #include <vir/Types.hpp>
 #include <vulkan/vulkan_core.h>
@@ -80,6 +82,7 @@ static auto block_format(TextureUsage usage) -> vir::Format {
     case TextureUsage::Linear: return vir::Format::BC7UnormBlock;
     case TextureUsage::Normal: return vir::Format::BC5UnormBlock;
     case TextureUsage::Mask  : return vir::Format::BC4UnormBlock;
+    case TextureUsage::Lut   : return vir::Format::RGBA8Unorm;
   }
 
   return vir::Format::BC7SrgbBlock;
@@ -108,7 +111,24 @@ static auto is_grayscale(std::span<const u8> bytes, const basisu::image& image) 
   });
 }
 
+constexpr static auto MIN_LUT_SIZE = 2_u32;
+constexpr static auto MAX_LUT_SIZE = 64_u32;
+
+static auto is_lut_strip(u32 width, u32 height) -> bool {
+  return height >= MIN_LUT_SIZE && height <= MAX_LUT_SIZE && width == height * height;
+}
+
+static auto looks_like_lut(std::string_view name) -> bool {
+  memory::ScopedStack stack;
+
+  return std::string_view(stack.to_lower(name)).contains("lut");
+}
+
 static auto infer_usage(std::span<const u8> bytes, const basisu::image& image, std::string_view name) -> TextureUsage {
+  if (looks_like_lut(name) && is_lut_strip(image.get_width(), image.get_height())) {
+    return TextureUsage::Lut;
+  }
+
   if (looks_like_normal_map(name)) {
     return TextureUsage::Normal;
   }
@@ -243,6 +263,7 @@ static auto encode_level(Session& session, const basisu::image& image, TextureUs
           } break;
           case TextureUsage::Normal: basisu::bc_spmd::encode_bc5(out, texels.data(), blocks_x, true, true); break;
           case TextureUsage::Mask  : basisu::bc_spmd::encode_bc4(out, texels.data(), blocks_x, true, true); break;
+          case TextureUsage::Lut   : break;
         }
       }
     });
@@ -278,6 +299,43 @@ static auto encode_image(Session& session, basisu::image image, TextureUsage usa
   return result;
 }
 
+static auto lut_from_image(Session& session, std::span<const u8> bytes, basisu::image image, std::string_view name)
+  -> option<TextureData> {
+  if (!is_lut_strip(image.get_width(), image.get_height())) {
+    session.push_error(
+      fmt::format(
+        "LUT '{}' is {}x{}, a strip needs a width of height * height with a height from {} to {}.",
+        name,
+        image.get_width(),
+        image.get_height(),
+        MIN_LUT_SIZE,
+        MAX_LUT_SIZE
+      )
+    );
+    return nullopt;
+  }
+
+  if (starts_with(bytes, JPEG_SIGNATURE)) {
+    session.push_message(fmt::format("LUT '{}' is a JPEG, its lossy compression will show in the grade.", name));
+  }
+
+  const auto texels = image.get_pixels();
+  auto pixels = std::vector<u8>(texels.size() * 4);
+  std::memcpy(pixels.data(), texels.data(), pixels.size());
+
+  auto result = TextureData{
+    .name = std::string(name),
+    .vk_format = static_cast<u32>(vir::Format::RGBA8Unorm),
+    .width = image.get_width(),
+    .height = image.get_height(),
+  };
+  result.mips.push_back(
+    TextureMipData{.width = image.get_width(), .height = image.get_height(), .pixels = std::move(pixels)}
+  );
+
+  return result;
+}
+
 static auto compile_image(
   Session& session, std::span<const u8> bytes, std::string_view name, option<TextureUsage> usage
 ) -> option<TextureData> {
@@ -289,6 +347,10 @@ static auto compile_image(
   }
 
   const auto resolved = usage.value_or(infer_usage(bytes, *image, name));
+  if (resolved == TextureUsage::Lut) {
+    return lut_from_image(session, bytes, std::move(*image), name);
+  }
+
   return encode_image(session, std::move(*image), resolved, name);
 }
 
@@ -324,7 +386,9 @@ static auto compile_dds(Session& session, std::span<const u8> bytes, std::string
       return nullopt;
     }
 
-    const auto resolved = usage.value_or(infer_usage(bytes, image, name));
+    // an explicit lut usage was refused before reaching here, a lut-like name alone doesn't make a DDS one
+    const auto inferred = infer_usage(bytes, image, name);
+    const auto resolved = usage.value_or(inferred == TextureUsage::Lut ? TextureUsage::Color : inferred);
     return encode_image(session, std::move(image), resolved, name);
   }
 
@@ -487,11 +551,222 @@ static auto compile_ktx2(Session& session, std::span<const u8> bytes, std::strin
   return result;
 }
 
+static auto is_space(c8 c) -> bool { return c == ' ' || c == '\t' || c == '\r'; }
+
+static auto split_tokens(std::string_view line, std::span<std::string_view> out) -> usize {
+  auto count = 0_sz;
+  auto pos = 0_sz;
+  while (pos < line.size()) {
+    while (pos < line.size() && is_space(line[pos])) {
+      pos++;
+    }
+
+    if (pos == line.size()) {
+      break;
+    }
+
+    const auto start = pos;
+    while (pos < line.size() && !is_space(line[pos])) {
+      pos++;
+    }
+
+    if (count < out.size()) {
+      out[count] = line.substr(start, pos - start);
+    }
+
+    count++;
+  }
+
+  return count;
+}
+
+static auto parse_float3(std::span<const std::string_view> tokens) -> option<std::array<f32, 3>> {
+  auto values = std::array<f32, 3>{};
+  for (auto i = 0_sz; i < 3; i++) {
+    const auto* end = tokens[i].data() + tokens[i].size();
+    const auto result = std::from_chars(tokens[i].data(), end, values[i]);
+    if (result.ec != std::errc{} || result.ptr != end) {
+      return nullopt;
+    }
+  }
+
+  return values;
+}
+
+static auto compile_cube(Session& session, std::span<const u8> bytes, std::string_view name) -> option<TextureData> {
+  ZoneScoped;
+
+  const auto text = std::string_view(reinterpret_cast<const c8*>(bytes.data()), bytes.size());
+  auto size = 0_u32;
+  auto is_size_set = false;
+  auto halves = std::vector<u16>();
+  auto filled = 0_sz;
+  auto line_number = 0_u32;
+
+  const auto fail = [&](std::string_view reason) -> option<TextureData> {
+    session.push_error(fmt::format("LUT '{}' line {}: {}", name, line_number, reason));
+    return nullopt;
+  };
+
+  auto rest = text;
+  while (!rest.empty()) {
+    const auto newline = rest.find('\n');
+    auto line = rest.substr(0, newline);
+    rest = newline == std::string_view::npos ? std::string_view{} : rest.substr(newline + 1);
+    line_number++;
+
+    if (const auto comment = line.find('#'); comment != std::string_view::npos) {
+      line = line.substr(0, comment);
+    }
+
+    auto tokens = std::array<std::string_view, 4>{};
+    const auto token_count = split_tokens(line, tokens);
+    if (token_count == 0) {
+      continue;
+    }
+
+    const auto keyword = tokens[0];
+    if (keyword == "TITLE") {
+      continue;
+    }
+
+    if (keyword == "LUT_1D_SIZE") {
+      return fail("1D LUTs are not supported");
+    }
+
+    if (keyword == "LUT_3D_SIZE") {
+      auto parsed = 0_u32;
+      const auto is_valid_count = token_count == 2;
+      const auto* end = tokens[1].data() + tokens[1].size();
+      if (
+        !is_valid_count || std::from_chars(tokens[1].data(), end, parsed).ptr != end || parsed < MIN_LUT_SIZE ||
+        parsed > MAX_LUT_SIZE
+      ) {
+        return fail(fmt::format("LUT_3D_SIZE must be a single number from {} to {}", MIN_LUT_SIZE, MAX_LUT_SIZE));
+      }
+
+      if (is_size_set) {
+        return fail("LUT_3D_SIZE appears twice");
+      }
+
+      size = parsed;
+      is_size_set = true;
+      halves.resize(static_cast<usize>(size) * size * size * 4);
+      continue;
+    }
+
+    if (keyword == "LUT_3D_INPUT_RANGE") {
+      auto range = std::array<f32, 2>{};
+      auto is_valid_range = token_count == 3;
+      for (auto i = 0_sz; is_valid_range && i < 2; i++) {
+        const auto* end = tokens[i + 1].data() + tokens[i + 1].size();
+        const auto parsed = std::from_chars(tokens[i + 1].data(), end, range[i]);
+        is_valid_range = parsed.ec == std::errc{} && parsed.ptr == end;
+      }
+
+      if (!is_valid_range || range[0] != 0.0f || range[1] != 1.0f) {
+        return fail("only an input range of 0 to 1 is supported");
+      }
+
+      continue;
+    }
+
+    if (keyword == "DOMAIN_MIN" || keyword == "DOMAIN_MAX") {
+      const auto bound = keyword == "DOMAIN_MIN" ? 0.0f : 1.0f;
+      auto values = option<std::array<f32, 3>>(nullopt);
+      if (token_count == 4) {
+        values = parse_float3(std::span<const std::string_view>(tokens).subspan(1));
+      }
+
+      if (!values.has_value()) {
+        return fail(fmt::format("{} needs three numbers", keyword));
+      }
+
+      if ((*values)[0] != bound || (*values)[1] != bound || (*values)[2] != bound) {
+        return fail(
+          fmt::format("only a domain of 0 to 1 is supported, {} must be {} {} {}", keyword, bound, bound, bound)
+        );
+      }
+
+      continue;
+    }
+
+    auto rgb = option<std::array<f32, 3>>(nullopt);
+    if (token_count == 3) {
+      rgb = parse_float3(tokens);
+    }
+
+    if (!rgb.has_value()) {
+      return fail("expected three numbers or a known keyword");
+    }
+
+    if (!is_size_set) {
+      return fail("data comes before LUT_3D_SIZE");
+    }
+
+    const auto count = static_cast<usize>(size) * size * size;
+    if (filled == count) {
+      return fail(fmt::format("more than the {} entries a size of {} holds", count, size));
+    }
+
+    const auto red = filled % size;
+    const auto green = filled / size % size;
+    const auto blue = filled / (static_cast<usize>(size) * size);
+    const auto texel = (green * size * size + blue * size + red) * 4;
+    halves[texel + 0] = glm::packHalf1x16((*rgb)[0]);
+    halves[texel + 1] = glm::packHalf1x16((*rgb)[1]);
+    halves[texel + 2] = glm::packHalf1x16((*rgb)[2]);
+    halves[texel + 3] = glm::packHalf1x16(1.0f);
+    filled++;
+  }
+
+  if (!is_size_set) {
+    session.push_error(fmt::format("LUT '{}' has no LUT_3D_SIZE.", name));
+    return nullopt;
+  }
+
+  const auto count = static_cast<usize>(size) * size * size;
+  if (filled != count) {
+    session.push_error(fmt::format("LUT '{}' has {} entries, a size of {} needs {}.", name, filled, size, count));
+    return nullopt;
+  }
+
+  auto pixels = std::vector<u8>(halves.size() * sizeof(u16));
+  std::memcpy(pixels.data(), halves.data(), pixels.size());
+
+  auto result = TextureData{
+    .name = std::string(name),
+    .vk_format = static_cast<u32>(vir::Format::RGBA16Sfloat),
+    .width = size * size,
+    .height = size,
+  };
+  result.mips.push_back(TextureMipData{.width = size * size, .height = size, .pixels = std::move(pixels)});
+
+  return result;
+}
+
+static auto is_cube_name(std::string_view name) -> bool {
+  memory::ScopedStack stack;
+
+  return std::string_view(stack.to_lower(name)).ends_with(".cube");
+}
+
 auto compile_texture(Session& session, std::span<const u8> bytes, std::string_view name, option<TextureUsage> usage)
   -> option<TextureData> {
   ZoneScoped;
 
   init_codecs();
+
+  if (is_cube_name(name)) {
+    return compile_cube(session, bytes, name);
+  }
+
+  const auto is_lut = usage.has_value() && *usage == TextureUsage::Lut;
+  const auto is_block_source = starts_with(bytes, DDS_SIGNATURE) || starts_with(bytes, KTX2_SIGNATURE);
+  if (is_lut && is_block_source) {
+    session.push_error(fmt::format("LUT '{}' must be a PNG or JPEG, DDS and KTX2 are not supported.", name));
+    return nullopt;
+  }
 
   if (starts_with(bytes, DDS_SIGNATURE)) {
     return compile_dds(session, bytes, name, usage);

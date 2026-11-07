@@ -305,6 +305,12 @@ path = "passes/tonemap.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "color_grading_bake"
+path = "passes/color_grading_bake.slang"
+entry_points = ["cs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
 name = "bloom_prefilter"
 path = "passes/bloom_prefilter.slang"
 entry_points = ["cs_main"]

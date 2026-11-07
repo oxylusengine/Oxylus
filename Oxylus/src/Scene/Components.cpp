@@ -372,6 +372,20 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = ColorGradingComponent;
+    registry.bind<
+      &C::temperature,
+      &C::tint,
+      &C::saturation,
+      &C::contrast,
+      &C::lift,
+      &C::gamma,
+      &C::gain,
+      &C::lut,
+      &C::lut_contribution>();
+  }
+
+  {
     using C = ScriptComponent;
     registry.bind<&C::type_name>();
   }

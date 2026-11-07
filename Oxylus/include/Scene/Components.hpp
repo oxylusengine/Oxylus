@@ -313,6 +313,18 @@ struct TonemappingComponent {
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 };
 
+struct ColorGradingComponent {
+  f32 temperature = 6500.0f;
+  f32 tint = 0.0f;
+  f32 saturation = 1.0f;
+  f32 contrast = 1.0f;
+  glm::vec3 lift = {0.0f, 0.0f, 0.0f};
+  glm::vec3 gamma = {1.0f, 1.0f, 1.0f};
+  glm::vec3 gain = {1.0f, 1.0f, 1.0f};
+  UUID lut = {};
+  f32 lut_contribution = 1.0f;
+};
+
 // Physics
 struct RigidBodyComponent {
   enum BodyType { Static = 0, Kinematic, Dynamic };

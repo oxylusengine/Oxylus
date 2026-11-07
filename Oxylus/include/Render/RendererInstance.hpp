@@ -675,6 +675,7 @@ struct PostProcessContext {
   vir::ValueID dst_attachment = vir::ValueID::Invalid;
   vir::ValueID final_attachment = vir::ValueID::Invalid;
   vir::ValueID bloom_upsampled_attachment = vir::ValueID::Invalid;
+  vir::ValueID color_grading_lut_attachment = vir::ValueID::Invalid;
 };
 
 struct ParticleContext {
@@ -824,6 +825,8 @@ struct PostProcessVariables {
   vir::ValueID bloom_prefilter_push = vir::ValueID::Invalid;
   vir::ValueID bloom_radius = vir::ValueID::Invalid;
   vir::ValueID tonemap_push = vir::ValueID::Invalid;
+  vir::ValueID is_color_grading_dirty = vir::ValueID::Invalid;
+  vir::ValueID color_grading_push = vir::ValueID::Invalid;
   vir::ValueID render_target = vir::ValueID::Invalid;
 };
 
@@ -1139,6 +1142,14 @@ public:
   static auto apply_bloom(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
   ) -> void;
+  static auto bake_color_grading(
+    vir::Module& module,
+    RenderContext& render_context,
+    vir::ValueID lut,
+    vir::ValueID is_dirty,
+    vir::ValueID push,
+    GPU::TonemapType tonemap
+  ) -> vir::ValueID;
   static auto apply_tonemap(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, PostProcessContext& context
   ) -> vir::ValueID;
@@ -1294,10 +1305,16 @@ private:
   GPU::EyeAdaptationSettings eye_adaptation = {};
   GPU::VBGTAOSettings vbgtao_info = {};
   GPU::PostProcessSettings post_proces_settings = {};
+  GPU::ColorGradingSettings color_grading_settings = {};
+  GPU::ColorGradingSettings color_grading_baked_settings = {};
+  GPU::TonemapType color_grading_baked_tonemap = GPU::TonemapType::None;
+  bool color_grading_is_baked = false;
+  bool color_grading_dirty = false;
 
   Texture sky_transmittance_lut = {};
   Texture sky_multiscatter_lut = {};
   Texture hilbert_noise_lut = {};
+  Texture color_grading_lut = {};
   Texture sky_cubemap = {};
 
   BufferID transforms_world_buffer = BufferID::Invalid;

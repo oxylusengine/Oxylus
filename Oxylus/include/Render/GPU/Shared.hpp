@@ -422,6 +422,7 @@ enum class SceneFlags : u32 {
   HasLetterbox = 1 << 15,
   HasScreenFade = 1 << 16,
   HasTemporalUpscaler = 1 << 17,
+  HasColorGrading = 1 << 18,
 };
 OX_BITMASK(SceneFlags)
 
@@ -452,6 +453,18 @@ struct PostProcessSettings {
   f32x3 letterbox_color = {};
   f32 fade_amount = 0.0f;
   f32x3 fade_color = {};
+};
+
+struct ColorGradingSettings {
+  f32 temperature = 6500.0f;
+  f32 tint = 0.0f;
+  f32 saturation = 1.0f;
+  f32 contrast = 1.0f;
+  f32x3 lift = {};
+  f32x3 gamma = {1.0f, 1.0f, 1.0f};
+  f32x3 gain = {1.0f, 1.0f, 1.0f};
+  f32 lut_contribution = 1.0f;
+  u32 user_lut_view_index = ~0u;
 };
 
 // same field order as the SDK's cbFSR3Upscaler so the port stays comparable against the reference

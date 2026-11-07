@@ -826,7 +826,7 @@ TEST(RenderContext, PostProcessingRecordingDeclaresOnlyConsumedVariables) {
     const auto* shader = std::get_if<ShaderPipelineData>(&entry.data);
     if (
       shader && (shader->module_name.starts_with("histogram_") || shader->module_name.starts_with("bloom_") ||
-                 shader->module_name == "tonemap")
+                 shader->module_name == "tonemap" || shader->module_name == "color_grading_bake")
     ) {
       ASSERT_TRUE(device.context.create_pipeline(*shader));
     }
@@ -836,7 +836,8 @@ TEST(RenderContext, PostProcessingRecordingDeclaresOnlyConsumedVariables) {
     auto prepared = PreparedFrame{};
     auto shape = FrameShape{};
     shape.display_size = {64, 32};
-    shape.scene_flags = is_enabled ? GPU::SceneFlags::HasBloom : GPU::SceneFlags::None;
+    shape.scene_flags = is_enabled ? GPU::SceneFlags::HasBloom | GPU::SceneFlags::HasColorGrading
+                                   : GPU::SceneFlags::None;
     shape.has_bloom = is_enabled;
     shape.has_eye_adaptation = is_enabled;
     auto recording = FrameRecording{.shape = shape, .prepared = prepared};
@@ -856,6 +857,16 @@ TEST(RenderContext, PostProcessingRecordingDeclaresOnlyConsumedVariables) {
       vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
     );
     context.dst_attachment = module.transient_image({.extent = {64, 32, 1}, .format = vir::Format::RGBA8Unorm});
+    context.color_grading_lut_attachment = module.transient_image(
+      {.extent = {32, 32, 32},
+       .format = vir::Format::RGBA16Sfloat,
+       .image_type = vir::ImageType::e3D,
+       .view_type = vir::ImageViewType::e3D}
+    );
+    context.color_grading_lut_attachment = module.clear(
+      context.color_grading_lut_attachment,
+      vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
+    );
     if (is_enabled) {
       RendererInstance::apply_eye_adaptation(module, device.context, recording, context);
       RendererInstance::apply_bloom(module, device.context, recording, context);
@@ -868,6 +879,8 @@ TEST(RenderContext, PostProcessingRecordingDeclaresOnlyConsumedVariables) {
     EXPECT_EQ(program->has_variable(prepared.post_process.histogram_average_push), is_enabled);
     EXPECT_EQ(program->has_variable(prepared.post_process.bloom_prefilter_push), is_enabled);
     EXPECT_EQ(program->has_variable(prepared.post_process.bloom_radius), is_enabled);
+    EXPECT_EQ(program->has_variable(prepared.post_process.is_color_grading_dirty), is_enabled);
+    EXPECT_EQ(program->has_variable(prepared.post_process.color_grading_push), is_enabled);
     ASSERT_TRUE(program->has_variable(prepared.post_process.tonemap_push));
     const auto& tonemap = program->variables.at(program->slots.at(prepared.post_process.tonemap_push));
     EXPECT_EQ(tonemap.kind.tag, vir::ir::VariableKindTag::Bytes);

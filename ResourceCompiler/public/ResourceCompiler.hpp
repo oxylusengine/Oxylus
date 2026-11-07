@@ -62,6 +62,7 @@ enum class TextureUsage : u8 {
   Linear,    // data spread over several channels (packed metallic-roughness): BC7, linear
   Normal,    // tangent-space normal map: BC5, the renderer rebuilds z
   Mask,      // one channel (occlusion, roughness, height): BC4, sampled as rrr1
+  Lut,       // display-space colour grading lut strip: uncompressed, one mip
 };
 
 struct TextureCompileRequest {
