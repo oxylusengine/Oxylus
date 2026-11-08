@@ -572,7 +572,10 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
 
   color_grading_lut = Texture::create({
     .format = vir::Format::RGBA16Sfloat,
-    .extent = {.width = 32, .height = 32, .depth = 32},
+    .extent =
+      {.width = GPU::COLOR_GRADING_LUT_SIZE,
+       .height = GPU::COLOR_GRADING_LUT_SIZE,
+       .depth = GPU::COLOR_GRADING_LUT_SIZE},
     .image_type = vir::ImageType::e3D,
     .usage = vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::Storage,
     .view_type = vir::ImageViewType::e3D,
@@ -2965,12 +2968,21 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
     });
 
+  auto filmic = GPU::FilmicSettings{};
   self.scene.world
     .query_builder<const TonemappingComponent>() //
     .build()
     .each([&](flecs::entity e, const TonemappingComponent& tc) {
       self.tonemap_type = tc.tonemap_type;
-      //
+      filmic = {
+        .max_brightness = tc.max_brightness,
+        .contrast = tc.contrast,
+        .linear_start = tc.linear_start,
+        .linear_length = tc.linear_length,
+        .black_tightness = tc.black_tightness,
+        .pedestal = tc.pedestal,
+        .hue_preservation = tc.hue_preservation,
+      };
     });
 
   self.scene.world
@@ -3002,6 +3014,9 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         .user_lut_view_index = user_lut_view_index,
       };
     });
+
+  self.post_proces_settings.filmic = filmic;
+  self.color_grading_settings.filmic = filmic;
 
   self.color_grading_dirty = !self.color_grading_is_baked || self.tonemap_type != self.color_grading_baked_tonemap ||
                              std::memcmp(

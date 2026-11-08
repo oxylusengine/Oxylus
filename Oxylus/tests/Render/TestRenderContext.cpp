@@ -858,7 +858,7 @@ TEST(RenderContext, PostProcessingRecordingDeclaresOnlyConsumedVariables) {
     );
     context.dst_attachment = module.transient_image({.extent = {64, 32, 1}, .format = vir::Format::RGBA8Unorm});
     context.color_grading_lut_attachment = module.transient_image(
-      {.extent = {32, 32, 32},
+      {.extent = {GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE},
        .format = vir::Format::RGBA16Sfloat,
        .image_type = vir::ImageType::e3D,
        .view_type = vir::ImageViewType::e3D}

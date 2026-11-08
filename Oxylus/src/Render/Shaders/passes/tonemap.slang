@@ -37,6 +37,17 @@ VertexOutput vs_main(u32 vertex_id : SV_VertexID) {
     return output;
 }
 
+func interleaved_gradient_noise(f32x2 p) -> f32 {
+    return frac(52.9829189 * frac(dot(p, f32x2(0.06711056, 0.00583715))));
+}
+
+// triangular noise one 8-bit step wide, in the encoded space the target quantizes in, so graded gradients don't band
+func dither_to_8bit(f32x3 color, f32x2 pixel) -> f32x3 {
+    let noise = interleaved_gradient_noise(pixel) + interleaved_gradient_noise(pixel + f32x2(47.0, 17.0)) - 1.0;
+    let encoded = com::linear_to_srgb(max(color, 0.0)) + noise / 255.0;
+    return com::srgb_to_linear(max(encoded, 0.0));
+}
+
 [[shader("fragment")]]
 f32x4 fs_main(VertexOutput input) {
     let source = input_image.SampleLevel(sampler, input.tex_coord, 0.0);
@@ -62,7 +73,7 @@ f32x4 fs_main(VertexOutput input) {
     if ((scene_flags & SceneFlags::HasColorGrading) != 0) {
         color = color_grading_lut.SampleLevel(sampler, color_grading_lut_uvw(color), 0.0).rgb;
     } else {
-        color = apply_tonemap_operator(color, tonemap_type);
+        color = apply_tonemap_operator(color, tonemap_type, C.post_process_settings.filmic);
     }
 
     if ((scene_flags & SceneFlags::HasVignette) != 0) {
@@ -97,6 +108,8 @@ f32x4 fs_main(VertexOutput input) {
     if ((scene_flags & SceneFlags::HasScreenFade) != 0) {
         color = lerp(color, C.post_process_settings.fade_color, saturate(C.post_process_settings.fade_amount));
     }
+
+    color = dither_to_8bit(color, input.position.xy);
 
     let alpha = ((scene_flags & SceneFlags::TransparentBackground) != 0) ? source.a : 1.0;
     return f32x4(color, alpha);

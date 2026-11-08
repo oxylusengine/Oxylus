@@ -368,7 +368,15 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = TonemappingComponent;
-    registry.bind<&C::tonemap_type>();
+    registry.bind<
+      &C::tonemap_type,
+      &C::max_brightness,
+      &C::contrast,
+      &C::linear_start,
+      &C::linear_length,
+      &C::black_tightness,
+      &C::pedestal,
+      &C::hue_preservation>();
   }
 
   {

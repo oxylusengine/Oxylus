@@ -1,6 +1,5 @@
 import shared;
 
-#define COLOR_GRADING_LUT_SIZE 32
 #define COLOR_GRADING_STOPS 16.0
 #define COLOR_GRADING_MID_GREY 0.18
 

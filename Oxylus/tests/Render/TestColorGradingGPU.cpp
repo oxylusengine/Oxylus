@@ -30,8 +30,11 @@
 #include "Render/Utils/Samplers.hpp"
 
 namespace ox {
-constexpr static auto LUT_SIZE = 32_u32;
+constexpr static auto LUT_SIZE = GPU::COLOR_GRADING_LUT_SIZE;
 constexpr static auto STRIP_SIZE = 16_u32;
+
+// node picks below are written on a 32 grid and scaled, so they keep spanning the whole log range
+static auto node(u32 index_on_32) -> u32 { return index_on_32 * (LUT_SIZE - 1) / 31; }
 
 static auto retain_driver_modules() -> void {
 #ifdef OX_PLATFORM_LINUX
@@ -102,7 +105,85 @@ static auto log_decode(u32 index) -> f32 {
     return 0.0f;
   }
 
-  return 0.18f * std::exp2((static_cast<f32>(index) / 31.0f - 0.5f) * 16.0f);
+  return 0.18f * std::exp2((static_cast<f32>(index) / static_cast<f32>(LUT_SIZE - 1) - 0.5f) * 16.0f);
+}
+
+static auto reference_filmic_curve(f32 x, const GPU::FilmicSettings& s) -> f32 {
+  x = std::max(x, 0.0f);
+  const auto l0 = (s.max_brightness - s.linear_start) * s.linear_length / s.contrast;
+  const auto s0 = s.linear_start + l0;
+  const auto s1 = s.linear_start + s.contrast * l0;
+  const auto c2 = s.contrast * s.max_brightness / (s.max_brightness - s1);
+  const auto cp = -c2 / s.max_brightness;
+  const auto w0 = 1.0f - glm::smoothstep(0.0f, s.linear_start, x);
+  const auto w2 = x >= s0 ? 1.0f : 0.0f;
+  const auto w1 = 1.0f - w0 - w2;
+  const auto toe = s.linear_start * std::pow(x / s.linear_start, s.black_tightness) + s.pedestal;
+  const auto mid = s.linear_start + s.contrast * (x - s.linear_start);
+  const auto shoulder = s.max_brightness - (s.max_brightness - s1) * std::exp(cp * (x - s0));
+  return toe * w0 + mid * w1 + shoulder * w2;
+}
+
+static auto reference_filmic(glm::vec3 color, const GPU::FilmicSettings& s) -> glm::vec3 {
+  const auto per_channel = glm::vec3(
+    reference_filmic_curve(color.r, s),
+    reference_filmic_curve(color.g, s),
+    reference_filmic_curve(color.b, s)
+  );
+  const auto peak = std::max(color.r, std::max(color.g, color.b));
+  const auto preserved = peak > 0.0f ? color * (reference_filmic_curve(peak, s) / peak) : glm::vec3(0.0f);
+  return glm::mix(per_channel, preserved, std::clamp(s.hue_preservation, 0.0f, 1.0f));
+}
+
+static auto reference_agx(glm::vec3 color) -> glm::vec3 {
+  const auto inset = glm::mat3(
+    glm::vec3(0.856627153315983f, 0.137318972929847f, 0.11189821299995f),
+    glm::vec3(0.0951212405381588f, 0.761241990602591f, 0.0767994186031903f),
+    glm::vec3(0.0482516061458583f, 0.101439036467562f, 0.811302368396859f)
+  );
+  const auto outset = glm::mat3(
+    glm::vec3(1.1271005818144368f, -0.1413297634984383f, -0.14132976349843826f),
+    glm::vec3(-0.11060664309660323f, 1.157823702216272f, -0.11060664309660294f),
+    glm::vec3(-0.016493938717834573f, -0.016493938717834257f, 1.2519364065950405f)
+  );
+  const auto rec2020_to_rec709 = glm::mat3(
+    glm::vec3(1.6605f, -0.1246f, -0.0182f),
+    glm::vec3(-0.5876f, 1.1329f, -0.1006f),
+    glm::vec3(-0.0728f, -0.0083f, 1.1187f)
+  );
+  const auto rec709_to_rec2020 = glm::mat3(
+    glm::vec3(0.6274f, 0.0691f, 0.0164f),
+    glm::vec3(0.3293f, 0.9195f, 0.0880f),
+    glm::vec3(0.0433f, 0.0113f, 0.8956f)
+  );
+  constexpr auto min_ev = -12.47393f;
+  constexpr auto max_ev = 4.026069f;
+
+  color = inset * (rec709_to_rec2020 * color);
+  for (u32 channel = 0; channel < 3; channel++) {
+    const auto encoded = std::clamp(
+      (std::log2(std::max(color[channel], 1e-10f)) - min_ev) / (max_ev - min_ev),
+      0.0f,
+      1.0f
+    );
+    const auto x2 = encoded * encoded;
+    const auto x4 = x2 * x2;
+    color[channel] = 15.5f * x4 * x2 - 40.14f * x4 * encoded + 31.96f * x4 - 6.868f * x2 * encoded + 0.4298f * x2 +
+                     0.1191f * encoded - 0.00232f;
+  }
+
+  const auto luma = glm::dot(color, glm::vec3(0.2126729f, 0.7151522f, 0.0721750f));
+  for (u32 channel = 0; channel < 3; channel++) {
+    const auto powered = std::pow(std::max(color[channel], 0.0f), 1.35f);
+    color[channel] = std::max(luma + 1.4f * (powered - luma), 0.0f);
+  }
+
+  color = outset * color;
+  for (u32 channel = 0; channel < 3; channel++) {
+    color[channel] = std::pow(std::max(color[channel], 0.0f), 2.2f);
+  }
+
+  return glm::clamp(rec2020_to_rec709 * color, 0.0f, 1.0f);
 }
 
 struct BakedLut {
@@ -112,8 +193,9 @@ struct BakedLut {
 
   // the same texel-center remap the tonemap shader samples with
   auto lookup(glm::vec3 color) const -> glm::vec3 {
-    const auto coordinate = glm::vec3(log_encode(color.r), log_encode(color.g), log_encode(color.b)) * 31.0f;
-    const auto base = glm::min(glm::uvec3(glm::floor(coordinate)), glm::uvec3(30));
+    const auto coordinate = glm::vec3(log_encode(color.r), log_encode(color.g), log_encode(color.b)) *
+                            static_cast<f32>(LUT_SIZE - 1);
+    const auto base = glm::min(glm::uvec3(glm::floor(coordinate)), glm::uvec3(LUT_SIZE - 2));
     const auto fraction = coordinate - glm::vec3(base);
     auto result = glm::vec3(0.0f);
     for (u32 corner = 0; corner < 8; corner++) {
@@ -438,7 +520,7 @@ TEST_F(ColorGradingGPU, UserStripReplacesAndBlendsInEncodedSpace) {
   auto view = ImageViewID::Invalid;
   const auto view_index = create_inverting_strip(image, view);
 
-  const auto indices = std::array{3_u32, 10_u32, 17_u32, 24_u32, 31_u32};
+  const auto indices = std::array{node(3), node(10), node(17), node(24), node(31)};
   for (const auto contribution : {1.0f, 0.5f}) {
     SCOPED_TRACE(contribution);
     auto settings = GPU::ColorGradingSettings{};
@@ -497,5 +579,91 @@ TEST_F(ColorGradingGPU, HigherTemperatureWarmsTheImage) {
   const auto magenta = bake(settings, GPU::TonemapType::None).lookup(glm::vec3(0.18f));
   EXPECT_GT(magenta.g, 0.0f);
   EXPECT_LT(magenta.g, std::min(magenta.r, magenta.b));
+}
+
+TEST_F(ColorGradingGPU, FilmicBakesMatchTheReferenceCurve) {
+  auto custom = GPU::FilmicSettings{};
+  custom.contrast = 1.3f;
+  custom.black_tightness = 1.6f;
+  custom.max_brightness = 0.95f;
+  const auto indices = std::
+    array{node(0), node(3), node(8), node(12), node(15), node(16), node(17), node(20), node(24), node(28), node(31)};
+  for (const auto& filmic : {GPU::FilmicSettings{}, custom}) {
+    SCOPED_TRACE(filmic.contrast);
+    auto settings = GPU::ColorGradingSettings{};
+    settings.filmic = filmic;
+    const auto lut = bake(settings, GPU::TonemapType::Filmic);
+    for (const auto x : indices) {
+      for (const auto y : indices) {
+        for (const auto z : indices) {
+          const auto expected = reference_filmic(glm::vec3(log_decode(x), log_decode(y), log_decode(z)), filmic);
+          const auto actual = lut.at(x, y, z);
+          for (u32 channel = 0; channel < 3; channel++) {
+            EXPECT_NEAR(actual[channel], expected[channel], 3e-4f + std::abs(expected[channel]) * 1.5e-3f)
+              << "texel " << x << " " << y << " " << z << " channel " << channel;
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColorGradingGPU, FilmicHuePreservationKeepsChannelRatios) {
+  const auto input = glm::vec3(log_decode(node(26)), log_decode(node(21)), log_decode(node(15)));
+  const auto input_rg = input.r / input.g;
+  const auto input_gb = input.g / input.b;
+
+  auto settings = GPU::ColorGradingSettings{};
+  settings.filmic.hue_preservation = 1.0f;
+  const auto preserved = bake(settings, GPU::TonemapType::Filmic).at(node(26), node(21), node(15));
+  EXPECT_NEAR(preserved.r / preserved.g, input_rg, input_rg * 0.01f);
+  EXPECT_NEAR(preserved.g / preserved.b, input_gb, input_gb * 0.01f);
+
+  settings.filmic.hue_preservation = 0.0f;
+  const auto per_channel = bake(settings, GPU::TonemapType::Filmic).at(node(26), node(21), node(15));
+  EXPECT_LT(std::log(per_channel.r / per_channel.g), std::log(input_rg));
+  EXPECT_LT(std::log(per_channel.g / per_channel.b), std::log(input_gb));
+}
+
+TEST_F(ColorGradingGPU, ChangingFilmicSettingsChangesTheBake) {
+  auto settings = GPU::ColorGradingSettings{};
+  const auto before = settings;
+  settings.filmic.pedestal = 0.02f;
+  EXPECT_NE(std::memcmp(&before, &settings, sizeof(GPU::ColorGradingSettings)), 0);
+
+  const auto baked_before = bake(before, GPU::TonemapType::Filmic);
+  const auto baked_after = bake(settings, GPU::TonemapType::Filmic);
+  EXPECT_GT(baked_after.at(0, 0, 0).r, baked_before.at(0, 0, 0).r + 0.01f);
+}
+
+TEST_F(ColorGradingGPU, AgXBakesMatchTheReference) {
+  const auto lut = bake({}, GPU::TonemapType::AgX);
+  EXPECT_NEAR(lut.at(0, 0, 0).r, 0.0f, 1e-3f);
+  EXPECT_NEAR(lut.at(0, 0, 0).g, 0.0f, 1e-3f);
+  EXPECT_NEAR(lut.at(0, 0, 0).b, 0.0f, 1e-3f);
+
+  const auto indices = std::
+    array{node(0), node(3), node(8), node(12), node(15), node(16), node(17), node(20), node(24), node(28), node(31)};
+  for (const auto x : indices) {
+    for (const auto y : indices) {
+      for (const auto z : indices) {
+        const auto expected = reference_agx(glm::vec3(log_decode(x), log_decode(y), log_decode(z)));
+        const auto actual = lut.at(x, y, z);
+        for (u32 channel = 0; channel < 3; channel++) {
+          EXPECT_NEAR(actual[channel], expected[channel], 2e-3f)
+            << "texel " << x << " " << y << " " << z << " channel " << channel;
+        }
+      }
+    }
+  }
+
+  auto previous = 0.0f;
+  for (u32 index = 0; index < LUT_SIZE; index++) {
+    const auto grey = lut.at(index, index, index);
+    EXPECT_GE(grey.g, 0.0f);
+    EXPECT_LE(grey.g, 1.0f);
+    EXPECT_GE(grey.g, previous - 1e-3f) << "grey node " << index;
+    previous = grey.g;
+  }
 }
 } // namespace ox

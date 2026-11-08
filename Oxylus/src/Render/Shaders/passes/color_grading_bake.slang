@@ -129,7 +129,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
 
     color = pow(max(color * C.gain + C.lift, 0.0), 1.0 / max(C.gamma, 1e-4));
 
-    color = apply_tonemap_operator(color, tonemap_type);
+    color = apply_tonemap_operator(color, tonemap_type, C.filmic);
 
     if (C.user_lut_view_index != ~0u && C.lut_contribution > 0.0) {
         let encoded = com::linear_to_srgb(saturate(color));

@@ -13,6 +13,8 @@ using HistogramAveragePush = PushConstants<f32, f32, f32, f32, f32>;
 using BloomPrefilterPush = PushConstants<f32, f32, f32, vir::Extent3D>;
 using TonemapPush = PushConstants<GPU::PostProcessSettings, glm::ivec2, f32>;
 
+static_assert(TonemapPush::TOTAL_SIZE <= 128);
+
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -278,7 +280,7 @@ auto RendererInstance::bake_color_grading(
         .bind_sampler(0, 1, linear_clamped)
         .specialize_constant(0, std::to_underlying(tonemap))
         .push_constants_from(push)
-        .dispatch(4, 4, 4)
+        .dispatch_invocations(GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE)
         .end_compute()[0];
     },
     [&](vir::Module&) { return lut; }

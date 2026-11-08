@@ -441,6 +441,16 @@ struct VBGTAOSettings {
   f32 final_power = 2.2f;
 };
 
+struct FilmicSettings {
+  f32 max_brightness = 1.0f;
+  f32 contrast = 1.0f;
+  f32 linear_start = 0.22f;
+  f32 linear_length = 0.4f;
+  f32 black_tightness = 1.33f;
+  f32 pedestal = 0.0f;
+  f32 hue_preservation = 0.0f;
+};
+
 struct PostProcessSettings {
   f32 exposure = 1.0f;
   f32 chromatic_aberration_amount = 0.5f;
@@ -453,7 +463,11 @@ struct PostProcessSettings {
   f32x3 letterbox_color = {};
   f32 fade_amount = 0.0f;
   f32x3 fade_color = {};
+  FilmicSettings filmic = {};
 };
+
+// a 32 grid bent smooth gradients by more than one 8-bit step between nodes
+OX_CONST u32 COLOR_GRADING_LUT_SIZE = 64;
 
 struct ColorGradingSettings {
   f32 temperature = 6500.0f;
@@ -465,6 +479,7 @@ struct ColorGradingSettings {
   f32x3 gain = {1.0f, 1.0f, 1.0f};
   f32 lut_contribution = 1.0f;
   u32 user_lut_view_index = ~0u;
+  FilmicSettings filmic = {};
 };
 
 // same field order as the SDK's cbFSR3Upscaler so the port stays comparable against the reference
@@ -507,6 +522,7 @@ enum class TonemapType : u32 {
   ACES,
   AgX,
   GT7,
+  Filmic,
 };
 
 // --- Virtual shadow maps ---

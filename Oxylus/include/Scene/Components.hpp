@@ -311,6 +311,13 @@ struct ScreenFadeComponent {
 
 struct TonemappingComponent {
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
+  f32 max_brightness = 1.0f;
+  f32 contrast = 1.0f;
+  f32 linear_start = 0.22f;
+  f32 linear_length = 0.4f;
+  f32 black_tightness = 1.33f;
+  f32 pedestal = 0.0f;
+  f32 hue_preservation = 0.0f;
 };
 
 struct ColorGradingComponent {
