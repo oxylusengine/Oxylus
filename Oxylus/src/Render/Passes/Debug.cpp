@@ -53,40 +53,47 @@ auto RendererInstance::apply_debug_view(
   const auto debug_view = shape.debug_view;
   dst = module.clear(dst, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 1.0f));
 
-  if (debug_view >= GPU::DebugView::SSSRReflection && debug_view <= GPU::DebugView::SSSRSampleCount) {
-    if (!shape.has_sssr) {
+  switch (debug_view) {
+    case GPU::DebugView::SSSRReflection :
+    case GPU::DebugView::SSSRConfidence :
+    case GPU::DebugView::SSSRVariance   :
+    case GPU::DebugView::SSSRSampleCount: {
+      if (!shape.has_sssr) {
+        return dst;
+      }
+
+      std::tie(
+        dst,
+        context.sssr_reflection_attachment,
+        context.sssr_confidence_attachment,
+        context.sssr_variance_attachment,
+        context.sssr_sample_count_attachment
+      ) = std::tuple_cat( //
+        module
+          .begin_rendering(
+            {{dst, vir::Access::ColorWrite},
+             {context.sssr_reflection_attachment, vir::Access::FragmentSampled},
+             {context.sssr_confidence_attachment, vir::Access::FragmentSampled},
+             {context.sssr_variance_attachment, vir::Access::FragmentSampled},
+             {context.sssr_sample_count_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("sssr debug pass")
+          .bind_graphics_pipeline(render_context.pipeline("sssr_debug"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_sampler(0, 0, render_context.cached_sampler_handle(LinearSamplerClamped))
+          .bind_image(0, 1, context.sssr_reflection_attachment)
+          .bind_image(0, 2, context.sssr_confidence_attachment)
+          .bind_image(0, 3, context.sssr_variance_attachment)
+          .bind_image(0, 4, context.sssr_sample_count_attachment)
+          .push_constants(PushConstants(std::to_underlying(debug_view)))
+          .draw(3, 1)
+          .end_rendering()
+      );
+
       return dst;
     }
-
-    std::tie(
-      dst,
-      context.sssr_reflection_attachment,
-      context.sssr_confidence_attachment,
-      context.sssr_variance_attachment,
-      context.sssr_sample_count_attachment
-    ) = std::tuple_cat( //
-      module
-        .begin_rendering(
-          {{dst, vir::Access::ColorWrite},
-           {context.sssr_reflection_attachment, vir::Access::FragmentSampled},
-           {context.sssr_confidence_attachment, vir::Access::FragmentSampled},
-           {context.sssr_variance_attachment, vir::Access::FragmentSampled},
-           {context.sssr_sample_count_attachment, vir::Access::FragmentSampled}}
-        )
-        .with_name("sssr debug pass")
-        .bind_graphics_pipeline(render_context.pipeline("sssr_debug"))
-        .set_viewport(0, vir::Rect2D::framebuffer())
-        .set_scissor(0, vir::Rect2D::framebuffer())
-        .bind_sampler(0, 0, render_context.cached_sampler_handle(LinearSamplerClamped))
-        .bind_image(0, 1, context.sssr_reflection_attachment)
-        .bind_image(0, 2, context.sssr_confidence_attachment)
-        .bind_image(0, 3, context.sssr_variance_attachment)
-        .bind_image(0, 4, context.sssr_sample_count_attachment)
-        .push_constants(PushConstants(std::to_underlying(debug_view)))
-        .draw(3, 1)
-        .end_rendering()
-    );
-    return dst;
+    default: break;
   }
 
   if (!shape.has_meshes) {

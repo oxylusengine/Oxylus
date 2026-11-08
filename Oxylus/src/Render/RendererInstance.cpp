@@ -45,6 +45,16 @@ struct ShadowSlotStats {
 // prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
+static auto is_sssr_debug_view(GPU::DebugView debug_view) -> bool {
+  switch (debug_view) {
+    case GPU::DebugView::SSSRReflection :
+    case GPU::DebugView::SSSRConfidence :
+    case GPU::DebugView::SSSRVariance   :
+    case GPU::DebugView::SSSRSampleCount: return true;
+    default                             : return false;
+  }
+}
+
 static auto to_lut_size(const vir::Extent3D& extent) -> glm::ivec3 {
   return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
 }
@@ -984,10 +994,8 @@ auto RendererInstance::frame_shape(
   );
   const auto is_upscaling = upscaler != UpscalerBackend::None;
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
-  const auto is_sssr_debug_view = debug_view >= GPU::DebugView::SSSRReflection &&
-                                  debug_view <= GPU::DebugView::SSSRSampleCount;
   const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
-                            (!is_sssr_debug_view || cvar.cvar_sssr_enable.as_bool());
+                            (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
