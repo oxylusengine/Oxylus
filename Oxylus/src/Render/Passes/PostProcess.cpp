@@ -13,6 +13,8 @@ using HistogramAveragePush = PushConstants<f32, f32, f32, f32, f32>;
 using BloomPrefilterPush = PushConstants<f32, f32, f32, vir::Extent3D>;
 using TonemapPush = PushConstants<GPU::PostProcessSettings, glm::ivec2, f32>;
 
+static_assert(TonemapPush::TOTAL_SIZE <= 128);
+
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -250,6 +252,39 @@ auto RendererInstance::bind_tonemap_variables(
       self.frame_params.bloom_intensity
     )
   );
+
+  if (program.has_variable(variables.is_color_grading_dirty)) {
+    program.set(variables.is_color_grading_dirty, self.color_grading_dirty);
+    program.set_bytes(variables.color_grading_push, self.color_grading_settings);
+  }
+}
+
+auto RendererInstance::bake_color_grading(
+  vir::Module& module,
+  RenderContext& render_context,
+  vir::ValueID lut,
+  vir::ValueID is_dirty,
+  vir::ValueID push,
+  GPU::TonemapType tonemap
+) -> vir::ValueID {
+  ZoneScoped;
+  const auto linear_clamped = render_context.cached_sampler_handle(LinearSamplerClamped);
+
+  return module.set_condition(
+    is_dirty,
+    [&](vir::Module& arm) {
+      return arm.begin_compute({{lut, vir::Access::ComputeWrite}})
+        .with_name("color grading bake")
+        .bind_compute_pipeline(render_context.pipeline("color_grading_bake"))
+        .bind_image(0, 0, lut)
+        .bind_sampler(0, 1, linear_clamped)
+        .specialize_constant(0, std::to_underlying(tonemap))
+        .push_constants_from(push)
+        .dispatch_invocations(GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE, GPU::COLOR_GRADING_LUT_SIZE)
+        .end_compute()[0];
+    },
+    [&](vir::Module&) { return lut; }
+  );
 }
 
 auto RendererInstance::apply_tonemap(
@@ -263,6 +298,19 @@ auto RendererInstance::apply_tonemap(
   auto& values = recording.values;
   const auto& shape = recording.shape;
 
+  if ((shape.scene_flags & GPU::SceneFlags::HasColorGrading) != 0) {
+    variables.is_color_grading_dirty = module.declare_bool_var("color grading dirty", false);
+    variables.color_grading_push = module.declare_bytes_var("color grading push", sizeof(GPU::ColorGradingSettings));
+    context.color_grading_lut_attachment = bake_color_grading(
+      module,
+      render_context,
+      context.color_grading_lut_attachment,
+      variables.is_color_grading_dirty,
+      variables.color_grading_push,
+      shape.tonemap
+    );
+  }
+
   static constexpr auto tonemap_sampler = vir::SamplerInfo{
     .mag_filter = VK_FILTER_LINEAR,
     .min_filter = VK_FILTER_LINEAR,
@@ -275,14 +323,16 @@ auto RendererInstance::apply_tonemap(
     context.dst_attachment,
     context.final_attachment,
     context.bloom_upsampled_attachment,
-    values.exposure
+    values.exposure,
+    context.color_grading_lut_attachment
   ) = std::tuple_cat( //
     module
       .begin_rendering(
         {{context.dst_attachment, vir::Access::ColorWrite},
          {context.final_attachment, vir::Access::FragmentSampled},
          {context.bloom_upsampled_attachment, vir::Access::FragmentSampled},
-         {values.exposure, vir::Access::FragmentUniformRead}}
+         {values.exposure, vir::Access::FragmentUniformRead},
+         {context.color_grading_lut_attachment, vir::Access::FragmentSampled}}
       )
       .with_name("tonemap")
       .bind_graphics_pipeline(render_context.pipeline("tonemap"))
@@ -292,6 +342,7 @@ auto RendererInstance::apply_tonemap(
       .bind_image(0, 1, context.final_attachment)
       .bind_image(0, 2, context.bloom_upsampled_attachment)
       .bind_buffer(0, 3, values.exposure)
+      .bind_image(0, 4, context.color_grading_lut_attachment)
       .specialize_constant(0, std::to_underlying(shape.scene_flags))
       .specialize_constant(1, std::to_underlying(shape.tonemap))
       .push_constants_from(prepared.post_process.tonemap_push)

@@ -148,6 +148,7 @@ static auto usage_rank(TextureUsage usage) -> u32 {
     case TextureUsage::Color : return 1;
     case TextureUsage::Linear: return 2;
     case TextureUsage::Normal: return 3;
+    case TextureUsage::Lut   : return 4;
   }
 
   return 0;

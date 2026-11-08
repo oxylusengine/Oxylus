@@ -45,6 +45,7 @@ enum class AssetFileType : u32 {
   RCSS,
   TTF,
   OTF,
+  CUBE,
 };
 
 OXRC_API auto to_asset_file_type(const std::filesystem::path& path) -> AssetFileType;

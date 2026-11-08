@@ -914,6 +914,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     }
   });
 
+  self.world.observer<ColorGradingComponent>()
+    .event(flecs::OnRemove)
+    .each([](flecs::iter&, usize, ColorGradingComponent& c) {
+      if (c.lut) {
+        App::mod<AssetManager>().unload_asset(c.lut);
+      }
+    });
+
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
     .event(flecs::OnAdd)

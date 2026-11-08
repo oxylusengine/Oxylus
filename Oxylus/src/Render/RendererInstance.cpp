@@ -4,6 +4,7 @@
 #include <ankerl/svector.h>
 #include <bit>
 #include <cstdlib>
+#include <cstring>
 #include <ranges>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -570,6 +571,19 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
   });
   OX_ASSERT(sky_cubemap);
 
+  color_grading_lut = Texture::create({
+    .format = vir::Format::RGBA16Sfloat,
+    .extent =
+      {.width = GPU::COLOR_GRADING_LUT_SIZE,
+       .height = GPU::COLOR_GRADING_LUT_SIZE,
+       .depth = GPU::COLOR_GRADING_LUT_SIZE},
+    .image_type = vir::ImageType::e3D,
+    .usage = vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::Storage,
+    .view_type = vir::ImageViewType::e3D,
+    .sampler_info = LinearSamplerClamped,
+  });
+  OX_ASSERT(color_grading_lut);
+
   vsm_virtual_page_table = Texture::create({
     .format = vir::Format::R32Uint,
     .extent =
@@ -613,7 +627,7 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
     const auto black_u32 = vir::ClearValue::rgba_u32(0, 0, 0, 1);
     auto module = vir::Module{};
     for (const auto* texture :
-         {&sky_cubemap, &sky_transmittance_lut, &sky_multiscatter_lut, &vsm_physical_page_table}) {
+         {&sky_cubemap, &sky_transmittance_lut, &sky_multiscatter_lut, &color_grading_lut, &vsm_physical_page_table}) {
       const auto cleared = module.clear(texture->import_discarded(module, TEXTURE_REST), black);
       module.export_to(cleared, TEXTURE_REST);
     }
@@ -926,6 +940,12 @@ auto RendererInstance::render(
   const auto ticket = render_context.execute(program->program);
   if (ticket && shape.has_atmosphere) {
     self.atmosphere_luts_dirty = false;
+  }
+  if (ticket && (shape.scene_flags & GPU::SceneFlags::HasColorGrading) != 0) {
+    self.color_grading_baked_settings = self.color_grading_settings;
+    self.color_grading_baked_tonemap = shape.tonemap;
+    self.color_grading_is_baked = true;
+    self.color_grading_dirty = false;
   }
   if (ticket && shape.has_tlas) {
     self.skinned_blas_pool.commit_builds();
@@ -1753,6 +1773,7 @@ auto RendererInstance::record_frame(
   auto sky_multiscatter_lut_attachment = self.sky_multiscatter_lut.import(module, TEXTURE_REST);
   auto sky_cubemap_attachment = self.sky_cubemap.import(module, TEXTURE_REST);
   auto hilbert_noise_attachment = self.hilbert_noise_lut.import(module, TEXTURE_REST);
+  auto color_grading_lut_attachment = self.color_grading_lut.import(module, TEXTURE_REST);
   auto sky_view_lut_attachment = module.transient_image({
     .extent = self.sky_view_lut_extent,
     .format = vir::Format::RGBA16Sfloat,
@@ -2470,6 +2491,7 @@ auto RendererInstance::record_frame(
     .dst_attachment = prepared.post_process.render_target,
     .final_attachment = final_attachment,
     .bloom_upsampled_attachment = bloom_upsampled_attachment,
+    .color_grading_lut_attachment = color_grading_lut_attachment,
   };
 
   if (shape.has_eye_adaptation) {
@@ -2582,6 +2604,7 @@ auto RendererInstance::record_frame(
          sky_multiscatter_lut_attachment,
          sky_cubemap_attachment,
          hilbert_noise_attachment,
+         post_process_context.color_grading_lut_attachment,
          vsm_virtual_page_table_attachment,
          vsm_pointspot_page_table_attachment,
          vsm_physical_pages_attachment,
@@ -3029,13 +3052,62 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
     });
 
+  auto filmic = GPU::FilmicSettings{};
   self.scene.world
     .query_builder<const TonemappingComponent>() //
     .build()
     .each([&](flecs::entity e, const TonemappingComponent& tc) {
       self.tonemap_type = tc.tonemap_type;
-      //
+      filmic = {
+        .max_brightness = tc.max_brightness,
+        .contrast = tc.contrast,
+        .linear_start = tc.linear_start,
+        .linear_length = tc.linear_length,
+        .black_tightness = tc.black_tightness,
+        .pedestal = tc.pedestal,
+        .hue_preservation = tc.hue_preservation,
+      };
     });
+
+  self.scene.world
+    .query_builder<const ColorGradingComponent>() //
+    .build()
+    .each([&](flecs::entity e, const ColorGradingComponent& c) {
+      if (!e.enabled()) {
+        return;
+      }
+
+      self.gpu_scene_flags |= GPU::SceneFlags::HasColorGrading;
+
+      auto user_lut_view_index = ~0u;
+      if (c.lut) {
+        if (const auto texture = asset_man.get_texture(c.lut)) {
+          user_lut_view_index = texture->get_view_index();
+        }
+      }
+
+      self.color_grading_settings = {
+        .temperature = c.temperature,
+        .tint = c.tint,
+        .saturation = c.saturation,
+        .contrast = c.contrast,
+        .lift = c.lift,
+        .gamma = c.gamma,
+        .gain = c.gain,
+        .lut_contribution = c.lut_contribution,
+        .user_lut_view_index = user_lut_view_index,
+      };
+    });
+
+  self.post_proces_settings.filmic = filmic;
+  self.color_grading_settings.filmic = filmic;
+
+  self.color_grading_dirty = !self.color_grading_is_baked || self.tonemap_type != self.color_grading_baked_tonemap ||
+                             std::memcmp(
+                               &self.color_grading_settings,
+                               &self.color_grading_baked_settings,
+                               sizeof(GPU::ColorGradingSettings)
+                             ) != 0;
 
   auto& data = self.frame_data;
   prepare_transforms(
