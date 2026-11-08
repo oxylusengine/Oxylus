@@ -23,7 +23,7 @@ constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BI
 // rounded up to the 64 pixel block one hiz workgroup covers, so every cell at mip k spans an exact block of render
 // texels
 static auto sssr_hierarchy_extent(const glm::uvec2 render_size) -> vir::Extent3D {
-  return {(render_size.x + 63_u32) & ~63_u32, (render_size.y + 63_u32) & ~63_u32, 1};
+  return {align_up(render_size.x, 64), align_up(render_size.y, 64), 1};
 }
 
 auto RendererInstance::generate_sssr_depth_hierarchy(
