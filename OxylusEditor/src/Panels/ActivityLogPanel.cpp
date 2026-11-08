@@ -1,21 +1,73 @@
 #include "Panels/ActivityLogPanel.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <fmt/chrono.h>
 #include <fmt/format.h>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ranges>
+#include <span>
 #include <tracy/Tracy.hpp>
 
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
+#include "Project/Project.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorTheme.hpp"
+#include "Utils/ExternalEditor.hpp"
+#include "Utils/Log.hpp"
+#include "Utils/SourceReference.hpp"
 
 namespace ox {
+constexpr auto MAX_SHOWN_REFERENCES = usize{8};
+
+// log text is UTF-8, which a narrow path on Windows would read as the system code page
+static auto to_path(std::string_view text) -> std::filesystem::path {
+  return std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+}
+
+static auto reference_label(memory::ScopedStack& stack, const SourceReference& reference) -> const c8* {
+  const auto separator = reference.path.find_last_of("/\\");
+  const auto name = separator == std::string_view::npos ? reference.path : reference.path.substr(separator + 1);
+  return stack.format_char("{}:{}", name, reference.line);
+}
+
+// a stack trace starts at whatever threw, which can be the engine, so the first reference in the project wins
+static auto preferred_reference(std::span<const SourceReference> references) -> option<SourceReference> {
+  if (references.empty()) {
+    return nullopt;
+  }
+
+  const auto& editor = App::mod<Editor>();
+  if (!editor.active_project) {
+    return references.front();
+  }
+
+  const auto project_dir = editor.active_project->get_project_directory().lexically_normal();
+  for (const auto& reference : references) {
+    const auto relative = to_path(reference.path).lexically_normal().lexically_relative(project_dir);
+    if (!relative.empty() && *relative.begin() != "..") {
+      return reference;
+    }
+  }
+
+  return references.front();
+}
+
+static auto open_reference(const SourceReference& reference) -> void {
+  const auto path = to_path(reference.path);
+  auto error = std::error_code();
+  if (!std::filesystem::exists(path, error)) {
+    OX_LOG_WARN("Can't open {}, it doesn't exist", reference.path);
+    return;
+  }
+
+  open_in_external_editor(path, reference.line, std::max(reference.column, 1_u32));
+}
+
 static auto type_icon(const Notification::Type type) -> const c8* {
   switch (type) {
     case Notification::Info   : return ICON_MDI_INFORMATION;
@@ -455,6 +507,10 @@ auto ActivityLogPanel::draw_row(
     self.selected_id = notif.id;
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       self.show_details = true;
+      const auto references = find_source_references(notif.title);
+      if (const auto reference = preferred_reference(references)) {
+        open_reference(*reference);
+      }
     }
   }
   if (ImGui::IsItemFocused() && ImGui::GetIO().NavActive) {
@@ -563,6 +619,34 @@ auto ActivityLogPanel::draw_details(this ActivityLogPanel& self, const f32 heigh
     }
     UI::tooltip_hover("Copy the full message (Ctrl/Cmd+C)");
 
+    const auto references = find_source_references(notif->title);
+    if (!references.empty()) {
+      const auto is_line_ignored = App::mod<Editor>().editor_cvar.cvar_external_editor.get().empty();
+      ImGui::TextDisabled("Open");
+      for (usize i = 0; i < std::min(references.size(), MAX_SHOWN_REFERENCES); i++) {
+        const auto& reference = references[i];
+        const auto* label = reference_label(stack, reference);
+        same_line_if_fits(ImGui::CalcTextSize(label).x);
+        ImGui::PushID(static_cast<i32>(i));
+        if (ImGui::TextLink(label)) {
+          open_reference(reference);
+        }
+
+        ImGui::PopID();
+        UI::tooltip_hover(stack.format_char(
+          "{}, line {}{}",
+          reference.path,
+          reference.line,
+          is_line_ignored ? "\nSet an external editor command in Edit > Settings to open it at the line" : ""
+        ));
+      }
+
+      if (references.size() > MAX_SHOWN_REFERENCES) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", stack.format_char("and {} more", references.size() - MAX_SHOWN_REFERENCES));
+      }
+    }
+
     ImGui::Separator();
 
     ImGui::PushID(static_cast<i32>(notif->id));
@@ -587,6 +671,15 @@ auto ActivityLogPanel::draw_details(this ActivityLogPanel& self, const f32 heigh
 auto ActivityLogPanel::draw_context_menu(this ActivityLogPanel& self, const Notification& notif) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
+
+  const auto references = find_source_references(notif.title);
+  if (const auto reference = preferred_reference(references)) {
+    if (ImGui::MenuItem(stack.format_char("{} Open {}", ICON_MDI_OPEN_IN_NEW, reference_label(stack, *reference)))) {
+      open_reference(*reference);
+    }
+
+    ImGui::Separator();
+  }
 
   if (ImGui::MenuItem(stack.format_char("{} Copy message", ICON_MDI_CONTENT_COPY))) {
     self.copy_text(notif.title);
