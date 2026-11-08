@@ -56,7 +56,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_theme.init();
 
   auto& input = App::mod<Input>();
-  input.set_context("editor");
+  // the editor's shortcuts sit beside the game's actions rather than replacing their context
+  input.set_context_persistent("editor", true);
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "new_scene",
