@@ -383,10 +383,9 @@ static auto host_bytes(const T& value) -> std::span<const u8> {
 // `update` packs the dirty transforms into runs, which change length every frame, so the copies are
 // recorded when the program runs
 template <typename T>
-static auto record_transform_upload(
-  vir::Module& module, const FrameData& data, std::string_view name, vir::ValueID dst, vir::ValueID& staging
-) -> vir::ValueID {
-  staging = module.declare_buffer_var(name, vir::Access::HostWrite);
+static auto record_transform_upload(vir::Module& module, const FrameData& data, std::string_view name, vir::ValueID dst)
+  -> std::pair<vir::ValueID, vir::ValueID> {
+  const auto staging = module.declare_buffer_var(name, vir::Access::HostWrite);
   const auto body = module.declare_callback_var(name, [&data, src = staging, dst](vir::Recorder& recorder) -> void {
     if (data.transform_runs.empty()) {
       return;
@@ -406,10 +405,16 @@ static auto record_transform_upload(
       );
     }
   });
-  return module.begin_compute({{staging, vir::Access::CopyRead}, {dst, vir::Access::CopyWrite}})
-    .with_name(name)
-    .record_from(body)
-    .end_compute()[1];
+  const auto result =                      //
+    module
+      .begin_compute(
+        {{staging, vir::Access::CopyRead}, //
+         {dst, vir::Access::CopyWrite}}
+      )
+      .with_name(name)
+      .record_from(body)
+      .end_compute();
+  return {result[1], staging};
 }
 
 auto RendererInstance::record_upload(
@@ -424,15 +429,15 @@ auto RendererInstance::record_upload(
   );
 }
 
-auto RendererInstance::record_fill(
-  vir::Module& module, std::string_view name, vir::ValueID dst, u32 value, vir::ValueID& is_filling
-) -> vir::ValueID {
-  is_filling = module.declare_bool_var(name, false);
-  return module.set_condition(
+auto RendererInstance::record_fill(vir::Module& module, std::string_view name, vir::ValueID dst, u32 value)
+  -> std::pair<vir::ValueID, vir::ValueID> {
+  const auto is_filling = module.declare_bool_var(name, false);
+  const auto filled = module.set_condition(
     is_filling,
     [&](vir::Module& arm) { return arm.fill_buffer(dst, value); },
     [&](vir::Module&) { return dst; }
   );
+  return {filled, is_filling};
 }
 
 auto RendererInstance::bind_upload(
@@ -1662,20 +1667,12 @@ auto RendererInstance::record_frame(
   auto& values = recording.values;
   prepared.transforms_world = module.declare_buffer_var("transforms world", SCENE_BUFFER_REST);
   prepared.transforms_previous = module.declare_buffer_var("transforms previous", SCENE_BUFFER_REST);
-  values.transforms_world = record_transform_upload<GPU::TransformWorld>(
-    module,
-    data,
-    "transforms world upload",
-    prepared.transforms_world,
+  std::tie(
+    values.transforms_world,
     prepared.transforms_world_staging
-  );
-  values.transforms_previous = record_transform_upload<GPU::TransformPrevious>(
-    module,
-    data,
-    "transforms previous upload",
-    prepared.transforms_previous,
-    prepared.transforms_previous_staging
-  );
+  ) = record_transform_upload<GPU::TransformWorld>(module, data, "transforms world upload", prepared.transforms_world);
+  std::tie(values.transforms_previous, prepared.transforms_previous_staging) = record_transform_upload<
+    GPU::TransformPrevious>(module, data, "transforms previous upload", prepared.transforms_previous);
 
   prepared.meshes = module.declare_buffer_var("meshes", SCENE_BUFFER_REST);
   prepared.blas_addresses = module.declare_buffer_var("blas addresses", SCENE_BUFFER_REST);
@@ -1716,20 +1713,14 @@ auto RendererInstance::record_frame(
     GPU_STATE_REST
   );
   prepared.exposure = module.declare_buffer_var("exposure", GPU_STATE_REST);
-  values.meshlet_instance_visibility_mask = record_fill(
-    module,
-    "meshlet instance visibility reset",
-    prepared.meshlet_instance_visibility_mask,
-    0,
+  std::tie(
+    values.meshlet_instance_visibility_mask,
     prepared.is_meshlet_visibility_reset
-  );
-  values.exposure = record_fill(
-    module,
-    "exposure reset",
-    prepared.exposure,
-    std::bit_cast<u32>(1.0f),
+  ) = record_fill(module, "meshlet instance visibility reset", prepared.meshlet_instance_visibility_mask, 0);
+  std::tie(
+    values.exposure,
     prepared.is_exposure_reset
-  );
+  ) = record_fill(module, "exposure reset", prepared.exposure, std::bit_cast<u32>(1.0f));
 
   prepared.skinned_vertices = module.declare_buffer_var("skinned vertices", GPU_STATE_REST);
   prepared.materials = module.declare_buffer_var("materials", SCENE_BUFFER_REST);
@@ -1892,7 +1883,8 @@ auto RendererInstance::record_frame(
     self.record_acceleration_structures(module, recording);
   }
 
-  const auto record_visbuffer_stages = [&](vir::ValueID& visbuffer, vir::ValueID& depth) -> void {
+  const auto record_visbuffer_stages =
+    [&](vir::ValueID visbuffer, vir::ValueID depth) -> std::pair<vir::ValueID, vir::ValueID> {
     auto resources = SharedResources{};
     resources.image_resources = {{"visbuffer_attachment", visbuffer}, {"depth_attachment", depth}};
     resources.buffer_resources = {
@@ -1900,10 +1892,9 @@ auto RendererInstance::record_frame(
       {"mesh_instances_buffer", values.mesh_instances},
     };
     self.execute_stages_after(RenderStage::VisBufferEncode, module, resources, prepared);
-    visbuffer = resources.image_resources.at("visbuffer_attachment");
-    depth = resources.image_resources.at("depth_attachment");
     values.meshlet_instances = resources.buffer_resources.at("meshlet_instances_buffer");
     values.mesh_instances = resources.buffer_resources.at("mesh_instances_buffer");
+    return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
   };
 
   // --- 3D ---
@@ -1938,13 +1929,10 @@ auto RendererInstance::record_frame(
         GPU_STATE_REST
       );
       terrain_context.visible_patches_buffer = prepared.terrain_visible_patches;
-      terrain_context.patch_visibility_mask_buffer = record_fill(
-        module,
-        "terrain patch visibility reset",
-        prepared.terrain_patch_visibility_mask,
-        0,
+      std::tie(
+        terrain_context.patch_visibility_mask_buffer,
         prepared.is_terrain_visibility_reset
-      );
+      ) = record_fill(module, "terrain patch visibility reset", prepared.terrain_patch_visibility_mask, 0);
 
       // each map rests where Terrain::bake leaves it
       prepared.terrain
@@ -2020,7 +2008,10 @@ auto RendererInstance::record_frame(
     self.generate_hiz(module, render_context, main_geometry_context);
     run_geometry_pass(true);
 
-    record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
+    std::tie(
+      main_geometry_context.visbuffer_attachment,
+      main_geometry_context.depth_attachment
+    ) = record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -2095,7 +2086,7 @@ auto RendererInstance::record_frame(
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
-    record_visbuffer_stages(visbuffer_attachment, depth_attachment);
+    std::tie(visbuffer_attachment, depth_attachment) = record_visbuffer_stages(visbuffer_attachment, depth_attachment);
   }
 
   if (shape.has_atmosphere && shape.has_directional_light) {

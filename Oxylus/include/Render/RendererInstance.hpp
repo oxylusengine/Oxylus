@@ -1114,9 +1114,8 @@ public:
   // the record half of every pass, run once per frame shape
   static auto record_upload(vir::Module& module, std::string_view name, vir::ValueID dst, UploadVariables& upload)
     -> vir::ValueID;
-  static auto record_fill(
-    vir::Module& module, std::string_view name, vir::ValueID dst, u32 value, vir::ValueID& is_filling
-  ) -> vir::ValueID;
+  static auto record_fill(vir::Module& module, std::string_view name, vir::ValueID dst, u32 value)
+    -> std::pair<vir::ValueID, vir::ValueID>;
   auto bind_cull_variables(this const RendererInstance& self, vir::Program& program, const CullVariables& variables)
     -> void;
   auto bind_light_grid_variables(
@@ -1281,9 +1280,9 @@ public:
     vir::Module& module,
     RenderContext& render_context,
     glm::uvec2 render_size,
-    vir::ValueID& depth,
-    vir::ValueID& hierarchy
-  ) -> void;
+    vir::ValueID depth,
+    vir::ValueID hierarchy
+  ) -> std::pair<vir::ValueID, vir::ValueID>;
 
   auto allocate_fsr3_resources(this RendererInstance& self, glm::uvec2 render_size, glm::uvec2 display_size) -> void;
   auto apply_fsr3(this RendererInstance& self, vir::Module& module, FrameRecording& recording, FSR3Context& context)

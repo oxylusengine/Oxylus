@@ -30,9 +30,9 @@ auto RendererInstance::generate_sssr_depth_hierarchy(
   vir::Module& module,
   RenderContext& render_context,
   const glm::uvec2 render_size,
-  vir::ValueID& depth,
-  vir::ValueID& hierarchy
-) -> void {
+  vir::ValueID depth,
+  vir::ValueID hierarchy
+) -> std::pair<vir::ValueID, vir::ValueID> {
   ZoneScoped;
 
   const auto extent = sssr_hierarchy_extent(render_size);
@@ -75,8 +75,7 @@ auto RendererInstance::generate_sssr_depth_hierarchy(
   module.push_constants(PushConstants(SSSRContext::PYRAMID_MIP_COUNT, groups_x * groups_y, glm::mat2(1.0f)))
     .dispatch(groups_x, groups_y, 1);
   const auto result = pass.end_compute();
-  depth = result[1];
-  hierarchy = result[2];
+  return {result[1], result[2]};
 }
 
 auto RendererInstance::bind_sssr_variables(
@@ -314,7 +313,7 @@ auto RendererInstance::record_sssr(
     )
   );
 
-  generate_sssr_depth_hierarchy(
+  std::tie(context.depth_attachment, context.depth_hierarchy) = generate_sssr_depth_hierarchy(
     module,
     render_context,
     recording.shape.render_size,

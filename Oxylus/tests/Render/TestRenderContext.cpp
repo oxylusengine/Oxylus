@@ -333,10 +333,14 @@ TEST(RenderContext, RecordedUploadsSynchronizeFillsAndCopiesBeforeTaskShaderRead
   auto device = ContextDevice{};
   auto module = vir::Module{};
   auto consumer_barrier_count = 0_sz;
-  auto is_filling_var = vir::ValueID::Invalid;
   auto upload = UploadVariables{};
   const auto destination_var = module.declare_buffer_var("visibility mask", vir::Access::MemoryRW);
-  const auto filled = RendererInstance::record_fill(module, "visibility mask fill", destination_var, 7, is_filling_var);
+  const auto [filled, is_filling_var] = RendererInstance::record_fill(
+    module,
+    "visibility mask fill",
+    destination_var,
+    7
+  );
   const auto uploaded = RendererInstance::record_upload(module, "visibility mask upload", filled, upload);
   const auto consumer = module.declare_callback_var(
     "task shader read",
