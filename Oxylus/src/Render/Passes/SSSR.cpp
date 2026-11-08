@@ -388,41 +388,72 @@ auto RendererInstance::record_sssr(
     {.extent = render_extent, .format = vir::Format::R8Unorm, .name = "sssr specular occlusion"}
   );
 
-  {
-    ankerl::svector<vir::ResourceAccess, 24> accesses = {
-      {values.camera, vir::Access::ComputeUniformRead},
-      {context.depth_attachment, vir::Access::ComputeSampled},
-      {context.normal_attachment, vir::Access::ComputeSampled},
-      {context.metallic_roughness_occlusion_attachment, vir::Access::ComputeSampled},
-      {context.albedo_attachment, vir::Access::ComputeSampled},
-      {context.ambient_occlusion_attachment, vir::Access::ComputeSampled},
-      {context.ray_counter_buffer, vir::Access::ComputeRW},
-      {context.ray_list_buffer, vir::Access::ComputeRW},
-      {context.tile_list_buffer, vir::Access::ComputeRW},
-      {context.intersection_radiance, vir::Access::ComputeRW},
-      {context.confidence, vir::Access::ComputeRW},
-      {context.roughness, vir::Access::ComputeRW},
-      {context.previous_variance, vir::Access::ComputeSampled},
-      {context.normal, vir::Access::ComputeRW},
-      {context.radiance, vir::Access::ComputeRW},
-      {context.variance, vir::Access::ComputeRW},
-      {context.sample_count, vir::Access::ComputeRW},
-      {context.specular_occlusion, vir::Access::ComputeRW},
-      {values.exposure, vir::Access::ComputeUniformRead},
-    };
-    if (is_ddgi) {
-      accesses.push_back({context.probe_volumes_buffer, vir::Access::ComputeRead});
-      accesses.push_back({context.probe_states_buffer, vir::Access::ComputeRead});
-      accesses.push_back({context.irradiance_attachment, vir::Access::ComputeSampled});
-      accesses.push_back({context.distance_attachment, vir::Access::ComputeSampled});
-    } else if (is_sky) {
-      accesses.push_back({context.sky_cubemap_attachment, vir::Access::ComputeSampled});
-    }
+  auto probe_volumes_buffer = context.probe_volumes_buffer;
+  auto probe_states_buffer = context.probe_states_buffer;
+  auto irradiance_attachment = context.irradiance_attachment;
+  auto distance_attachment = context.distance_attachment;
+  auto atmosphere = values.atmosphere;
+  if (!is_ddgi) {
+    probe_volumes_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "sssr unused probe volumes",
+    });
+    probe_states_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "sssr unused probe states",
+    });
+    irradiance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused irradiance"}
+    );
+    distance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused distance"}
+    );
+  }
 
+  if (!is_sky) {
+    atmosphere = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "sssr unused atmosphere",
+    });
+  }
+
+  {
+    auto pass = module
+                  .begin_compute({
+                    {values.camera, vir::Access::ComputeUniformRead},
+                    {context.depth_attachment, vir::Access::ComputeSampled},
+                    {context.normal_attachment, vir::Access::ComputeSampled},
+                    {context.metallic_roughness_occlusion_attachment, vir::Access::ComputeSampled},
+                    {context.albedo_attachment, vir::Access::ComputeSampled},
+                    {context.ambient_occlusion_attachment, vir::Access::ComputeSampled},
+                    {context.ray_counter_buffer, vir::Access::ComputeRW},
+                    {context.ray_list_buffer, vir::Access::ComputeRW},
+                    {context.tile_list_buffer, vir::Access::ComputeRW},
+                    {context.intersection_radiance, vir::Access::ComputeRW},
+                    {context.confidence, vir::Access::ComputeRW},
+                    {context.roughness, vir::Access::ComputeRW},
+                    {context.previous_variance, vir::Access::ComputeSampled},
+                    {context.normal, vir::Access::ComputeRW},
+                    {context.radiance, vir::Access::ComputeRW},
+                    {context.variance, vir::Access::ComputeRW},
+                    {context.sample_count, vir::Access::ComputeRW},
+                    {context.specular_occlusion, vir::Access::ComputeRW},
+                    {values.exposure, vir::Access::ComputeUniformRead},
+                    {probe_volumes_buffer, vir::Access::ComputeRead},
+                    {probe_states_buffer, vir::Access::ComputeRead},
+                    {irradiance_attachment, vir::Access::ComputeSampled},
+                    {distance_attachment, vir::Access::ComputeSampled},
+                    {context.sky_cubemap_attachment, vir::Access::ComputeSampled},
+                  })
+                  .with_name("sssr classify");
     const auto* environment = is_ddgi ? "ddgi" : (is_sky ? "sky" : "ambient");
-    module.begin_compute(accesses)
-      .with_name("sssr classify")
-      .bind_compute_pipeline(render_context.pipeline(stack.format("sssr_classify_{}", environment)));
+    module.bind_compute_pipeline(render_context.pipeline(stack.format("sssr_classify_{}", environment)));
     if (is_ambient) {
       module.specialize_constant(0, scene_flags);
     }
@@ -448,44 +479,41 @@ auto RendererInstance::record_sssr(
       .bind_buffer(0, 18, values.exposure);
     if (is_ddgi) {
       module.bind_sampler(0, 20, linear_sampler)
-        .bind_buffer(0, 21, context.probe_volumes_buffer)
-        .bind_buffer(0, 22, context.probe_states_buffer)
-        .bind_image(0, 23, context.irradiance_attachment)
-        .bind_image(0, 24, context.distance_attachment);
+        .bind_buffer(0, 21, probe_volumes_buffer)
+        .bind_buffer(0, 22, probe_states_buffer)
+        .bind_image(0, 23, irradiance_attachment)
+        .bind_image(0, 24, distance_attachment);
     } else if (is_sky) {
       module.bind_sampler(0, 20, linear_sampler).bind_image(0, 21, context.sky_cubemap_attachment);
     }
 
-    const auto results = module.push_constants_from(variables.settings)
-                           .dispatch(tile_extent.x, tile_extent.y, 1)
-                           .end_compute_values();
-    values.camera = results[0];
-    context.depth_attachment = results[1];
-    context.normal_attachment = results[2];
-    context.metallic_roughness_occlusion_attachment = results[3];
-    context.albedo_attachment = results[4];
-    context.ambient_occlusion_attachment = results[5];
-    context.ray_counter_buffer = results[6];
-    context.ray_list_buffer = results[7];
-    context.tile_list_buffer = results[8];
-    context.intersection_radiance = results[9];
-    context.confidence = results[10];
-    context.roughness = results[11];
-    context.previous_variance = results[12];
-    context.normal = results[13];
-    context.radiance = results[14];
-    context.variance = results[15];
-    context.sample_count = results[16];
-    context.specular_occlusion = results[17];
-    values.exposure = results[18];
-    if (is_ddgi) {
-      context.probe_volumes_buffer = results[19];
-      context.probe_states_buffer = results[20];
-      context.irradiance_attachment = results[21];
-      context.distance_attachment = results[22];
-    } else if (is_sky) {
-      context.sky_cubemap_attachment = results[19];
-    }
+    module.push_constants_from(variables.settings).dispatch(tile_extent.x, tile_extent.y, 1);
+    std::tie(
+      values.camera,
+      context.depth_attachment,
+      context.normal_attachment,
+      context.metallic_roughness_occlusion_attachment,
+      context.albedo_attachment,
+      context.ambient_occlusion_attachment,
+      context.ray_counter_buffer,
+      context.ray_list_buffer,
+      context.tile_list_buffer,
+      context.intersection_radiance,
+      context.confidence,
+      context.roughness,
+      context.previous_variance,
+      context.normal,
+      context.radiance,
+      context.variance,
+      context.sample_count,
+      context.specular_occlusion,
+      values.exposure,
+      probe_volumes_buffer,
+      probe_states_buffer,
+      irradiance_attachment,
+      distance_attachment,
+      context.sky_cubemap_attachment
+    ) = std::tuple_cat(pass.end_compute());
   }
 
   std::tie(context.ray_counter_buffer, context.indirect_args_buffer) = std::tuple_cat( //
@@ -502,42 +530,38 @@ auto RendererInstance::record_sssr(
   );
 
   {
-    ankerl::svector<vir::ResourceAccess, 24> accesses = {
-      {values.camera, vir::Access::ComputeUniformRead},
-      {context.final_attachment, vir::Access::ComputeSampled},
-      {context.depth_hierarchy, vir::Access::ComputeSampled},
-      {context.normal_attachment, vir::Access::ComputeSampled},
-      {context.roughness, vir::Access::ComputeSampled},
-      {context.blue_noise, vir::Access::ComputeSampled},
-      {context.ray_list_buffer, vir::Access::ComputeRead},
-      {context.ray_counter_buffer, vir::Access::ComputeRead},
-      {context.intersection_radiance, vir::Access::ComputeRW},
-      {context.confidence, vir::Access::ComputeRW},
-      {context.specular_occlusion, vir::Access::ComputeSampled},
-      {context.indirect_args_buffer, vir::Access::IndirectRead},
-      {values.exposure, vir::Access::ComputeUniformRead},
-    };
-    if (is_ddgi) {
-      accesses.push_back({context.probe_volumes_buffer, vir::Access::ComputeRead});
-      accesses.push_back({context.probe_states_buffer, vir::Access::ComputeRead});
-      accesses.push_back({context.irradiance_attachment, vir::Access::ComputeSampled});
-      accesses.push_back({context.distance_attachment, vir::Access::ComputeSampled});
-    }
-
-    if (is_sky) {
-      accesses.push_back({values.atmosphere, vir::Access::ComputeRead});
-      accesses.push_back({context.sky_view_lut_attachment, vir::Access::ComputeSampled});
-    }
-
+    auto pass = //
+      module
+        .begin_compute({
+          {values.camera, vir::Access::ComputeUniformRead},
+          {context.final_attachment, vir::Access::ComputeSampled},
+          {context.depth_hierarchy, vir::Access::ComputeSampled},
+          {context.normal_attachment, vir::Access::ComputeSampled},
+          {context.roughness, vir::Access::ComputeSampled},
+          {context.blue_noise, vir::Access::ComputeSampled},
+          {context.ray_list_buffer, vir::Access::ComputeRead},
+          {context.ray_counter_buffer, vir::Access::ComputeRead},
+          {context.intersection_radiance, vir::Access::ComputeRW},
+          {context.confidence, vir::Access::ComputeRW},
+          {context.specular_occlusion, vir::Access::ComputeSampled},
+          {context.indirect_args_buffer, vir::Access::IndirectRead},
+          {values.exposure, vir::Access::ComputeUniformRead},
+          {probe_volumes_buffer, vir::Access::ComputeRead},
+          {probe_states_buffer, vir::Access::ComputeRead},
+          {irradiance_attachment, vir::Access::ComputeSampled},
+          {distance_attachment, vir::Access::ComputeSampled},
+          {atmosphere, vir::Access::ComputeRead},
+          {context.sky_view_lut_attachment, vir::Access::ComputeSampled},
+        })
+        .with_name("sssr intersect");
     const auto* environment = is_ddgi ? (is_sky ? "ddgi_sky" : "ddgi") : (is_sky ? "sky" : "ambient");
-    module.begin_compute(accesses)
-      .with_name("sssr intersect")
-      .bind_compute_pipeline(render_context.pipeline(stack.format("sssr_intersect_{}", environment)));
+    module.bind_compute_pipeline(render_context.pipeline(stack.format("sssr_intersect_{}", environment)));
     if (is_ambient) {
       module.specialize_constant(0, scene_flags);
     }
 
-    module.bind_buffer(0, 0, values.camera)
+    module //
+      .bind_buffer(0, 0, values.camera)
       .bind_image(0, 1, context.final_attachment)
       .bind_image(0, 2, context.depth_hierarchy)
       .bind_image(0, 3, context.normal_attachment)
@@ -554,46 +578,53 @@ auto RendererInstance::record_sssr(
     }
 
     if (is_ddgi) {
-      module.bind_buffer(0, 21, context.probe_volumes_buffer)
-        .bind_buffer(0, 22, context.probe_states_buffer)
-        .bind_image(0, 23, context.irradiance_attachment)
-        .bind_image(0, 24, context.distance_attachment);
+      module.bind_buffer(0, 21, probe_volumes_buffer)
+        .bind_buffer(0, 22, probe_states_buffer)
+        .bind_image(0, 23, irradiance_attachment)
+        .bind_image(0, 24, distance_attachment);
     }
 
     if (is_sky) {
       module.bind_image(0, 25, context.sky_view_lut_attachment)
-        .push_constant_address(0, values.atmosphere)
+        .push_constant_address(0, atmosphere)
         .push_constants_from_at(8, variables.settings);
     } else {
       module.push_constants_from(variables.settings);
     }
 
-    const auto results = module.dispatch_indirect(context.indirect_args_buffer).end_compute_values();
-    values.camera = results[0];
-    context.final_attachment = results[1];
-    context.depth_hierarchy = results[2];
-    context.normal_attachment = results[3];
-    context.roughness = results[4];
-    context.blue_noise = results[5];
-    context.ray_list_buffer = results[6];
-    context.ray_counter_buffer = results[7];
-    context.intersection_radiance = results[8];
-    context.confidence = results[9];
-    context.specular_occlusion = results[10];
-    context.indirect_args_buffer = results[11];
-    values.exposure = results[12];
-    auto next = 13_sz;
-    if (is_ddgi) {
-      context.probe_volumes_buffer = results[next++];
-      context.probe_states_buffer = results[next++];
-      context.irradiance_attachment = results[next++];
-      context.distance_attachment = results[next++];
-    }
+    module.dispatch_indirect(context.indirect_args_buffer);
+    std::tie(
+      values.camera,
+      context.final_attachment,
+      context.depth_hierarchy,
+      context.normal_attachment,
+      context.roughness,
+      context.blue_noise,
+      context.ray_list_buffer,
+      context.ray_counter_buffer,
+      context.intersection_radiance,
+      context.confidence,
+      context.specular_occlusion,
+      context.indirect_args_buffer,
+      values.exposure,
+      probe_volumes_buffer,
+      probe_states_buffer,
+      irradiance_attachment,
+      distance_attachment,
+      atmosphere,
+      context.sky_view_lut_attachment
+    ) = std::tuple_cat(pass.end_compute());
+  }
 
-    if (is_sky) {
-      values.atmosphere = results[next++];
-      context.sky_view_lut_attachment = results[next++];
-    }
+  if (is_ddgi) {
+    context.probe_volumes_buffer = probe_volumes_buffer;
+    context.probe_states_buffer = probe_states_buffer;
+    context.irradiance_attachment = irradiance_attachment;
+    context.distance_attachment = distance_attachment;
+  }
+
+  if (is_sky) {
+    values.atmosphere = atmosphere;
   }
 
   const auto tile_dispatch_offset = 12_u64;
@@ -602,7 +633,27 @@ auto RendererInstance::record_sssr(
     {.extent = render_extent, .format = vir::Format::RGBA16Sfloat, .name = "sssr reprojected radiance"}
   );
   {
-    const auto results = //
+    std::tie(
+      values.camera,
+      values.exposure,
+      context.depth_attachment,
+      context.previous_depth_hierarchy,
+      context.roughness,
+      context.previous_roughness,
+      context.normal,
+      context.previous_normal,
+      context.intersection_radiance,
+      context.previous_radiance,
+      context.velocity_attachment,
+      context.previous_variance,
+      context.previous_sample_count,
+      context.tile_list_buffer,
+      context.indirect_args_buffer,
+      reprojected_radiance,
+      context.average_radiance,
+      context.variance,
+      context.sample_count
+    ) = std::tuple_cat( //
       module
         .begin_compute(
           {{values.camera, vir::Access::ComputeUniformRead},
@@ -648,26 +699,8 @@ auto RendererInstance::record_sssr(
         .bind_image(0, 18, context.sample_count)
         .push_constants_from(variables.settings)
         .dispatch_indirect(context.indirect_args_buffer, tile_dispatch_offset)
-        .end_compute();
-    values.camera = results[0];
-    values.exposure = results[1];
-    context.depth_attachment = results[2];
-    context.previous_depth_hierarchy = results[3];
-    context.roughness = results[4];
-    context.previous_roughness = results[5];
-    context.normal = results[6];
-    context.previous_normal = results[7];
-    context.intersection_radiance = results[8];
-    context.previous_radiance = results[9];
-    context.velocity_attachment = results[10];
-    context.previous_variance = results[11];
-    context.previous_sample_count = results[12];
-    context.tile_list_buffer = results[13];
-    context.indirect_args_buffer = results[14];
-    reprojected_radiance = results[15];
-    context.average_radiance = results[16];
-    context.variance = results[17];
-    context.sample_count = results[18];
+        .end_compute()
+    );
   }
 
   auto prefiltered_radiance = module.transient_image(
@@ -677,7 +710,19 @@ auto RendererInstance::record_sssr(
     {.extent = render_extent, .format = vir::Format::R16Sfloat, .name = "sssr prefiltered variance"}
   );
   {
-    const auto results = //
+    std::tie(
+      values.camera,
+      context.depth_attachment,
+      context.roughness,
+      context.normal,
+      context.intersection_radiance,
+      context.variance,
+      context.average_radiance,
+      context.tile_list_buffer,
+      context.indirect_args_buffer,
+      prefiltered_radiance,
+      prefiltered_variance
+    ) = std::tuple_cat( //
       module
         .begin_compute(
           {{values.camera, vir::Access::ComputeUniformRead},
@@ -707,22 +752,24 @@ auto RendererInstance::record_sssr(
         .bind_image(0, 10, prefiltered_variance)
         .push_constants_from(variables.settings)
         .dispatch_indirect(context.indirect_args_buffer, tile_dispatch_offset)
-        .end_compute();
-    values.camera = results[0];
-    context.depth_attachment = results[1];
-    context.roughness = results[2];
-    context.normal = results[3];
-    context.intersection_radiance = results[4];
-    context.variance = results[5];
-    context.average_radiance = results[6];
-    context.tile_list_buffer = results[7];
-    context.indirect_args_buffer = results[8];
-    prefiltered_radiance = results[9];
-    prefiltered_variance = results[10];
+        .end_compute()
+    );
   }
 
   {
-    const auto results = //
+    std::tie(
+      values.exposure,
+      context.roughness,
+      prefiltered_radiance,
+      prefiltered_variance,
+      context.sample_count,
+      reprojected_radiance,
+      context.average_radiance,
+      context.tile_list_buffer,
+      context.indirect_args_buffer,
+      context.radiance,
+      context.variance
+    ) = std::tuple_cat( //
       module
         .begin_compute(
           {{values.exposure, vir::Access::ComputeUniformRead},
@@ -752,18 +799,8 @@ auto RendererInstance::record_sssr(
         .bind_image(0, 10, context.variance)
         .push_constants_from(variables.settings)
         .dispatch_indirect(context.indirect_args_buffer, tile_dispatch_offset)
-        .end_compute();
-    values.exposure = results[0];
-    context.roughness = results[1];
-    prefiltered_radiance = results[2];
-    prefiltered_variance = results[3];
-    context.sample_count = results[4];
-    reprojected_radiance = results[5];
-    context.average_radiance = results[6];
-    context.tile_list_buffer = results[7];
-    context.indirect_args_buffer = results[8];
-    context.radiance = results[9];
-    context.variance = results[10];
+        .end_compute()
+    );
   }
 
   static constexpr auto additive_blend = vir::ColorBlendAttachmentState{

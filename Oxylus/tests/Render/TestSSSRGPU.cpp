@@ -764,6 +764,13 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
       module.import_attachment(*cubemap, vir::Access::None),
       vir::ClearValue::rgba_f32(cube_color.r, cube_color.g, cube_color.b, 1.0f)
     );
+  } else {
+    context.sky_view_lut_attachment = module.transient_image(
+      {.extent = {192, 108, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused sky view lut"}
+    );
+    context.sky_cubemap_attachment = module.transient_image(
+      {.extent = {4, 4, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused sky cubemap"}
+    );
   }
 
   if (is_ddgi) {
