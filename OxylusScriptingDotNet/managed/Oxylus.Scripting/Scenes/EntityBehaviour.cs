@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace Oxylus;
@@ -5,6 +6,7 @@ namespace Oxylus;
 // the script on an entity whose ScriptComponent names it. It lives while the scene runs: OnCreate when the scene starts
 // or the component is set, OnStart before its first update, OnDestroy when the component goes, the entity dies or the
 // scene stops
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class EntityBehaviour
 {
     public Entity Entity { get; internal set; }
@@ -14,6 +16,23 @@ public abstract class EntityBehaviour
     internal ListSlots Slots;
     internal bool IsStarted;
     internal bool IsFaulted;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    internal string DebuggerDisplay
+    {
+        get
+        {
+            try
+            {
+                var display = $"{GetType().Name} on {Entity.DebuggerDisplay}";
+                return IsFaulted ? display + " (faulted)" : display;
+            }
+            catch
+            {
+                return GetType().Name;
+            }
+        }
+    }
 
     public virtual void OnCreate() { }
     public virtual void OnStart() { }

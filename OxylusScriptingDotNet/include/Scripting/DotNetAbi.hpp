@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 16u
+#define OX_DOTNET_ABI_VERSION 17u
 
 struct ecs_world_t;
 
@@ -473,6 +473,8 @@ struct OxNativeApi {
   auto (*ecs_defer_resume)(ecs_world_t* world) -> void = nullptr;
   // a "." separated path, writes up to `capacity` bytes and returns the full length so a short buffer can be retried
   auto (*get_path)(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 = nullptr;
+  // the entity's components and pairs as flecs writes them, "A, B, (ChildOf,parent)". Same buffer contract as get_path
+  auto (*get_type_str)(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 = nullptr;
   // iterates the entity's children into `iter`, which is `iter_size` bytes. Finish it with iter_fini unless
   // children_next ran it out. The entities of a result are valid until the next call
   auto (*children_iter)(ecs_world_t* world, u64 parent, void* iter) -> void = nullptr;
