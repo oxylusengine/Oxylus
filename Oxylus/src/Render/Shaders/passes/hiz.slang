@@ -29,6 +29,8 @@ typealias HiZMip = StorageImage2D<f32, ImageFormat::R32F>;
 [[vk::constant_id(0)]] const u32 is_pot = 0;
 [[vk::constant_id(1)]] const u32 src_width = 0;
 [[vk::constant_id(2)]] const u32 src_height = 0;
+[[vk::constant_id(3)]] const u32 reduce_max = 0;
+[[vk::constant_id(4)]] const u32 copy_mip0 = 0;
 static let src_extent = u32x2(src_width, src_height);
 static let inv_src_extent = 1.0 / f32x2(src_extent);
 
@@ -75,7 +77,7 @@ func transform_z(f32x4 zs) -> f32x4 {
 }
 
 func reduce(f32 x, f32 y) -> f32 {
-    return min(x, y);
+    return reduce_max != 0 ? max(x, y) : min(x, y);
 }
 
 func reduce(f32x4 v) -> f32 {
@@ -90,6 +92,14 @@ func store_2x2(u32x2 p, u32 mip, f32x4 v) -> void {
 }
 
 func load(u32x2 texel) -> f32 {
+    if (copy_mip0 != 0) {
+        if (any(texel >= u32x2(src_width, src_height))) {
+            return 0.0;
+        }
+
+        return src_image.Load(u32x3(texel, 0));
+    }
+
     u32x2 src_extent = u32x2(src_width, src_height);
     f32x2 inv_src_extent = 1.0 / f32x2(src_extent);
 
@@ -223,7 +233,7 @@ func cs_main(u32x2 group_id : SV_GroupID) -> void {
         store(group_id, 6, d);
     }
 
-    if (C.mip_count <= 6) {
+    if (C.mip_count <= 7) {
         return;
     }
 

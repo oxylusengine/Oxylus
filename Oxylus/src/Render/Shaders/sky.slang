@@ -309,14 +309,19 @@ public func sample_aerial_perspective(
 }
 
 
-public func get_atmosphere_illuminance_along_ray(
+public struct SkyViewSample {
+    public f32x4 value;
+    public bool is_planet_hit;
+};
+
+public func sample_sky_view(
     Atmosphere *atmosphere,
     in Sampler sampler,
     in Image2D<f32x4> sky_view_image,
     f32x3 sun_dir,
     f32x3 eye_pos,
     f32x3 eye_dir
-) -> f32x3 {
+) -> SkyViewSample {
     let height = length(eye_pos);
     let up_vec = eye_pos / height;
     let view_zenith_cos_angle = dot(eye_dir, up_vec);
@@ -333,7 +338,21 @@ public func get_atmosphere_illuminance_along_ray(
     let intersect_planet = com::ray_sphere_intersect_nearest(eye_pos, eye_dir, atmosphere.planet_radius).hasValue;
     let uv = sky_view_params_to_lut_uv(atmosphere, intersect_planet, height, view_zenith_cos_angle, light_on_plane);
 
-    let result = sky_view_image.SampleLevel(sampler, uv, 0.0);
+    SkyViewSample result;
+    result.value = sky_view_image.SampleLevel(sampler, uv, 0.0);
+    result.is_planet_hit = intersect_planet;
+    return result;
+}
+
+public func get_atmosphere_illuminance_along_ray(
+    Atmosphere *atmosphere,
+    in Sampler sampler,
+    in Image2D<f32x4> sky_view_image,
+    f32x3 sun_dir,
+    f32x3 eye_pos,
+    f32x3 eye_dir
+) -> f32x3 {
+    let result = sample_sky_view(atmosphere, sampler, sky_view_image, sun_dir, eye_pos, eye_dir).value;
     return com::sanitize(result.rgb * result.a);
 }
 

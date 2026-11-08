@@ -11,6 +11,11 @@ synchronization validation. It skips when a suitable Vulkan device is unavailabl
 keeps loaded driver modules mapped so their process globals remain visible to LeakSanitizer after
 Vulkan teardown.
 
+`TestSSSRGPU` records the real SSSR graph on a headless device with a CPU ray traced floor, box and sky as
+the G-buffer and checks hit positions, misses, ray counts and the quad copies against the analytic scene. Set
+`OX_SSSR_GPU_VALIDATION=1` to enable Vulkan validation and synchronization validation. It skips when a suitable
+Vulkan device is unavailable.
+
 Nothing here parses SPIR-V. ResourceCompiler reads each entry point's layout off
 Slang's reflection and stores it in the shader pack. `tests/ResourceCompiler/TestShaderLayout.cpp` checks
 that reflection on small sources, and `TestEngineShaders` runs every built engine and editor pipeline
@@ -21,8 +26,8 @@ through the checks a declaration performs.
 Enable `--tests=y` in the project's existing Xmake configuration, then run:
 
 ```sh
-xmake build -j 32 TestRenderContext TestHiZGPU TestEngineShaders TestImageTypes TestShaderLayout TestPendingPick
-xmake test 'TestRenderContext/*' 'TestHiZGPU/*' 'TestEngineShaders/*' 'TestImageTypes/*' 'TestShaderLayout/*' 'TestPendingPick/*'
+xmake build -j 32 TestRenderContext TestHiZGPU TestSSSRGPU TestEngineShaders TestImageTypes TestShaderLayout TestPendingPick
+xmake test 'TestRenderContext/*' 'TestHiZGPU/*' 'TestSSSRGPU/*' 'TestEngineShaders/*' 'TestImageTypes/*' 'TestShaderLayout/*' 'TestPendingPick/*'
 xmake build -j 32 -a
 ```
 

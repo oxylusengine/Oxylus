@@ -340,5 +340,106 @@ TEST(HiZGPU, EveryMipMatchesOriginalSPDDepthReductionAcrossRepeatedExecutions) {
       EXPECT_EQ(validation_errors.load(std::memory_order_relaxed), 0u);
     }
   }
+
+  {
+    const auto size = glm::uvec2{1622, 717};
+    const auto extent = vir::Extent3D{1664, 768, 1};
+    constexpr auto levels = SSSRContext::PYRAMID_MIP_COUNT;
+    auto readback_size = 0_u64;
+    for (u32 mip = 0; mip < levels; mip++) {
+      readback_size += u64(extent.width >> mip) * (extent.height >> mip) * sizeof(f32);
+    }
+
+    const auto depth = render.persistent->allocate_image(
+      {.extent = {size.x, size.y, 1},
+       .format = vir::Format::D32Sfloat,
+       .usage = vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::TransferDst}
+    );
+    ASSERT_TRUE(depth);
+    OX_DEFER(&) { render.persistent->deallocate_image(*depth); };
+    const auto upload = render.persistent->allocate_buffer(
+      {.size = u64(size.x) * size.y * sizeof(f32),
+       .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+       .location = vir::MemoryLocation::CpuToGpu}
+    );
+    ASSERT_TRUE(upload);
+    OX_DEFER(&) { render.persistent->deallocate_buffer(*upload); };
+    const auto readback = render.persistent->allocate_buffer(
+      {.size = readback_size, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .location = vir::MemoryLocation::GpuToCpu}
+    );
+    ASSERT_TRUE(readback);
+    OX_DEFER(&) { render.persistent->deallocate_buffer(*readback); };
+
+    auto module = vir::Module{};
+    auto uploaded = module.copy_buffer_to_image(
+      module.import_buffer(*upload, vir::Access::HostWrite),
+      module.import_image(*depth, VK_IMAGE_LAYOUT_UNDEFINED, vir::Access::None)
+    );
+    auto hierarchy = module.transient_image(
+      {.extent = extent, .format = vir::Format::R32Sfloat, .mip_levels = levels, .name = "sssr hierarchy"}
+    );
+    RendererInstance::generate_sssr_depth_hierarchy(module, render, size, uploaded, hierarchy);
+    auto downloaded = module.import_buffer(*readback, vir::Access::None);
+    auto offset = 0_u64;
+    for (u32 mip = 0; mip < levels; mip++) {
+      const auto level_extent = vir::Extent3D{extent.width >> mip, extent.height >> mip, 1};
+      downloaded = module.copy_image_to_buffer_region(
+        hierarchy,
+        downloaded,
+        {.buffer_offset = offset, .image_extent = level_extent, .mip_level = mip}
+      );
+      offset += u64(level_extent.width) * level_extent.height * sizeof(f32);
+    }
+    module.export_to(downloaded, vir::Access::HostRead);
+    const auto program = render.compile(std::move(module));
+    ASSERT_TRUE(program);
+
+    auto source = std::vector<f32>(usize(size.x) * size.y);
+    for (usize index = 0; index < source.size(); index++) {
+      source[index] = static_cast<f32>((index * 73) % 997) / 1330.0f;
+    }
+    ASSERT_TRUE(upload->write<f32>(0, source));
+    ASSERT_TRUE(render.persistent->flush_buffer(*upload));
+    ASSERT_TRUE(render.execute_blocking(*program));
+    ASSERT_TRUE(render.persistent->invalidate_buffer(*readback));
+
+    auto expected = std::vector<f32>(usize(extent.width) * extent.height, 0.0f);
+    for (u32 y = 0; y < size.y; y++) {
+      for (u32 x = 0; x < size.x; x++) {
+        expected[usize(y) * extent.width + x] = source[usize(y) * size.x + x];
+      }
+    }
+
+    auto previous = std::move(expected);
+    auto read_offset = 0_u64;
+    for (u32 mip = 0; mip < levels; mip++) {
+      SCOPED_TRACE(mip);
+      const auto level_size = glm::uvec2{extent.width >> mip, extent.height >> mip};
+      auto level = std::vector<f32>(usize(level_size.x) * level_size.y);
+      for (u32 y = 0; y < level_size.y; y++) {
+        for (u32 x = 0; x < level_size.x; x++) {
+          if (mip == 0) {
+            level[usize(y) * level_size.x + x] = previous[usize(y) * level_size.x + x];
+            continue;
+          }
+
+          const auto previous_width = level_size.x * 2;
+          const auto a = previous[usize(2 * y) * previous_width + 2 * x];
+          const auto b = previous[usize(2 * y) * previous_width + 2 * x + 1];
+          const auto c = previous[usize(2 * y + 1) * previous_width + 2 * x];
+          const auto d = previous[usize(2 * y + 1) * previous_width + 2 * x + 1];
+          level[usize(y) * level_size.x + x] = std::max(std::max(a, b), std::max(c, d));
+        }
+      }
+
+      const auto* actual = reinterpret_cast<const f32*>(readback->mapped + read_offset);
+      for (usize index = 0; index < level.size(); index++) {
+        ASSERT_FLOAT_EQ(actual[index], level[index]) << "texel " << index;
+      }
+      read_offset += level.size() * sizeof(f32);
+      previous = std::move(level);
+    }
+    EXPECT_EQ(validation_errors.load(std::memory_order_relaxed), 0u);
+  }
 }
 } // namespace ox

@@ -47,6 +47,17 @@ struct RendererCVar {
   AutoCVar_Float cvar_rtao_radius;
   AutoCVar_Float cvar_rtao_power;
 
+  AutoCVar_Int cvar_sssr_enable;
+  AutoCVar_Float cvar_sssr_roughness_threshold;
+  AutoCVar_Float cvar_sssr_depth_thickness;
+  AutoCVar_Int cvar_sssr_max_traversal_intersections;
+  AutoCVar_Int cvar_sssr_min_traversal_occupancy;
+  AutoCVar_Int cvar_sssr_most_detailed_mip;
+  AutoCVar_Int cvar_sssr_samples_per_quad;
+  AutoCVar_Int cvar_sssr_temporal_variance_guided;
+  AutoCVar_Float cvar_sssr_variance_threshold;
+  AutoCVar_Float cvar_sssr_temporal_stability;
+
   AutoCVar_Int cvar_ddgi_enable;
   AutoCVar_Int cvar_ddgi_rays_per_probe;
   AutoCVar_Float cvar_ddgi_max_ray_distance;

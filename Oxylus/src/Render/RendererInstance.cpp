@@ -45,6 +45,16 @@ struct ShadowSlotStats {
 // prevent slot churn near frustum and priority boundaries
 constexpr static f32 SHADOW_SLOT_HYSTERESIS = 1.25f;
 
+static auto is_sssr_debug_view(GPU::DebugView debug_view) -> bool {
+  switch (debug_view) {
+    case GPU::DebugView::SSSRReflection :
+    case GPU::DebugView::SSSRConfidence :
+    case GPU::DebugView::SSSRVariance   :
+    case GPU::DebugView::SSSRSampleCount: return true;
+    default                             : return false;
+  }
+}
+
 static auto to_lut_size(const vir::Extent3D& extent) -> glm::ivec3 {
   return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
 }
@@ -373,10 +383,9 @@ static auto host_bytes(const T& value) -> std::span<const u8> {
 // `update` packs the dirty transforms into runs, which change length every frame, so the copies are
 // recorded when the program runs
 template <typename T>
-static auto record_transform_upload(
-  vir::Module& module, const FrameData& data, std::string_view name, vir::ValueID dst, vir::ValueID& staging
-) -> vir::ValueID {
-  staging = module.declare_buffer_var(name, vir::Access::HostWrite);
+static auto record_transform_upload(vir::Module& module, const FrameData& data, std::string_view name, vir::ValueID dst)
+  -> std::pair<vir::ValueID, vir::ValueID> {
+  const auto staging = module.declare_buffer_var(name, vir::Access::HostWrite);
   const auto body = module.declare_callback_var(name, [&data, src = staging, dst](vir::Recorder& recorder) -> void {
     if (data.transform_runs.empty()) {
       return;
@@ -396,10 +405,16 @@ static auto record_transform_upload(
       );
     }
   });
-  return module.begin_compute({{staging, vir::Access::CopyRead}, {dst, vir::Access::CopyWrite}})
-    .with_name(name)
-    .record_from(body)
-    .end_compute()[1];
+  const auto result =                      //
+    module
+      .begin_compute(
+        {{staging, vir::Access::CopyRead}, //
+         {dst, vir::Access::CopyWrite}}
+      )
+      .with_name(name)
+      .record_from(body)
+      .end_compute();
+  return {result[1], staging};
 }
 
 auto RendererInstance::record_upload(
@@ -414,15 +429,15 @@ auto RendererInstance::record_upload(
   );
 }
 
-auto RendererInstance::record_fill(
-  vir::Module& module, std::string_view name, vir::ValueID dst, u32 value, vir::ValueID& is_filling
-) -> vir::ValueID {
-  is_filling = module.declare_bool_var(name, false);
-  return module.set_condition(
+auto RendererInstance::record_fill(vir::Module& module, std::string_view name, vir::ValueID dst, u32 value)
+  -> std::pair<vir::ValueID, vir::ValueID> {
+  const auto is_filling = module.declare_bool_var(name, false);
+  const auto filled = module.set_condition(
     is_filling,
     [&](vir::Module& arm) { return arm.fill_buffer(dst, value); },
     [&](vir::Module&) { return dst; }
   );
+  return {filled, is_filling};
 }
 
 auto RendererInstance::bind_upload(
@@ -476,6 +491,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_contact_shadows,
     shape.has_eye_adaptation,
     shape.has_ddgi,
+    shape.has_sssr,
     shape.has_tlas,
     shape.has_debug_renderer,
     shape.use_mesh_shaders,
@@ -952,6 +968,12 @@ auto RendererInstance::render(
   if (shape.has_ddgi) {
     self.ddgi_history_valid = ticket.has_value();
   }
+  if (shape.has_sssr && ticket) {
+    self.sssr_history_ping = !self.sssr_history_ping;
+    self.sssr_history_valid = true;
+  } else {
+    self.sssr_history_valid = false;
+  }
   if (self.frame_params.is_upscaling) {
     if (ticket) {
       self.fsr3_history_ping = !self.fsr3_history_ping;
@@ -977,7 +999,8 @@ auto RendererInstance::frame_shape(
   );
   const auto is_upscaling = upscaler != UpscalerBackend::None;
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
-  const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool();
+  const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
+                            (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
@@ -1009,6 +1032,9 @@ auto RendererInstance::frame_shape(
   }
   if (has_ddgi) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasDDGI;
+  }
+  if (cvar.cvar_sssr_enable.as_bool()) {
+    self.gpu_scene_flags |= GPU::SceneFlags::HasSSSR;
   }
 
   if (is_upscaling) {
@@ -1047,6 +1073,7 @@ auto RendererInstance::frame_shape(
     .has_contact_shadows = static_cast<bool>(flags & GPU::SceneFlags::HasContactShadows),
     .has_eye_adaptation = static_cast<bool>(flags & GPU::SceneFlags::HasEyeAdaptation),
     .has_ddgi = has_ddgi,
+    .has_sssr = static_cast<bool>(flags & GPU::SceneFlags::HasSSSR),
     .has_tlas = has_tlas,
     .has_debug_renderer = cvar.cvar_enable_debug_renderer.as_bool(),
     .use_mesh_shaders = self.frame_data.use_mesh_shaders,
@@ -1140,6 +1167,13 @@ auto RendererInstance::prepare_frame_params(
     params.fsr3_reset = is_reset;
     params.fsr3_debug_view = static_cast<u32>(std::max(cvar.cvar_upscaler_debug_view.get(), 0));
     params.fsr3_history_ping = self.fsr3_history_ping;
+  }
+
+  params.sssr_reset = false;
+  if (shape.has_sssr) {
+    self.allocate_sssr_resources(shape.render_size);
+    params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.sssr_history_ping = self.sssr_history_ping;
   }
 
   params.is_terrain_brush_active = false;
@@ -1407,6 +1441,7 @@ auto RendererInstance::bind_frame(
   self.bind_pbr_variables(program, prepared.pbr);
   self.bind_ddgi_variables(program, prepared.ddgi);
   self.bind_fsr3_variables(program, prepared.fsr3);
+  self.bind_sssr_variables(program, prepared.sssr);
   self.bind_eye_adaptation_variables(program, prepared.post_process);
   self.bind_bloom_variables(program, prepared.post_process);
   self.bind_tonemap_variables(program, prepared.post_process);
@@ -1632,20 +1667,12 @@ auto RendererInstance::record_frame(
   auto& values = recording.values;
   prepared.transforms_world = module.declare_buffer_var("transforms world", SCENE_BUFFER_REST);
   prepared.transforms_previous = module.declare_buffer_var("transforms previous", SCENE_BUFFER_REST);
-  values.transforms_world = record_transform_upload<GPU::TransformWorld>(
-    module,
-    data,
-    "transforms world upload",
-    prepared.transforms_world,
+  std::tie(
+    values.transforms_world,
     prepared.transforms_world_staging
-  );
-  values.transforms_previous = record_transform_upload<GPU::TransformPrevious>(
-    module,
-    data,
-    "transforms previous upload",
-    prepared.transforms_previous,
-    prepared.transforms_previous_staging
-  );
+  ) = record_transform_upload<GPU::TransformWorld>(module, data, "transforms world upload", prepared.transforms_world);
+  std::tie(values.transforms_previous, prepared.transforms_previous_staging) = record_transform_upload<
+    GPU::TransformPrevious>(module, data, "transforms previous upload", prepared.transforms_previous);
 
   prepared.meshes = module.declare_buffer_var("meshes", SCENE_BUFFER_REST);
   prepared.blas_addresses = module.declare_buffer_var("blas addresses", SCENE_BUFFER_REST);
@@ -1686,20 +1713,14 @@ auto RendererInstance::record_frame(
     GPU_STATE_REST
   );
   prepared.exposure = module.declare_buffer_var("exposure", GPU_STATE_REST);
-  values.meshlet_instance_visibility_mask = record_fill(
-    module,
-    "meshlet instance visibility reset",
-    prepared.meshlet_instance_visibility_mask,
-    0,
+  std::tie(
+    values.meshlet_instance_visibility_mask,
     prepared.is_meshlet_visibility_reset
-  );
-  values.exposure = record_fill(
-    module,
-    "exposure reset",
-    prepared.exposure,
-    std::bit_cast<u32>(1.0f),
+  ) = record_fill(module, "meshlet instance visibility reset", prepared.meshlet_instance_visibility_mask, 0);
+  std::tie(
+    values.exposure,
     prepared.is_exposure_reset
-  );
+  ) = record_fill(module, "exposure reset", prepared.exposure, std::bit_cast<u32>(1.0f));
 
   prepared.skinned_vertices = module.declare_buffer_var("skinned vertices", GPU_STATE_REST);
   prepared.materials = module.declare_buffer_var("materials", SCENE_BUFFER_REST);
@@ -1815,7 +1836,9 @@ auto RendererInstance::record_frame(
 
   albedo_attachment = module.clear(albedo_attachment, black);
   auto normal_attachment = module.transient_image(
-    {.extent = render_extent, .format = vir::Format::RGBA8Snorm, .name = "normal"}
+    {.extent = render_extent,
+     .format = shape.has_sssr ? vir::Format::RGBA16Sfloat : vir::Format::RGBA8Snorm,
+     .name = "normal"}
   );
 
   normal_attachment = module.clear(normal_attachment, black);
@@ -1860,7 +1883,8 @@ auto RendererInstance::record_frame(
     self.record_acceleration_structures(module, recording);
   }
 
-  const auto record_visbuffer_stages = [&](vir::ValueID& visbuffer, vir::ValueID& depth) -> void {
+  const auto record_visbuffer_stages =
+    [&](vir::ValueID visbuffer, vir::ValueID depth) -> std::pair<vir::ValueID, vir::ValueID> {
     auto resources = SharedResources{};
     resources.image_resources = {{"visbuffer_attachment", visbuffer}, {"depth_attachment", depth}};
     resources.buffer_resources = {
@@ -1868,10 +1892,9 @@ auto RendererInstance::record_frame(
       {"mesh_instances_buffer", values.mesh_instances},
     };
     self.execute_stages_after(RenderStage::VisBufferEncode, module, resources, prepared);
-    visbuffer = resources.image_resources.at("visbuffer_attachment");
-    depth = resources.image_resources.at("depth_attachment");
     values.meshlet_instances = resources.buffer_resources.at("meshlet_instances_buffer");
     values.mesh_instances = resources.buffer_resources.at("mesh_instances_buffer");
+    return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
   };
 
   // --- 3D ---
@@ -1906,13 +1929,10 @@ auto RendererInstance::record_frame(
         GPU_STATE_REST
       );
       terrain_context.visible_patches_buffer = prepared.terrain_visible_patches;
-      terrain_context.patch_visibility_mask_buffer = record_fill(
-        module,
-        "terrain patch visibility reset",
-        prepared.terrain_patch_visibility_mask,
-        0,
+      std::tie(
+        terrain_context.patch_visibility_mask_buffer,
         prepared.is_terrain_visibility_reset
-      );
+      ) = record_fill(module, "terrain patch visibility reset", prepared.terrain_patch_visibility_mask, 0);
 
       // each map rests where Terrain::bake leaves it
       prepared.terrain
@@ -1988,7 +2008,10 @@ auto RendererInstance::record_frame(
     self.generate_hiz(module, render_context, main_geometry_context);
     run_geometry_pass(true);
 
-    record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
+    std::tie(
+      main_geometry_context.visbuffer_attachment,
+      main_geometry_context.depth_attachment
+    ) = record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -2063,7 +2086,7 @@ auto RendererInstance::record_frame(
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
-    record_visbuffer_stages(visbuffer_attachment, depth_attachment);
+    std::tie(visbuffer_attachment, depth_attachment) = record_visbuffer_stages(visbuffer_attachment, depth_attachment);
   }
 
   if (shape.has_atmosphere && shape.has_directional_light) {
@@ -2243,6 +2266,38 @@ auto RendererInstance::record_frame(
     ambient_occlusion_attachment = ddgi_apply_context.ambient_occlusion_attachment;
     ddgi_irradiance_attachment = ddgi_apply_context.irradiance_attachment;
     ddgi_distance_attachment = ddgi_apply_context.distance_attachment;
+  }
+
+  // --- SSSR ---
+  auto sssr_context = SSSRContext{};
+  if (shape.has_sssr) {
+    sssr_context.final_attachment = final_attachment;
+    sssr_context.depth_attachment = depth_attachment;
+    sssr_context.albedo_attachment = albedo_attachment;
+    sssr_context.normal_attachment = normal_attachment;
+    sssr_context.metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment;
+    sssr_context.ambient_occlusion_attachment = ambient_occlusion_attachment;
+    sssr_context.velocity_attachment = velocity_attachment;
+    sssr_context.probe_volumes_buffer = probe_volumes_buffer;
+    sssr_context.probe_states_buffer = probe_states_buffer;
+    sssr_context.irradiance_attachment = ddgi_irradiance_attachment;
+    sssr_context.distance_attachment = ddgi_distance_attachment;
+    sssr_context.sky_cubemap_attachment = sky_cubemap_attachment;
+    sssr_context.sky_view_lut_attachment = sky_view_lut_attachment;
+    record_sssr(module, render_context, recording, sssr_context);
+    final_attachment = sssr_context.final_attachment;
+    depth_attachment = sssr_context.depth_attachment;
+    albedo_attachment = sssr_context.albedo_attachment;
+    normal_attachment = sssr_context.normal_attachment;
+    metallic_roughness_occlusion_attachment = sssr_context.metallic_roughness_occlusion_attachment;
+    ambient_occlusion_attachment = sssr_context.ambient_occlusion_attachment;
+    velocity_attachment = sssr_context.velocity_attachment;
+    probe_volumes_buffer = sssr_context.probe_volumes_buffer;
+    probe_states_buffer = sssr_context.probe_states_buffer;
+    ddgi_irradiance_attachment = sssr_context.irradiance_attachment;
+    ddgi_distance_attachment = sssr_context.distance_attachment;
+    sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
+    sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
   }
 
   // --- 2D ---
@@ -2502,8 +2557,16 @@ auto RendererInstance::record_frame(
       .pointspot_views_buffer = pointspot_views_buffer,
       .light_grid_buffer = light_grid_buffer,
       .vsm_pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .sssr_reflection_attachment = sssr_context.radiance,
+      .sssr_confidence_attachment = sssr_context.confidence,
+      .sssr_variance_attachment = sssr_context.variance,
+      .sssr_sample_count_attachment = sssr_context.sample_count,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
+    sssr_context.radiance = debug_context.sssr_reflection_attachment;
+    sssr_context.confidence = debug_context.sssr_confidence_attachment;
+    sssr_context.variance = debug_context.sssr_variance_attachment;
+    sssr_context.sample_count = debug_context.sssr_sample_count_attachment;
     vsm_virtual_page_table_attachment = debug_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = debug_context.vsm_pointspot_page_table_attachment;
     if (module.resource_root(dst_attachment) == render_target_root) {
@@ -2568,6 +2631,26 @@ auto RendererInstance::record_frame(
          values.skinned_vertices,
        }) {
     module.export_to(buffer, GPU_STATE_REST);
+  }
+
+  if (shape.has_sssr) {
+    for (const auto history :
+         {sssr_context.depth_hierarchy,
+          sssr_context.previous_depth_hierarchy,
+          sssr_context.radiance,
+          sssr_context.previous_radiance,
+          sssr_context.variance,
+          sssr_context.previous_variance,
+          sssr_context.sample_count,
+          sssr_context.previous_sample_count,
+          sssr_context.roughness,
+          sssr_context.previous_roughness,
+          sssr_context.normal,
+          sssr_context.previous_normal,
+          sssr_context.average_radiance}) {
+      module.export_to(history, SSSRContext::HISTORY_REST);
+    }
+    module.export_to(sssr_context.blue_noise_tables, vir::Access::MemoryRead);
   }
 
   if (shape.has_tlas) {

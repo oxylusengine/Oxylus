@@ -2056,9 +2056,8 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
         .intensity = node_light.intensity,
       };
 
-      if (node_light.range.has_value()) {
-        lc.radius = *node_light.range;
-      }
+      // glTF leaves range out for an infinite light, the renderer reads 0 as unbounded
+      lc.radius = node_light.range.value_or(0.0f);
       if (node_light.inner_cone_angle.has_value()) {
         lc.inner_cone_angle = *node_light.inner_cone_angle;
       }

@@ -325,6 +325,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     }
   };
   require_format(vir::Format::RGBA8Snorm, sampled_color, "R8G8B8A8_SNORM normals");
+  require_format(vir::Format::RGBA16Sfloat, sampled_storage_color, "R16G16B16A16_SFLOAT SSSR normals and history");
   require_format(vir::Format::RG8Unorm, sampled_storage_color, "R8G8_UNORM material and shadow targets");
   require_format(vir::Format::R8Unorm, sampled_storage, "R8_UNORM ambient occlusion");
   require_format(

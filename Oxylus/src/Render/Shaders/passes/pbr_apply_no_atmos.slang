@@ -88,7 +88,8 @@ func fs_main(
         let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
         let ibl_diffuse = kD * environment_radiance * albedo_color;
-        let ibl_specular = kS * environment_radiance * spec_occlusion;
+        let is_sssr = (scene_flags & SceneFlags::HasSSSR) != 0;
+        let ibl_specular = is_sssr ? f32x3(0.0) : kS * environment_radiance * spec_occlusion;
         indirect_illuminance = (ibl_diffuse * occlusion) + ibl_specular;
     }
 

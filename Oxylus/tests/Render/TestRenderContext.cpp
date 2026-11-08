@@ -333,10 +333,14 @@ TEST(RenderContext, RecordedUploadsSynchronizeFillsAndCopiesBeforeTaskShaderRead
   auto device = ContextDevice{};
   auto module = vir::Module{};
   auto consumer_barrier_count = 0_sz;
-  auto is_filling_var = vir::ValueID::Invalid;
   auto upload = UploadVariables{};
   const auto destination_var = module.declare_buffer_var("visibility mask", vir::Access::MemoryRW);
-  const auto filled = RendererInstance::record_fill(module, "visibility mask fill", destination_var, 7, is_filling_var);
+  const auto [filled, is_filling_var] = RendererInstance::record_fill(
+    module,
+    "visibility mask fill",
+    destination_var,
+    7
+  );
   const auto uploaded = RendererInstance::record_upload(module, "visibility mask upload", filled, upload);
   const auto consumer = module.declare_callback_var(
     "task shader read",
@@ -750,7 +754,7 @@ TEST(RenderContext, Fsr3SharpeningKeepsTheOutputAndItsPostProcessingBarriersInBo
   EXPECT_TRUE(found_sampled_transition) << compiled->dump();
 }
 
-TEST(RenderContext, LightGridRecordingDeclaresLiveInputsAndSkipsDisabledInputs) {
+TEST(RenderContext, LightGridRecordingAlwaysDeclaresPush) {
   const auto pack = context_engine_pack();
   ASSERT_TRUE(pack);
   auto device = ContextDevice{};
@@ -764,56 +768,52 @@ TEST(RenderContext, LightGridRecordingDeclaresLiveInputsAndSkipsDisabledInputs) 
   using LightPush = PushConstants<u32, glm::vec3>;
   const auto is_benchmarking = std::getenv("OX_FRONTEND_BENCH") != nullptr;
   const auto repetitions = is_benchmarking ? 128_u32 : 1_u32;
-  for (const auto is_enabled : {false, true}) {
-    auto cold_time = std::chrono::nanoseconds{};
-    auto bind_time = std::chrono::nanoseconds{};
-    for (auto iteration = 0_u32; iteration < repetitions; iteration++) {
-      const auto start = std::chrono::steady_clock::now();
-      auto module = vir::Module{};
-      auto prepared = PreparedFrame{};
-      auto shape = FrameShape{.has_pointspot_shadows = is_enabled};
-      auto recording = FrameRecording{.shape = shape, .prepared = prepared};
-      auto& values = recording.values;
-      values.lights = module.declare_buffer_var("lights", vir::Access::ComputeRead);
-      auto context = LightGridContext{};
-      RendererInstance::build_light_grid(module, device.context, recording, context);
-      module.export_to(context.light_grid_buffer, vir::Access::ComputeRead);
-      auto program = device.context.compile(std::move(module));
-      ASSERT_TRUE(program);
-      cold_time += std::chrono::steady_clock::now() - start;
-      EXPECT_EQ(program->has_variable(prepared.light_grid.push), is_enabled);
-      const auto instruction_count = program->instructions.size();
-      if (is_enabled) {
-        const auto& variable = program->variables.at(program->slots.at(prepared.light_grid.push));
-        EXPECT_EQ(variable.kind.tag, vir::ir::VariableKindTag::Bytes);
-        EXPECT_EQ(variable.kind.size, sizeof(LightPush));
-        program->set_bytes(prepared.light_grid.push, LightPush(1_u32, glm::vec3(0.0f)));
-        const auto* storage = std::get<vir::Bytes>(variable.value).data.data();
-        const auto bind_start = std::chrono::steady_clock::now();
-        const auto frames = is_benchmarking ? 10000_u32 : 2_u32;
-        for (auto frame = 0_u32; frame < frames; frame++) {
-          program->set_bytes(prepared.light_grid.push, LightPush(frame, glm::vec3(static_cast<f32>(frame))));
-        }
-        bind_time += std::chrono::steady_clock::now() - bind_start;
-        EXPECT_EQ(std::get<vir::Bytes>(variable.value).data.data(), storage);
-        const auto expected = LightPush(frames - 1, glm::vec3(static_cast<f32>(frames - 1)));
-        EXPECT_EQ(std::memcmp(std::get<vir::Bytes>(variable.value).data.data(), &expected, sizeof(expected)), 0);
-      }
-      EXPECT_EQ(program->instructions.size(), instruction_count);
-      if (const auto* directory = std::getenv("OX_FRONTEND_DUMP"); directory && iteration == 0) {
-        std::ofstream(std::filesystem::path(directory) / (is_enabled ? "light-grid-on.ir" : "light-grid-off.ir"))
-          << program->dump();
-      }
+  auto cold_time = std::chrono::nanoseconds{};
+  auto bind_time = std::chrono::nanoseconds{};
+  for (auto iteration = 0_u32; iteration < repetitions; iteration++) {
+    const auto start = std::chrono::steady_clock::now();
+    auto module = vir::Module{};
+    auto prepared = PreparedFrame{};
+    auto shape = FrameShape{};
+    auto recording = FrameRecording{.shape = shape, .prepared = prepared};
+    auto& values = recording.values;
+    values.lights = module.declare_buffer_var("lights", vir::Access::ComputeRead);
+    auto context = LightGridContext{};
+    RendererInstance::build_light_grid(module, device.context, recording, context);
+    module.export_to(context.light_grid_buffer, vir::Access::ComputeRead);
+    auto program = device.context.compile(std::move(module));
+    ASSERT_TRUE(program);
+    cold_time += std::chrono::steady_clock::now() - start;
+    ASSERT_TRUE(program->has_variable(prepared.light_grid.push));
+
+    const auto instruction_count = program->instructions.size();
+    const auto& variable = program->variables.at(program->slots.at(prepared.light_grid.push));
+    EXPECT_EQ(variable.kind.tag, vir::ir::VariableKindTag::Bytes);
+    EXPECT_EQ(variable.kind.size, sizeof(LightPush));
+    program->set_bytes(prepared.light_grid.push, LightPush(1_u32, glm::vec3(0.0f)));
+    const auto* storage = std::get<vir::Bytes>(variable.value).data.data();
+    const auto bind_start = std::chrono::steady_clock::now();
+    const auto frames = is_benchmarking ? 10000_u32 : 2_u32;
+    for (auto frame = 0_u32; frame < frames; frame++) {
+      program->set_bytes(prepared.light_grid.push, LightPush(frame, glm::vec3(static_cast<f32>(frame))));
     }
-    if (is_benchmarking) {
-      std::fprintf(
-        stderr,
-        "light grid %s: cold %.1f us, bind %.1f ns\n",
-        is_enabled ? "on" : "off",
-        static_cast<f64>(cold_time.count()) / repetitions / 1000.0,
-        static_cast<f64>(bind_time.count()) / repetitions / 10000.0
-      );
+    bind_time += std::chrono::steady_clock::now() - bind_start;
+    EXPECT_EQ(std::get<vir::Bytes>(variable.value).data.data(), storage);
+    const auto expected = LightPush(frames - 1, glm::vec3(static_cast<f32>(frames - 1)));
+    EXPECT_EQ(std::memcmp(std::get<vir::Bytes>(variable.value).data.data(), &expected, sizeof(expected)), 0);
+    EXPECT_EQ(program->instructions.size(), instruction_count);
+    if (const auto* directory = std::getenv("OX_FRONTEND_DUMP"); directory && iteration == 0) {
+      std::ofstream(std::filesystem::path(directory) / "light-grid.ir") << program->dump();
     }
+  }
+
+  if (is_benchmarking) {
+    std::fprintf(
+      stderr,
+      "light grid: cold %.1f us, bind %.1f ns\n",
+      static_cast<f64>(cold_time.count()) / repetitions / 1000.0,
+      static_cast<f64>(bind_time.count()) / repetitions / 10000.0
+    );
   }
 }
 

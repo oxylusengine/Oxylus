@@ -1113,7 +1113,11 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "Geometric Normal",
         "Virtual Shadowmaps",
         "Virtual Shadowmaps (Point/Spot)",
-        "DDGI Probes"
+        "DDGI Probes",
+        "SSSR Reflection",
+        "SSSR Confidence",
+        "SSSR Variance",
+        "SSSR Sample Count"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
     }
@@ -1345,6 +1349,37 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
       ui.drag("Ray Count", cvar_sys.cvar_rtao_ray_count, 1, 32);
       ui.drag("Radius", cvar_sys.cvar_rtao_radius, 0.05f, 20.0f);
       ui.drag("Power", cvar_sys.cvar_rtao_power, 0.0f, 10.0f);
+    }
+  );
+
+  ui.section(
+    {.name = "Stochastic Screen-Space Reflections",
+     .toggle = &cvar_sys.cvar_sssr_enable,
+     .toggle_tooltip = "Stochastic screen space reflections replace the indirect specular where they hit",
+     .tag = "Experimental",
+     .tag_tooltip = "Testing only, not ready for regular use"},
+    [&] {
+      ui.drag(
+        "Roughness Threshold",
+        cvar_sys.cvar_sssr_roughness_threshold,
+        0.0f,
+        1.0f,
+        "GGX alpha above which pixels get no reflection ray"
+      );
+      ui.drag(
+        "Depth Thickness",
+        cvar_sys.cvar_sssr_depth_thickness,
+        0.0f,
+        1.0f,
+        "Depth thickness used to validate hits"
+      );
+      ui.drag("Max Traversal Intersections", cvar_sys.cvar_sssr_max_traversal_intersections, 1, 512);
+      ui.drag("Min Traversal Occupancy", cvar_sys.cvar_sssr_min_traversal_occupancy, 0, 32);
+      ui.drag("Most Detailed Mip", cvar_sys.cvar_sssr_most_detailed_mip, 0, 6);
+      ui.drag("Samples Per Quad", cvar_sys.cvar_sssr_samples_per_quad, 1, 4, "Valid values are 1, 2 and 4");
+      ui.checkbox("Temporal Variance Guided", cvar_sys.cvar_sssr_temporal_variance_guided);
+      ui.drag("Variance Threshold", cvar_sys.cvar_sssr_variance_threshold, 0.0f, 1.0f);
+      ui.drag("Temporal Stability", cvar_sys.cvar_sssr_temporal_stability, 0.0f, 1.0f);
     }
   );
 

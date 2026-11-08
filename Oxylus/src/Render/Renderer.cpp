@@ -1,5 +1,6 @@
 #include "Render/Renderer.hpp"
 
+#include <array>
 #include <vir/Module.hpp>
 #include <vir/Types.hpp>
 
@@ -9,6 +10,7 @@
 #include "Core/ModuleRegistry.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/BlueNoiseTables.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/Samplers.hpp"
@@ -285,6 +287,43 @@ auto Renderer::init(this Renderer& self) -> std::expected<void, std::string> {
     return std::unexpected("Cannot upload the quad buffers!");
   }
 
+  const auto blue_noise_tables = std::array{blue_noise_sobol(), blue_noise_scrambling()};
+  const auto blue_noise_size = blue_noise_tables[0].size_bytes() + blue_noise_tables[1].size_bytes();
+  const auto blue_noise = self.render_context->allocate_buffer({
+    .size = blue_noise_size,
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "sssr blue noise tables",
+  });
+  if (!blue_noise) {
+    return std::unexpected("Cannot allocate the blue noise buffer!");
+  }
+
+  self.blue_noise_buffer = *blue_noise;
+  const auto sobol_staging = self.render_context->allocate_staging(blue_noise_tables[0]);
+  const auto scrambling_staging = self.render_context->allocate_staging(blue_noise_tables[1]);
+  if (!sobol_staging || !scrambling_staging) {
+    return std::unexpected("Cannot stage the blue noise tables!");
+  }
+
+  auto blue_noise_module = vir::Module{};
+  auto blue_noise_dst = blue_noise_module.import_buffer(self.render_context->buffer(*blue_noise), vir::Access::None);
+  blue_noise_dst = blue_noise_module.copy_buffer(
+    blue_noise_module.import_buffer(*sobol_staging, vir::Access::HostWrite),
+    blue_noise_dst,
+    {.src_offset = 0, .dst_offset = 0, .size = blue_noise_tables[0].size_bytes()}
+  );
+  blue_noise_dst = blue_noise_module.copy_buffer(
+    blue_noise_module.import_buffer(*scrambling_staging, vir::Access::HostWrite),
+    blue_noise_dst,
+    {.src_offset = 0, .dst_offset = blue_noise_tables[0].size_bytes(), .size = blue_noise_tables[1].size_bytes()}
+  );
+  blue_noise_module.export_to(blue_noise_dst, vir::Access::MemoryRead);
+  if (!self.render_context
+         ->submit_upload(std::move(blue_noise_module), {*sobol_staging, *scrambling_staging}, nullptr)) {
+    return std::unexpected("Cannot upload the blue noise tables!");
+  }
+
   if (!self.render_context->resize_buffer(self.materials_buffer, sizeof(GPU::Material), "materials")) {
     return std::unexpected("Cannot allocate the materials buffer!");
   }
@@ -347,7 +386,8 @@ auto Renderer::sync_materials(this Renderer& self) -> void {
 auto Renderer::deinit(this Renderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
-  for (auto* buffer : {&self.quad_vertex_buffer, &self.quad_index_buffer, &self.materials_buffer}) {
+  for (auto* buffer :
+       {&self.quad_vertex_buffer, &self.quad_index_buffer, &self.blue_noise_buffer, &self.materials_buffer}) {
     if (*buffer != BufferID::Invalid) {
       self.render_context->destroy_buffer(*buffer);
       *buffer = BufferID::Invalid;
