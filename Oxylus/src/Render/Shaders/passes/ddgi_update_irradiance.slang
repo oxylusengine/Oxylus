@@ -64,7 +64,6 @@ func cs_main(
 
     var sum = f32x3(0.0);
     var weight_sum = 0.0;
-    var backface_count = 0u;
     let updates_radiance = all(work.texel < u32x2(DDGI_RADIANCE_TEXELS));
     let radiance_direction = probe_texel_direction(
         min(work.texel, u32x2(DDGI_RADIANCE_TEXELS - 1u)),
@@ -94,7 +93,6 @@ func cs_main(
         }
 
         if (ray.a < 0.0) {
-            backface_count += 1;
             continue;
         }
 
@@ -107,7 +105,7 @@ func cs_main(
         weight_sum += weight;
     }
 
-    if (f32(backface_count) / f32(rays_per_probe) > PROBE_INSIDE_BACKFACE_RATIO) {
+    if (probe_is_inside_geometry(flags)) {
         return;
     }
 
