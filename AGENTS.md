@@ -276,7 +276,7 @@ runs.
 
 The editor's Scripts menu attaches a debugger (`Debugger.Launch`, the system's just-in-time debugger) or
 holds Play until one attaches, and opening a project writes a VS Code `.vscode/launch.json` unless it
-has one. While a debugger is attached `CSharpScripts` caps the frame step, so a stop at a breakpoint
+has one, and rewrites the Rider `.run/Oxylus Editor.run.xml` that launches this machine's editor. While a debugger is attached `CSharpScripts` caps the frame step, so a stop at a breakpoint
 doesn't reach scripts as one long frame.
 
 ## Conventions

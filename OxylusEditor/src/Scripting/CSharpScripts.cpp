@@ -4,6 +4,7 @@
 #include <SDL3/SDL_filesystem.h>
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fmt/format.h>
 
 #include "Core/App.hpp"
@@ -29,6 +30,20 @@ static auto is_script_source(std::string_view relative_path) -> bool {
   // what the build itself writes
   const auto path = std::filesystem::path(relative_path);
   return std::ranges::none_of(path, [](const std::filesystem::path& part) { return part == "obj" || part == "bin"; });
+}
+
+// argv[0] can be relative, and lacks its extension when a shell on Windows started it
+static auto editor_executable() -> std::filesystem::path {
+  const auto& args = App::get()->get_command_line_args().args;
+  auto name = args.empty() ? std::filesystem::path("OxylusEditor")
+                           : std::filesystem::path(args.front().arg_str).filename();
+#ifdef OX_PLATFORM_WINDOWS
+  if (!name.has_extension()) {
+    name += ".exe";
+  }
+#endif
+
+  return std::filesystem::path(SDL_GetBasePath()) / name;
 }
 
 static auto log_diagnostic(const DotNetDiagnostic& diagnostic) -> void {
@@ -124,6 +139,10 @@ auto CSharpScripts::open(this CSharpScripts& self, Project& project) -> void {
   }
 
   if (auto written = write_scripts_launch_config(project_dir); !written) {
+    OX_LOG_ERROR("{}", written.error());
+  }
+
+  if (auto written = write_scripts_rider_config(project_dir, editor_executable()); !written) {
     OX_LOG_ERROR("{}", written.error());
   }
 

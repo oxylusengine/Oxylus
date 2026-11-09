@@ -7,7 +7,9 @@
 #include <cctype>
 #include <fmt/format.h>
 #include <fstream>
+#include <iterator>
 #include <regex>
+#include <string>
 #include <system_error>
 
 #include "Core/UUID.hpp"
@@ -212,6 +214,48 @@ auto write_scripts_launch_config(const std::filesystem::path& project_dir) -> st
 )";
 
   return write_file(path, CONTENT);
+}
+
+auto write_scripts_rider_config(const std::filesystem::path& project_dir, const std::filesystem::path& editor_exe)
+  -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  const auto forward_slashes = [](const std::filesystem::path& path) {
+    auto text = to_utf8(std::filesystem::absolute(path).lexically_normal());
+    std::ranges::replace(text, '\\', '/');
+    return xml_escape(text);
+  };
+
+  // the ".NET Executable" type, which debugs the CoreCLR a native host like the editor starts
+  const auto content = fmt::format(
+    R"(<!-- written by the Oxylus editor every time the project opens, copy it under another name to change it -->
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Oxylus Editor" type="RunExe" factoryName=".NET Executable">
+    <option name="EXE_PATH" value="{0}" />
+    <option name="PROGRAM_PARAMETERS" value="" />
+    <option name="WORKING_DIRECTORY" value="{1}" />
+    <option name="PASS_PARENT_ENVS" value="1" />
+    <option name="USE_EXTERNAL_CONSOLE" value="0" />
+    <option name="RUNTIME_TYPE" value="coreclr" />
+    <option name="RUNTIME_ARGUMENTS" value="" />
+    <option name="AUTO_ATTACH_CHILDREN" value="0" />
+    <method v="2" />
+  </configuration>
+</component>
+)",
+    forward_slashes(editor_exe),
+    forward_slashes(editor_exe.parent_path())
+  );
+
+  const auto path = project_dir / ".run" / "Oxylus Editor.run.xml";
+  if (auto file = std::ifstream(path, std::ios::binary)) {
+    const auto existing = std::string(std::istreambuf_iterator<c8>(file), std::istreambuf_iterator<c8>());
+    if (existing == content) {
+      return {};
+    }
+  }
+
+  return write_file(path, content);
 }
 
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)

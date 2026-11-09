@@ -54,6 +54,11 @@ auto write_scripts_solution(const std::filesystem::path& project_dir, const std:
 // writes <project_dir>/.vscode/launch.json unless it exists, which the developer owns
 auto write_scripts_launch_config(const std::filesystem::path& project_dir) -> std::expected<void, std::string>;
 
+// rewrites <project_dir>/.run/Oxylus Editor.run.xml whenever it differs, a Rider configuration that launches
+// `editor_exe` under the debugger. It names this machine's editor, so the editor owns it
+auto write_scripts_rider_config(const std::filesystem::path& project_dir, const std::filesystem::path& editor_exe)
+  -> std::expected<void, std::string>;
+
 // the dll a build of `csproj` into `output_dir` produces
 auto scripts_assembly_path(const std::filesystem::path& csproj, const std::filesystem::path& output_dir)
   -> std::filesystem::path;
