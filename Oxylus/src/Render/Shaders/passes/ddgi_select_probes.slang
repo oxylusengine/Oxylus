@@ -75,6 +75,7 @@ func cs_main(
         update,
         reset,
         !reset ? probe_mesh_distance_grace(flags) : 0u,
+        !reset ? probe_inside_votes(flags) : 0u,
         update_interval
     );
 

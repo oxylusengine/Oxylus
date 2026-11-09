@@ -15,6 +15,8 @@ static const f32 MAX_OFFSET_RATIO_SQUARED = MAX_OFFSET_RATIO * MAX_OFFSET_RATIO;
 static const f32 RELOCATE_MAX_STEP_RATIO = MAX_OFFSET_RATIO * 0.5;
 static const f32 RELOCATE_BACKOFF_HYSTERESIS = 2.0;
 static const f32 RELOCATE_BACKOFF_RATE = 0.25;
+static const f32 RELOCATE_PUSH_GAIN = 4.0;
+static const f32 RELOCATE_PUSH_DEAD_ZONE = 0.08;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -39,17 +41,20 @@ func cs_main(
     var offset = probe_states[probe_row].offset;
 
     var closest_backface_index = -1;
-    var closest_frontface_index = -1;
-    var farthest_frontface_index = -1;
-    var closest_backface_distance = com::HALF_MAX;
     var closest_frontface_distance = com::HALF_MAX;
+    var closest_backface_distance = com::HALF_MAX;
     var closest_mesh_distance = com::HALF_MAX;
-    var farthest_frontface_distance = 0.0f;
     var backface_count = 0.0f;
+    var push = f32x3(0.0f);
+
+    let cascade_scale = f32(1u << volume.cascade_index);
+    let min_distance = min_frontface_distance * cascade_scale;
+    let max_step = RELOCATE_MAX_STEP_RATIO * min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
 
     u32 ray_data_width, ray_data_height;
     ray_data.GetDimensions(ray_data_width, ray_data_height);
     let ray_origin = ray_data_row_origin(probe_row, rays_per_probe, ray_data_width);
+    let rotation = probe_ray_rotation(frame_index);
 
     for (u32 ray_index = 0; ray_index < rays_per_probe; ray_index++) {
         var distance = ray_data.Load(u32x3(ray_origin.x + ray_index, ray_origin.y, 0)).a;
@@ -65,44 +70,39 @@ func cs_main(
             }
         } else {
             // frontface
-            if (distance < closest_frontface_distance) {
-                closest_frontface_distance = distance;
-                closest_frontface_index = i32(ray_index);
-            }
-            if (distance > farthest_frontface_distance) {
-                farthest_frontface_distance = distance;
-                farthest_frontface_index = i32(ray_index);
+            closest_frontface_distance = min(closest_frontface_distance, distance);
+            if (distance < min_distance) {
+                push -= probe_ray_direction(ray_index, rays_per_probe, rotation) * (min_distance - distance);
             }
         }
     }
 
     var full_offset = f32x3(com::HALF_MAX);
 
-    let cascade_scale = f32(1u << volume.cascade_index);
-    let min_distance = min_frontface_distance * cascade_scale;
-    let max_step = RELOCATE_MAX_STEP_RATIO * min(min(volume.spacing.x, volume.spacing.y), volume.spacing.z);
-
     let backface_ratio = backface_count / f32(rays_per_probe);
     let was_inside = probe_is_inside_geometry(flags);
-    let inside_geometry = closest_backface_index != -1 &&
-                          backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
+    let is_backface_heavy = closest_backface_index != -1 &&
+                            backface_ratio > (was_inside ? PROBE_ESCAPED_BACKFACE_RATIO : PROBE_INSIDE_BACKFACE_RATIO);
+
+    var inside_votes = probe_is_reset(flags) ? 0u : probe_inside_votes(flags);
+    if (is_backface_heavy) {
+        inside_votes = min(inside_votes + 1u, PROBE_INSIDE_VOTES_MAX);
+    } else if (inside_votes > 0u) {
+        inside_votes -= 1u;
+    }
+
+    let inside_geometry = was_inside ? inside_votes > 0u : inside_votes >= PROBE_INSIDE_VOTES_MAX;
 
     if (inside_geometry) {
-        let closest_backface_direction = probe_ray_direction(u32(closest_backface_index), rays_per_probe, frame_index);
+        let closest_backface_direction = probe_ray_direction(u32(closest_backface_index), rays_per_probe, rotation);
         let escape = closest_backface_direction * (closest_backface_distance + min_distance * 0.5);
         let escape_length = length(escape);
         full_offset = offset + escape * (escape_length > max_step ? max_step / escape_length : 1.0);
-    } else if (closest_frontface_distance < min_distance && farthest_frontface_index != -1) {
-        let closest_frontface_direction = probe_ray_direction(u32(closest_frontface_index), rays_per_probe, frame_index);
-        var farthest_frontface_direction = probe_ray_direction(
-            u32(farthest_frontface_index),
-            rays_per_probe,
-            frame_index
-        );
-
-        if (dot(closest_frontface_direction, farthest_frontface_direction) <= 0.0) {
-            farthest_frontface_direction *= min(farthest_frontface_distance, max_step);
-            full_offset = offset + farthest_frontface_direction;
+    } else if (closest_frontface_distance < min_distance) {
+        let net_push = push / f32(rays_per_probe) * RELOCATE_PUSH_GAIN;
+        let net_push_length = length(net_push);
+        if (net_push_length > min_distance * RELOCATE_PUSH_DEAD_ZONE) {
+            full_offset = offset + net_push * min(1.0f, max_step / net_push_length);
         }
     } else if (closest_frontface_distance > min_distance * RELOCATE_BACKOFF_HYSTERESIS) {
         let offset_length = length(offset);
@@ -114,8 +114,13 @@ func cs_main(
     }
 
     if (relocation_enabled != 0) {
-        let normalized_offset = full_offset / volume.spacing;
-        if (dot(normalized_offset, normalized_offset) < MAX_OFFSET_RATIO_SQUARED) {
+        if (full_offset.x != com::HALF_MAX) {
+            let normalized_offset = full_offset / volume.spacing;
+            let normalized_length_squared = dot(normalized_offset, normalized_offset);
+            if (normalized_length_squared > MAX_OFFSET_RATIO_SQUARED) {
+                full_offset *= MAX_OFFSET_RATIO / sqrt(normalized_length_squared);
+            }
+
             offset = full_offset;
         }
     }
@@ -137,7 +142,7 @@ func cs_main(
     }
 
     let inactive = inside_geometry || mesh_distant;
-    let classification_changed = inactive != probe_is_inactive(flags);
+    let is_reactivated = !inactive && probe_is_inactive(flags);
 
     ProbeState state;
     state.offset = com::sanitize(offset);
@@ -145,8 +150,9 @@ func cs_main(
         inside_geometry,
         mesh_distant,
         probe_updates_this_frame(flags),
-        probe_is_reset(flags) || classification_changed,
+        probe_is_reset(flags) || is_reactivated,
         mesh_distance_grace,
+        inside_votes,
         probe_update_interval(flags)
     );
 
