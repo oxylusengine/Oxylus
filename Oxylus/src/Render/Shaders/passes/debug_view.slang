@@ -1,3 +1,4 @@
+import common;
 import gpu;
 import scene;
 import visbuffer;
@@ -36,19 +37,6 @@ func hash(uint a) -> u32 {
     a = (a + 0xfd7046c5) + (a << 3);
     a = (a ^ 0xb55a4f09) ^ (a >> 16);
     return a;
-}
-
-func inferno(f32 t) -> f32x3 {
-    let c0 = f32x3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
-    let c1 = f32x3(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
-    let c2 = f32x3(11.60249308247187, -3.972853965665698, -15.9423941062914);
-    let c3 = f32x3(-41.70399613139459, 17.43639888205313, 44.35414519872813);
-    let c4 = f32x3(77.162935699427, -33.40235894210092, -81.80730925738993);
-    let c5 = f32x3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
-    let c6 = f32x3(25.13112622477341, -12.24266895238567, -23.07032500287172);
-
-    t = saturate(t);
-    return c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6)))));
 }
 
 func sobel_outline(u32x2 pixel_pos, f32x3 color) -> f32x3 {
@@ -120,7 +108,7 @@ func fs_main(
             let draw_scale = clamp(heatmap_scale, 0.0, 100.0) / 100.0;
             let draw_count = f32(params.overdraw.Load(u32x3(pixel_pos, 0)));
             let heat = 1.0 - exp2(-draw_count * draw_scale);
-            color = inferno(heat);
+            color = com::inferno(heat);
         } break;
         case DebugView::Materials: {
             let h = hash(mesh_instance.material_index);

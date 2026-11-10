@@ -660,6 +660,8 @@ struct DebugContext {
 
   vir::ValueID rtgi_half_res_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID rtgi_half_res_normal_roughness_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_radiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_ray_count_attachment = vir::ValueID::Invalid;
 };
 
 // Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
@@ -741,6 +743,24 @@ struct RTGIContext {
   vir::ValueID half_res_normal_roughness = vir::ValueID::Invalid;
   vir::ValueID previous_half_res_normal_roughness = vir::ValueID::Invalid;
   vir::ValueID half_res_albedo_metalness = vir::ValueID::Invalid;
+
+  vir::ValueID half_res_sample_count = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_sample_count = vir::ValueID::Invalid;
+
+  vir::ValueID tlas_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID radiance = vir::ValueID::Invalid;
+  vir::ValueID ray_count = vir::ValueID::Invalid;
 };
 
 struct PostProcessContext {
@@ -921,6 +941,10 @@ struct RTGIVariables {
   vir::ValueID previous_half_res_face_normal = vir::ValueID::Invalid;
   vir::ValueID half_res_normal_roughness = vir::ValueID::Invalid;
   vir::ValueID previous_half_res_normal_roughness = vir::ValueID::Invalid;
+  vir::ValueID half_res_sample_count = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_sample_count = vir::ValueID::Invalid;
+  vir::ValueID trace_push = vir::ValueID::Invalid;
+  vir::ValueID trace_groups = vir::ValueID::Invalid;
   vir::ValueID settings = vir::ValueID::Invalid;
 };
 
@@ -1528,6 +1552,7 @@ private:
   std::array<Texture, 2> rtgi_half_res_depth{};
   std::array<Texture, 2> rtgi_half_res_face_normal{};
   std::array<Texture, 2> rtgi_half_res_normal_roughness{};
+  std::array<Texture, 2> rtgi_half_res_sample_count{};
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};

@@ -22,7 +22,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "8: Normal Color, 9: Emissive Color, 10: Metallic Color, 11: Roughness Color, 12: Baked Ambient Occlusion, 13: "
     "Screen Space Ambient Occlusion, 14: Geometric Normal, 15: Virtual Shadowmaps, 16: Virtual Shadowmaps "
     "(Point/Spot), 17: DDGI Probes, 18: SSSR Reflection, 19: SSSR Confidence, 20: SSSR Variance, 21: SSSR Sample "
-    "Count, 22: RTGI Half Resolution",
+    "Count, 22: RTGI Half Resolution, 23: RTGI Raw Radiance, 24: RTGI Ray Count",
     0
   );
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
@@ -89,6 +89,7 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   self.cvar_sssr_temporal_stability
     .init(self.system, "sssr.temporal_stability", "how strongly the temporal pass favours history", 0.7f);
   self.cvar_rtgi_enable.init(self.system, "rr.rtgi", "ray traced diffuse global illumination", 0);
+  self.cvar_rtgi_max_distance.init(self.system, "rr.rtgi_max_distance", "world space length of the rtgi rays", 500.0f);
   self.cvar_rtgi_max_temporal_samples
     .init(self.system, "rr.rtgi_max_temporal_samples", "rtgi temporal history length in samples", 64);
   self.cvar_rtgi_fast_convergence_samples.init(
@@ -113,6 +114,14 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "rr.rtgi_firefly_tolerance", "rtgi firefly ceiling headroom above the neighbourhood mean", 4.0f);
   self.cvar_rtgi_pre_blur_width
     .init(self.system, "rr.rtgi_pre_blur_width", "rtgi pre blur radius in half res pixels", 20.0f);
+  self.cvar_rtgi_bounce_range.init(
+    self.system,
+    "rr.rtgi_bounce_range",
+    "hit distance below which the ddgi bounce at an rtgi hit fades out, 0 disables the fade",
+    1.0f
+  );
+  self.cvar_rtgi_ddgi_bounce
+    .init(self.system, "rr.rtgi_ddgi_bounce", "rtgi hits sample DDGI for their indirect bounce", 1);
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
   self.cvar_ddgi_rays_per_probe
@@ -276,6 +285,7 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
 
   writer["rtgi"].begin_obj();
   writer["enabled"] = self.cvar_rtgi_enable.as_bool();
+  writer["max_distance"] = self.cvar_rtgi_max_distance.get();
   writer["max_temporal_samples"] = self.cvar_rtgi_max_temporal_samples.get();
   writer["fast_convergence_samples"] = self.cvar_rtgi_fast_convergence_samples.get();
   writer["temporal_fast_history_frames"] = self.cvar_rtgi_temporal_fast_history_frames.get();
@@ -286,6 +296,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["firefly_filter"] = self.cvar_rtgi_firefly_filter.as_bool();
   writer["firefly_tolerance"] = self.cvar_rtgi_firefly_tolerance.get();
   writer["pre_blur_width"] = self.cvar_rtgi_pre_blur_width.get();
+  writer["bounce_range"] = self.cvar_rtgi_bounce_range.get();
+  writer["ddgi_bounce"] = self.cvar_rtgi_ddgi_bounce.as_bool();
   writer.end_obj();
 
   writer["ddgi"].begin_obj();
@@ -412,6 +424,10 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
   auto rtgi_obj = json["rtgi"];
   if (!rtgi_obj.error()) {
     self.cvar_rtgi_enable.set(rtgi_obj["enabled"].get_bool());
+    if (auto distance = rtgi_obj["max_distance"]; !distance.error()) {
+      self.cvar_rtgi_max_distance.set(static_cast<f32>(distance.get_double()));
+    }
+
     if (auto samples = rtgi_obj["max_temporal_samples"]; !samples.error()) {
       self.cvar_rtgi_max_temporal_samples.set(static_cast<i32>(samples.get_int64()));
     }
@@ -441,6 +457,12 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     }
     if (auto width = rtgi_obj["pre_blur_width"]; !width.error()) {
       self.cvar_rtgi_pre_blur_width.set(static_cast<f32>(width.get_double()));
+    }
+    if (auto range = rtgi_obj["bounce_range"]; !range.error()) {
+      self.cvar_rtgi_bounce_range.set(static_cast<f32>(range.get_double()));
+    }
+    if (auto bounce = rtgi_obj["ddgi_bounce"]; !bounce.error()) {
+      self.cvar_rtgi_ddgi_bounce.set(bounce.get_bool());
     }
   }
 

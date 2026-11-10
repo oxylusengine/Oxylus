@@ -18,12 +18,7 @@ public func rtgi_unpack_roughness(u32 packed) -> f32 {
 
 // picks the most central non sky depth of a 2x2 quad, index is x | (y << 1), depth 0 is sky
 public func rtgi_quad_downsample_representative(f32x4 depths) -> i32 {
-    let surface_depths = f32x4(
-        depths.x != 0.0 ? depths.x : 1e30,
-        depths.y != 0.0 ? depths.y : 1e30,
-        depths.z != 0.0 ? depths.z : 1e30,
-        depths.w != 0.0 ? depths.w : 1e30
-    );
+    let surface_depths = select(depths != 0.0, depths, f32x4(1e30));
     let min_depth = min(min(surface_depths.x, surface_depths.y), min(surface_depths.z, surface_depths.w));
 
     // keeps near outliers from winning only when the quad straddles a large depth gap
@@ -33,10 +28,10 @@ public func rtgi_quad_downsample_representative(f32x4 depths) -> i32 {
     for (i32 i = 0; i < 4; i++) {
         var dist = foreground_bias * (depths[i] - min_depth);
         for (i32 j = 0; j < 4; j++) {
-            dist += depths[j] != 0.0 ? abs(depths[i] - depths[j]) : 0.0;
+            dist += select(depths[j] != 0.0, abs(depths[i] - depths[j]), 0.0);
         }
 
-        depth_dist[i] = depths[i] != 0.0 ? dist : 1e30;
+        depth_dist[i] = select(depths[i] != 0.0, dist, 1e30);
     }
 
     // distances inside this band count as equal so flat surfaces fall through to the top then left tie break
@@ -44,18 +39,8 @@ public func rtgi_quad_downsample_representative(f32x4 depths) -> i32 {
 
     i32 rep = 0;
     for (i32 i = 1; i < 4; i++) {
-        if (depths[i] == 0.0) {
-            continue;
-        }
-
-        if (depths[rep] == 0.0) {
-            rep = i;
-            continue;
-        }
-
-        if (depth_dist[i] < depth_dist[rep] - repr_tol) {
-            rep = i;
-        }
+        let is_better = or(depths[rep] == 0.0, depth_dist[i] < depth_dist[rep] - repr_tol);
+        rep = select(and(depths[i] != 0.0, is_better), i, rep);
     }
 
     return rep;
@@ -116,9 +101,11 @@ public static const f32 RTGI_COUNT_NORMAL_MAX = 1148.0;
 
 public func rtgi_pack_sample_counts(f32 normal_count, f32 fast_count) -> u32 {
     let clamped = clamp(normal_count, 0.0, RTGI_COUNT_NORMAL_MAX);
-    let normal_code = clamped < RTGI_COUNT_COARSE_BASE - 0.125
-        ? u32(round(clamped * 4.0))
-        : RTGI_COUNT_COARSE_CODE + u32(round((clamped - RTGI_COUNT_COARSE_BASE) * 0.5));
+    let normal_code = select(
+        clamped < RTGI_COUNT_COARSE_BASE - 0.125,
+        u32(round(clamped * 4.0)),
+        RTGI_COUNT_COARSE_CODE + u32(round(max(clamped - RTGI_COUNT_COARSE_BASE, 0.0) * 0.5))
+    );
     let fast_code = u32(round(clamp(fast_count, 0.0, 15.0) * 4.0));
     return (normal_code & RTGI_COUNT_NORMAL_MASK) | ((fast_code & RTGI_COUNT_FAST_MASK) << 10u);
 }
@@ -129,13 +116,12 @@ public func rtgi_pack_sample_counts_sky() -> u32 {
 
 public func rtgi_unpack_normal_count(u32 packed) -> f32 {
     let code = packed & RTGI_COUNT_NORMAL_MASK;
-    if (code == RTGI_COUNT_SKY) {
-        return -1.0;
-    }
-
-    return code < RTGI_COUNT_COARSE_CODE
-        ? f32(code) * 0.25
-        : RTGI_COUNT_COARSE_BASE + f32(code - RTGI_COUNT_COARSE_CODE) * 2.0;
+    let count = select(
+        code < RTGI_COUNT_COARSE_CODE,
+        f32(code) * 0.25,
+        RTGI_COUNT_COARSE_BASE + (f32(code) - f32(RTGI_COUNT_COARSE_CODE)) * 2.0
+    );
+    return select(code == RTGI_COUNT_SKY, -1.0, count);
 }
 
 public func rtgi_unpack_fast_count(u32 packed) -> f32 {
@@ -155,8 +141,8 @@ public func rtgi_perceptual_radiance_floor(f32 exposure) -> f32 {
 }
 
 public func rtgi_current_exposure(in RTGISettings settings, f32 buffered_exposure) -> f32 {
-    let exposure = settings.is_eye_adapted != 0 ? buffered_exposure : settings.fixed_exposure;
-    return (isfinite(exposure) && exposure > 0.0) ? exposure : 1.0;
+    let exposure = select(settings.is_eye_adapted != 0, buffered_exposure, settings.fixed_exposure);
+    return select(and(isfinite(exposure), exposure > 0.0), exposure, 1.0);
 }
 
 public func rtgi_linear_to_perceptual(f32 value, f32 exposure) -> f32 {
@@ -255,14 +241,11 @@ public func rtgi_calc_parallax_penalty(
 
 // mean of the valid taps, reduced only by the coverage of failed taps lying in front of the expected point
 public func rtgi_reproject_count_occluder_aware(f32x4 counts, f32x4 w, f32 occluder_coverage) -> f32 {
-    var max_valid = 0.0;
-    max_valid = max(max_valid, w.x > 0.1 ? counts.x : 0.0);
-    max_valid = max(max_valid, w.y > 0.1 ? counts.y : 0.0);
-    max_valid = max(max_valid, w.z > 0.1 ? counts.z : 0.0);
-    max_valid = max(max_valid, w.w > 0.1 ? counts.w : 0.0);
+    let valid = select(w > 0.1, counts, f32x4(0.0));
+    let max_valid = max(max(valid.x, valid.y), max(valid.z, valid.w));
 
     let weight_sum = dot(w, f32x4(1.0));
-    let normalized = weight_sum > 1.0e-6 ? dot(counts, w) / weight_sum : 0.0;
+    let normalized = select(weight_sum > 1.0e-6, dot(counts, w) / max(weight_sum, 1.0e-6), 0.0);
     let penalty = pow(saturate(1.0 - occluder_coverage), 1.0 - 0.66);
     return max(min(max_valid, 4.0), normalized * penalty);
 }
@@ -284,12 +267,8 @@ public func rtgi_ray_list_limit(u32x2 half_size, in RTGISettings settings) -> u3
 
 // extra rays above the base ray a pixel wants, exp(-4x) over the convergence target, amplitude extras at x = 0
 public func rtgi_calc_desired_extra_rays(f32 sample_count, f32 target, f32 amplitude) -> f32 {
-    if (sample_count >= target || target <= 0.0) {
-        return 0.0;
-    }
-
-    let x = max(sample_count, 0.0) / target;
-    return amplitude * exp(-4.0 * x);
+    let x = max(sample_count, 0.0) / max(target, 1.0e-6);
+    return select(or(sample_count >= target, target <= 0.0), 0.0, amplitude * exp(-4.0 * x));
 }
 
 // factors live in [0, 2], stored linearly as factor / 2 in an unorm texel
@@ -308,5 +287,5 @@ public func rtgi_calc_ray_demand(f32 sample_count, f32 impact_diffuse, in RTGISe
     let diffuse_extra = rtgi_calc_desired_extra_rays(sample_count, settings.fast_convergence_samples, extra_cap) * impact_diffuse;
     let extra_scale = min(1.0, extra_cap / max(diffuse_extra, 1.0e-6));
     let demand = 1u + u32(diffuse_extra * extra_scale + 0.5);
-    return demand > max_rays ? demand - 1u : demand;
+    return select(demand > max_rays, demand - 1u, demand);
 }

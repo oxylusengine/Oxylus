@@ -27,7 +27,7 @@ func cs_main(u32x2 half_pixel : SV_DispatchThreadID, uniform u32x2 render_size) 
         let pixel = half_pixel * 2u + u32x2(i & 1u, i >> 1u);
         if (all(pixel < render_size)) {
             let depth = depth_image.Load(u32x3(pixel, 0u));
-            linear_depths[i] = depth == 0.0 ? 0.0 : camera.linear_depth(depth);
+            linear_depths[i] = select(depth == 0.0, 0.0, camera.linear_depth(depth));
         }
     }
 
@@ -51,7 +51,7 @@ func cs_main(u32x2 half_pixel : SV_DispatchThreadID, uniform u32x2 render_size) 
     }
 
     half_res_depth_image[half_pixel] = linear_depths[best];
-    half_res_face_normal_image[half_pixel] = is_sky ? 0u : com::compress_normal_32(face_normal);
-    half_res_normal_roughness_image[half_pixel] = is_sky ? 0u : rtgi_pack_normal_roughness(shading_normal, roughness);
+    half_res_face_normal_image[half_pixel] = select(is_sky, 0u, com::compress_normal_32(face_normal));
+    half_res_normal_roughness_image[half_pixel] = select(is_sky, 0u, rtgi_pack_normal_roughness(shading_normal, roughness));
     half_res_albedo_metalness_image[half_pixel] = albedo_metalness;
 }

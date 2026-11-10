@@ -10,7 +10,7 @@ import rtgi_common;
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> f32x4 {
     let is_normal_half = input.tex_coord.x < 0.5;
-    let half_uv = f32x2(is_normal_half ? input.tex_coord.x * 2.0 : input.tex_coord.x * 2.0 - 1.0, input.tex_coord.y);
+    let half_uv = f32x2(input.tex_coord.x * 2.0 - select(is_normal_half, 0.0, 1.0), input.tex_coord.y);
 
     u32 width;
     u32 height;

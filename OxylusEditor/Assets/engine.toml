@@ -370,6 +370,37 @@ path = "passes/rtgi_debug.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "rtgi_debug_radiance"
+path = "passes/rtgi_debug_radiance.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_distribute"
+path = "passes/rtgi_distribute.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_trace"
+path = "passes/rtgi_trace.slang"
+entry_points = ["rgs_main", "miss_main", "shadow_miss_main", "closesthit_main", "anyhit_main"]
+requires = ["ray_tracing", "ray_tracing_pipeline", "bindless"]
+
+[[shader_sessions.programs]]
+name = "rtgi_blend_rays"
+path = "passes/rtgi_blend_rays.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_temporal_reproject"
+path = "passes/rtgi_temporal_reproject.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_debug_ray_count"
+path = "passes/rtgi_debug_ray_count.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "histogram_generate"
 path = "passes/histogram_generate.slang"
 entry_points = ["cs_main"]

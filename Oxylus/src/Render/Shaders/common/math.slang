@@ -275,4 +275,30 @@ public func bayer_8x8(u32x2 pixel) -> u32 {
         + 4u * bayer_m2(pixel.x >> 1u, pixel.y >> 1u)
         + bayer_m2(pixel.x >> 2u, pixel.y >> 2u);
 }
+
+// adapted from Timberdoodle (Apache-2.0)
+static u32 rand_state;
+
+public func rand_seed(u32 seed) -> void {
+    rand_state = seed;
+}
+
+public func rand() -> f32 {
+    rand_state = rand_state * 747796405u + 2891336453u;
+    var result = ((rand_state >> ((rand_state >> 28u) + 4u)) ^ rand_state) * 277803737u;
+    result = (result >> 22u) ^ result;
+    return f32(result) / 4294967295.0;
+}
+
+public func rand_concentric_sample_disc() -> f32x2 {
+    let r = sqrt(rand());
+    let theta = rand() * 2.0 * PI;
+    return f32x2(cos(theta), sin(theta)) * r;
+}
+
+public func rand_cosine_sample_hemi() -> f32x3 {
+    let d = rand_concentric_sample_disc();
+    let z = sqrt(max(0.0, 1.0 - d.x * d.x - d.y * d.y));
+    return f32x3(d.x, d.y, z);
+}
 }

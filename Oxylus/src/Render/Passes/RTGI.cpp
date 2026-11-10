@@ -5,13 +5,36 @@
 #include "Render/Renderer.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/PushConstants.hpp"
+#include "Render/Utils/Samplers.hpp"
+#include "Scene/Scene.hpp"
 #include "Utils/Log.hpp"
 
 namespace ox {
 using RTGIGBufferPush = PushConstants<glm::uvec2>;
+using RTGITracePush =
+  PushConstants<u32, u32, u32, u32, u32, u32, u32, f32, f32, f32, f32, f32, f32, glm::vec3, glm::vec3, glm::vec3>;
+
+constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+constexpr static auto RTGI_TRACE_GROUP_WIDTH = 128_u32;
 
 static auto rtgi_half_extent(const glm::uvec2 render_size) -> vir::Extent3D {
   return {(render_size.x + 1_u32) / 2_u32, (render_size.y + 1_u32) / 2_u32, 1};
+}
+
+static auto rtgi_ray_list_limit(const glm::uvec2 half_size, const RendererCVar& cvar) -> u32 {
+  const auto ray_percentage = std::clamp(
+    cvar.cvar_rtgi_ray_percentage.get(),
+    0.05f,
+    static_cast<f32>(GPU::RTGI_RAY_LIST_CAPACITY_MUL)
+  );
+  const auto min_budget = std::clamp(cvar.cvar_rtgi_min_ray_budget.get(), 0.0f, 1.0f);
+  const auto budget = static_cast<u32>(
+    static_cast<f32>(half_size.x * half_size.y) * std::max(ray_percentage, min_budget)
+  );
+  return std::min(budget, half_size.x * half_size.y * GPU::RTGI_RAY_LIST_CAPACITY_MUL);
 }
 
 auto RendererInstance::bind_rtgi_variables(
@@ -28,6 +51,29 @@ auto RendererInstance::bind_rtgi_variables(
   program.set(variables.is_reset, params.rtgi_reset);
 
   const auto half_extent = rtgi_half_extent(params.render_size);
+  const auto ray_list_limit = rtgi_ray_list_limit({half_extent.width, half_extent.height}, cvar);
+  program.set(variables.trace_groups, (ray_list_limit + RTGI_TRACE_GROUP_WIDTH - 1_u32) / RTGI_TRACE_GROUP_WIDTH);
+  program.set_bytes(
+    variables.trace_push,
+    RTGITracePush(
+      static_cast<u32>(self.probe_volumes.size()),
+      static_cast<u32>(self.scene.lights.size()),
+      static_cast<u32>(params.ddgi_history_valid && cvar.cvar_rtgi_ddgi_bounce.as_bool()),
+      GPU::ddgi_radiance_atlas_y_offset(params.ddgi_total_probe_count),
+      static_cast<u32>(params.ddgi_distance_culling_enabled),
+      params.frame_index & 0xFFF_u32,
+      ray_list_limit,
+      cvar.cvar_rtgi_max_distance.get(),
+      cvar.cvar_ddgi_shadow_ray_offset.get(),
+      cvar.cvar_ddgi_normal_bias.get(),
+      cvar.cvar_ddgi_view_bias.get(),
+      self.directional_light.intensity,
+      std::clamp(cvar.cvar_rtgi_bounce_range.get(), 0.0f, 16.0f),
+      self.directional_light.direction,
+      self.sky_data.ambient_color,
+      self.light_grid_origin
+    )
+  );
 
   program.set_bytes(
     variables.settings,
@@ -69,6 +115,12 @@ auto RendererInstance::bind_rtgi_variables(
     variables.previous_half_res_normal_roughness,
     self.rtgi_half_res_normal_roughness[previous_index].attachment_info()
   );
+
+  program.set(variables.half_res_sample_count, self.rtgi_half_res_sample_count[current_index].attachment_info());
+  program.set(
+    variables.previous_half_res_sample_count,
+    self.rtgi_half_res_sample_count[previous_index].attachment_info()
+  );
 }
 
 auto RendererInstance::allocate_rtgi_resources(this RendererInstance& self, const glm::uvec2 render_size) -> void {
@@ -91,6 +143,9 @@ auto RendererInstance::allocate_rtgi_resources(this RendererInstance& self, cons
     self.rtgi_half_res_normal_roughness[i] = Texture::create(
       {.format = vir::Format::R32Uint, .extent = half_extent, .usage = history_usage}
     );
+    self.rtgi_half_res_sample_count[i] = Texture::create(
+      {.format = vir::Format::R16Uint, .extent = half_extent, .usage = history_usage}
+    );
   }
 
   auto module = vir::Module{};
@@ -103,7 +158,10 @@ auto RendererInstance::allocate_rtgi_resources(this RendererInstance& self, cons
     );
     module.export_to(cleared_depth, RTGIContext::HISTORY_REST);
 
-    for (const auto* texture : {&self.rtgi_half_res_face_normal[i], &self.rtgi_half_res_normal_roughness[i]}) {
+    for (const auto* texture :
+         {&self.rtgi_half_res_face_normal[i],
+          &self.rtgi_half_res_normal_roughness[i],
+          &self.rtgi_half_res_sample_count[i]}) {
       const auto cleared = module.clear(texture->import_discarded(module, vir::Access::None), zero);
       module.export_to(cleared, RTGIContext::HISTORY_REST);
     }
@@ -160,17 +218,31 @@ auto RendererInstance::record_rtgi(
     vir::Format::R32Uint,
     RTGIContext::HISTORY_REST
   );
+  variables.half_res_sample_count = module.declare_image_var(
+    "rtgi half res sample count",
+    vir::Format::R16Uint,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_half_res_sample_count = module.declare_image_var(
+    "rtgi previous half res sample count",
+    vir::Format::R16Uint,
+    RTGIContext::HISTORY_REST
+  );
+  variables.trace_push = module.declare_bytes_var("rtgi trace push", sizeof(RTGITracePush));
+  variables.trace_groups = module.declare_u32_var("rtgi trace groups", 0);
   variables.settings = module.declare_bytes_var("rtgi settings", sizeof(GPU::RTGISettings));
 
   context.half_res_depth = variables.half_res_depth;
   context.half_res_face_normal = variables.half_res_face_normal;
   context.half_res_normal_roughness = variables.half_res_normal_roughness;
+  context.half_res_sample_count = variables.half_res_sample_count;
 
   // after a reset a depth of 0 (sky) and a count of 0 make every pixel look disoccluded
   std::tie(
     context.previous_half_res_depth,
     context.previous_half_res_face_normal,
-    context.previous_half_res_normal_roughness
+    context.previous_half_res_normal_roughness,
+    context.previous_half_res_sample_count
   ) = std::tuple_cat( //
     module.set_condition(
       variables.is_reset,
@@ -181,6 +253,7 @@ auto RendererInstance::record_rtgi(
           arm.clear(variables.previous_half_res_depth, black),
           arm.clear(variables.previous_half_res_face_normal, zero),
           arm.clear(variables.previous_half_res_normal_roughness, zero),
+          arm.clear(variables.previous_half_res_sample_count, zero),
         };
       },
       [&](vir::Module&) {
@@ -188,6 +261,7 @@ auto RendererInstance::record_rtgi(
           variables.previous_half_res_depth,
           variables.previous_half_res_face_normal,
           variables.previous_half_res_normal_roughness,
+          variables.previous_half_res_sample_count,
         };
       }
     )
@@ -237,5 +311,254 @@ auto RendererInstance::record_rtgi(
       .dispatch_invocations(half_extent.width, half_extent.height, 1)
       .end_compute()
   );
+
+  const auto pixel_count = half_extent.width * half_extent.height;
+  const auto ray_capacity = pixel_count * GPU::RTGI_RAY_LIST_CAPACITY_MUL;
+  auto ray_count_image = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::R8Uint, .name = "rtgi ray count"}
+  );
+  auto pixel_ray_alloc = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::R32Uint, .name = "rtgi pixel ray alloc"}
+  );
+  auto ray_list = module.transient_buffer({
+    .size = ray_capacity * sizeof(GPU::RTGIRayEntry),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "rtgi ray list",
+  });
+  auto ray_result = module.transient_buffer({
+    .size = ray_capacity * sizeof(GPU::RTGIRayResult),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "rtgi ray result",
+  });
+  const auto zero_counters = GPU::RTGIRayCounters{};
+  auto counters = module.transient_buffer({
+    .size = sizeof(zero_counters),
+    .usage = TRANSIENT_BUFFER_USAGE,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "rtgi ray counters",
+  });
+  counters = module.update_buffer(
+    counters,
+    std::span{reinterpret_cast<const u8*>(&zero_counters), sizeof(zero_counters)}
+  );
+
+  auto ray_impact = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA8Unorm, .name = "rtgi ray impact"}
+  );
+
+  auto reproject_corner = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RG16Uint, .name = "rtgi reproject corner"}
+  );
+  auto reproject_weights = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA8Unorm, .name = "rtgi reproject weights"}
+  );
+  std::tie(
+    values.camera,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    context.previous_half_res_depth,
+    context.previous_half_res_face_normal,
+    context.previous_half_res_sample_count,
+    context.half_res_sample_count,
+    reproject_corner,
+    reproject_weights,
+    ray_impact,
+    counters
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {context.half_res_face_normal, vir::Access::ComputeSampled},
+         {context.previous_half_res_depth, vir::Access::ComputeSampled},
+         {context.previous_half_res_face_normal, vir::Access::ComputeSampled},
+         {context.previous_half_res_sample_count, vir::Access::ComputeSampled},
+         {context.half_res_sample_count, vir::Access::ComputeWrite},
+         {reproject_corner, vir::Access::ComputeWrite},
+         {reproject_weights, vir::Access::ComputeWrite},
+         {ray_impact, vir::Access::ComputeWrite},
+         {counters, vir::Access::ComputeRW}}
+      )
+      .with_name("rtgi temporal reproject")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_temporal_reproject"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.half_res_depth)
+      .bind_image(0, 2, context.half_res_face_normal)
+      .bind_image(0, 3, context.previous_half_res_depth)
+      .bind_image(0, 4, context.previous_half_res_face_normal)
+      .bind_image(0, 5, context.previous_half_res_sample_count)
+      .bind_image(0, 6, context.half_res_sample_count)
+      .bind_image(0, 7, reproject_corner)
+      .bind_image(0, 8, reproject_weights)
+      .bind_image(0, 9, ray_impact)
+      .bind_buffer(0, 10, counters)
+      .push_constants_from(variables.settings)
+      .dispatch_invocations(half_extent.width, half_extent.height, 1)
+      .end_compute()
+  );
+
+  std::tie(
+    context.half_res_sample_count,
+    ray_impact,
+    ray_count_image,
+    pixel_ray_alloc,
+    ray_list,
+    counters
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.half_res_sample_count, vir::Access::ComputeSampled},
+         {ray_impact, vir::Access::ComputeSampled},
+         {ray_count_image, vir::Access::ComputeWrite},
+         {pixel_ray_alloc, vir::Access::ComputeWrite},
+         {ray_list, vir::Access::ComputeWrite},
+         {counters, vir::Access::ComputeRW}}
+      )
+      .with_name("rtgi distribute")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_distribute"))
+      .bind_image(0, 0, context.half_res_sample_count)
+      .bind_image(0, 1, ray_impact)
+      .bind_image(0, 2, ray_count_image)
+      .bind_image(0, 3, pixel_ray_alloc)
+      .bind_buffer(0, 4, ray_list)
+      .bind_buffer(0, 5, counters)
+      .push_constants_from(variables.settings)
+      .dispatch_invocations(half_extent.width, half_extent.height, 1)
+      .end_compute()
+  );
+
+  auto trace_pass = //
+    module
+      .begin_compute(
+        {{context.tlas_buffer, vir::Access::RayTracingRead},
+         {context.probe_volumes_buffer, vir::Access::RayTracingRead},
+         {values.mesh_instances, vir::Access::RayTracingRead},
+         {values.meshes, vir::Access::RayTracingRead},
+         {values.transforms_world, vir::Access::RayTracingRead},
+         {values.materials, vir::Access::RayTracingRead},
+         {values.lights, vir::Access::RayTracingRead},
+         {context.sky_view_lut_attachment, vir::Access::RayTracingSampled},
+         {context.sky_transmittance_lut_attachment, vir::Access::RayTracingSampled},
+         {context.irradiance_attachment, vir::Access::RayTracingSampled},
+         {context.distance_attachment, vir::Access::RayTracingSampled},
+         {context.probe_states_buffer, vir::Access::RayTracingRead},
+         {context.pointspot_page_table_attachment, vir::Access::RayTracingSampled},
+         {context.vsm_physical_pages_attachment, vir::Access::RayTracingSampled},
+         {values.camera, vir::Access::RayTracingUniformRead},
+         {context.half_res_depth, vir::Access::RayTracingSampled},
+         {context.half_res_face_normal, vir::Access::RayTracingSampled},
+         {context.half_res_sample_count, vir::Access::RayTracingSampled},
+         {ray_list, vir::Access::RayTracingRead},
+         {counters, vir::Access::RayTracingRead},
+         {ray_result, vir::Access::RayTracingWrite},
+         {values.atmosphere, vir::Access::RayTracingRead},
+         {context.light_grid_buffer, vir::Access::RayTracingRead},
+         {context.pointspot_views_buffer, vir::Access::RayTracingRead}}
+      )
+      .with_name("rtgi trace")
+      .bind_ray_tracing_pipeline(render_context.pipeline("rtgi_trace"));
+  std::tie(
+    context.tlas_buffer,
+    context.probe_volumes_buffer,
+    values.mesh_instances,
+    values.meshes,
+    values.transforms_world,
+    values.materials,
+    values.lights,
+    context.sky_view_lut_attachment,
+    context.sky_transmittance_lut_attachment,
+    context.irradiance_attachment,
+    context.distance_attachment,
+    context.probe_states_buffer,
+    context.pointspot_page_table_attachment,
+    context.vsm_physical_pages_attachment,
+    values.camera,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    context.half_res_sample_count,
+    ray_list,
+    counters,
+    ray_result,
+    values.atmosphere,
+    context.light_grid_buffer,
+    context.pointspot_views_buffer
+  ) = std::tuple_cat( //
+    bind_vsm_pointspot_spec_constants(trace_pass)
+      .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
+      .bind_buffer(0, 1, context.probe_volumes_buffer)
+      .bind_buffer(0, 2, values.mesh_instances)
+      .bind_buffer(0, 3, values.meshes)
+      .bind_buffer(0, 4, values.transforms_world)
+      .bind_buffer(0, 5, values.materials)
+      .bind_buffer(0, 6, values.lights)
+      .bind_image(0, 7, context.sky_view_lut_attachment)
+      .bind_image(0, 8, context.sky_transmittance_lut_attachment)
+      .bind_sampler(0, 9, render_context.cached_sampler_handle(LinearSamplerClamped))
+      .bind_image(0, 10, context.irradiance_attachment)
+      .bind_image(0, 11, context.distance_attachment)
+      .bind_buffer(0, 12, context.probe_states_buffer)
+      .bind_image(0, 13, context.pointspot_page_table_attachment)
+      .bind_image(0, 14, context.vsm_physical_pages_attachment)
+      .bind_buffer(0, 15, values.camera)
+      .bind_image(0, 16, context.half_res_depth)
+      .bind_image(0, 17, context.half_res_face_normal)
+      .bind_buffer(0, 18, ray_list)
+      .bind_buffer(0, 19, counters)
+      .bind_buffer(0, 20, ray_result)
+      .bind_image(0, 21, context.half_res_sample_count)
+      .specialize_constant(0, std::to_underlying(shape.scene_flags))
+      .push_constant_address(0, values.atmosphere)
+      .push_constant_address(8, context.light_grid_buffer)
+      .push_constant_address(16, context.pointspot_views_buffer)
+      .push_constants_from_at(24, variables.trace_push)
+      .trace_rays(RTGI_TRACE_GROUP_WIDTH, variables.trace_groups, 1)
+      .end_compute()
+  );
+
+  context.radiance = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi radiance"}
+  );
+  auto perceptual_rgb_shortness = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi perceptual rgb shortness"}
+  );
+  std::tie(
+    values.camera,
+    context.half_res_depth,
+    ray_count_image,
+    pixel_ray_alloc,
+    ray_result,
+    values.exposure,
+    perceptual_rgb_shortness,
+    context.radiance
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {ray_count_image, vir::Access::ComputeSampled},
+         {pixel_ray_alloc, vir::Access::ComputeSampled},
+         {ray_result, vir::Access::ComputeRead},
+         {values.exposure, vir::Access::ComputeUniformRead},
+         {perceptual_rgb_shortness, vir::Access::ComputeWrite},
+         {context.radiance, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi blend rays")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_blend_rays"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.half_res_depth)
+      .bind_image(0, 2, ray_count_image)
+      .bind_image(0, 3, pixel_ray_alloc)
+      .bind_buffer(0, 4, ray_result)
+      .bind_buffer(0, 5, values.exposure)
+      .bind_image(0, 6, perceptual_rgb_shortness)
+      .bind_image(0, 7, context.radiance)
+      .push_constants_from(variables.settings)
+      .dispatch_invocations(half_extent.width, half_extent.height, 1)
+      .end_compute()
+  );
+
+  context.ray_count = ray_count_image;
 }
 } // namespace ox

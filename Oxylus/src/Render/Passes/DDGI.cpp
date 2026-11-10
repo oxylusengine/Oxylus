@@ -111,6 +111,7 @@ auto RendererInstance::prepare_ddgi(this RendererInstance& self, const RendererC
   const auto& shape = params.shape;
   params.ddgi_scroll_deltas.clear();
   if (self.probe_volumes.empty()) {
+    params.ddgi_history_valid = false;
     return;
   }
 

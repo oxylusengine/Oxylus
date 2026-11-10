@@ -57,8 +57,10 @@ static auto is_sssr_debug_view(GPU::DebugView debug_view) -> bool {
 
 static auto is_rtgi_debug_view(GPU::DebugView debug_view) -> bool {
   switch (debug_view) {
-    case GPU::DebugView::RTGIHalfRes: return true;
-    default                         : return false;
+    case GPU::DebugView::RTGIHalfRes :
+    case GPU::DebugView::RTGIRaw     :
+    case GPU::DebugView::RTGIRayCount: return true;
+    default                          : return false;
   }
 }
 
@@ -2244,16 +2246,59 @@ auto RendererInstance::record_frame(
 
   // --- RTGI ---
   auto rtgi_context = RTGIContext{};
+  if (shape.has_rtgi && shape.probe_volume_count == 0) {
+    probe_volumes_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "rtgi unused probe volumes",
+    });
+    probe_states_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "rtgi unused probe states",
+    });
+    ddgi_irradiance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "rtgi unused irradiance"}
+    );
+    ddgi_distance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "rtgi unused distance"}
+    );
+  }
+
   if (shape.has_rtgi) {
     rtgi_context.depth_attachment = depth_attachment;
     rtgi_context.albedo_attachment = albedo_attachment;
     rtgi_context.normal_attachment = normal_attachment;
     rtgi_context.metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment;
+    rtgi_context.tlas_buffer = values.tlas;
+    rtgi_context.probe_volumes_buffer = probe_volumes_buffer;
+    rtgi_context.probe_states_buffer = probe_states_buffer;
+    rtgi_context.light_grid_buffer = light_grid_buffer;
+    rtgi_context.pointspot_views_buffer = pointspot_views_buffer;
+    rtgi_context.sky_view_lut_attachment = sky_view_lut_attachment;
+    rtgi_context.sky_transmittance_lut_attachment = sky_transmittance_lut_attachment;
+    rtgi_context.pointspot_page_table_attachment = vsm_pointspot_page_table_attachment;
+    rtgi_context.vsm_physical_pages_attachment = vsm_physical_pages_attachment;
+    rtgi_context.irradiance_attachment = ddgi_irradiance_attachment;
+    rtgi_context.distance_attachment = ddgi_distance_attachment;
     self.record_rtgi(module, render_context, recording, rtgi_context);
     depth_attachment = rtgi_context.depth_attachment;
     albedo_attachment = rtgi_context.albedo_attachment;
     normal_attachment = rtgi_context.normal_attachment;
     metallic_roughness_occlusion_attachment = rtgi_context.metallic_roughness_occlusion_attachment;
+    values.tlas = rtgi_context.tlas_buffer;
+    probe_volumes_buffer = rtgi_context.probe_volumes_buffer;
+    probe_states_buffer = rtgi_context.probe_states_buffer;
+    light_grid_buffer = rtgi_context.light_grid_buffer;
+    pointspot_views_buffer = rtgi_context.pointspot_views_buffer;
+    sky_view_lut_attachment = rtgi_context.sky_view_lut_attachment;
+    sky_transmittance_lut_attachment = rtgi_context.sky_transmittance_lut_attachment;
+    vsm_pointspot_page_table_attachment = rtgi_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = rtgi_context.vsm_physical_pages_attachment;
+    ddgi_irradiance_attachment = rtgi_context.irradiance_attachment;
+    ddgi_distance_attachment = rtgi_context.distance_attachment;
   }
 
   // --- lighting ---
@@ -2610,6 +2655,8 @@ auto RendererInstance::record_frame(
       .sssr_sample_count_attachment = sssr_context.sample_count,
       .rtgi_half_res_depth_attachment = rtgi_context.half_res_depth,
       .rtgi_half_res_normal_roughness_attachment = rtgi_context.half_res_normal_roughness,
+      .rtgi_radiance_attachment = rtgi_context.radiance,
+      .rtgi_ray_count_attachment = rtgi_context.ray_count,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
     sssr_context.radiance = debug_context.sssr_reflection_attachment;
@@ -2618,6 +2665,8 @@ auto RendererInstance::record_frame(
     sssr_context.sample_count = debug_context.sssr_sample_count_attachment;
     rtgi_context.half_res_depth = debug_context.rtgi_half_res_depth_attachment;
     rtgi_context.half_res_normal_roughness = debug_context.rtgi_half_res_normal_roughness_attachment;
+    rtgi_context.radiance = debug_context.rtgi_radiance_attachment;
+    rtgi_context.ray_count = debug_context.rtgi_ray_count_attachment;
     vsm_virtual_page_table_attachment = debug_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = debug_context.vsm_pointspot_page_table_attachment;
     if (module.resource_root(dst_attachment) == render_target_root) {
@@ -2711,7 +2760,9 @@ auto RendererInstance::record_frame(
           rtgi_context.half_res_face_normal,
           rtgi_context.previous_half_res_face_normal,
           rtgi_context.half_res_normal_roughness,
-          rtgi_context.previous_half_res_normal_roughness}) {
+          rtgi_context.previous_half_res_normal_roughness,
+          rtgi_context.half_res_sample_count,
+          rtgi_context.previous_half_res_sample_count}) {
       module.export_to(history, RTGIContext::HISTORY_REST);
     }
   }

@@ -134,7 +134,8 @@ func shade_hit(
     f32 view_bias,
     u32 light_count,
     u32 bounce_valid,
-    Atmosphere *atmosphere
+    Atmosphere *atmosphere,
+    f32 bounce_scale = 1.0
 ) -> f32x3 {
     let N = hit.surface.normal;
     let diffuse_albedo = hit.surface.albedo.rgb * (1.0 - hit.surface.metallic);
@@ -196,7 +197,7 @@ func shade_hit(
             linear_clamp_sampler,
             params
         );
-        radiance += diffuse_albedo * bounce.irradiance * bounce.coverage;
+        radiance += diffuse_albedo * bounce.irradiance * bounce.coverage * bounce_scale;
     }
 
     return radiance;

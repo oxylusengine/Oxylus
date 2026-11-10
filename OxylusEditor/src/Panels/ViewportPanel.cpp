@@ -1118,7 +1118,9 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "SSSR Confidence",
         "SSSR Variance",
         "SSSR Sample Count",
-        "RTGI Half Resolution"
+        "RTGI Half Resolution",
+        "RTGI Raw Radiance",
+        "RTGI Ray Count"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
     }
@@ -1362,6 +1364,7 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
      .tag = "Experimental",
      .tag_tooltip = "Testing only, not ready for regular use"},
     [&] {
+      ui.drag("Max Distance", cvar_sys.cvar_rtgi_max_distance, 1.0f, 10000.0f);
       ui.drag("Max Temporal Samples", cvar_sys.cvar_rtgi_max_temporal_samples, 1, 1024);
       ui.drag("Fast Convergence Samples", cvar_sys.cvar_rtgi_fast_convergence_samples, 0.0f, 256.0f);
       ui.drag("Fast History Frames", cvar_sys.cvar_rtgi_temporal_fast_history_frames, 1, 15);
@@ -1372,6 +1375,8 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
       ui.checkbox("Firefly Filter", cvar_sys.cvar_rtgi_firefly_filter);
       ui.drag("Firefly Tolerance", cvar_sys.cvar_rtgi_firefly_tolerance, 0.0f, 16.0f);
       ui.drag("Pre Blur Width", cvar_sys.cvar_rtgi_pre_blur_width, 1.0f, 64.0f);
+      ui.drag("Bounce Range", cvar_sys.cvar_rtgi_bounce_range, 0.0f, 16.0f);
+      ui.checkbox("DDGI Bounce", cvar_sys.cvar_rtgi_ddgi_bounce);
     }
   );
 

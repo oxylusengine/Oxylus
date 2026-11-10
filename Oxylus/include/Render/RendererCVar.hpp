@@ -59,6 +59,7 @@ struct RendererCVar {
   AutoCVar_Float cvar_sssr_temporal_stability;
 
   AutoCVar_Int cvar_rtgi_enable;
+  AutoCVar_Float cvar_rtgi_max_distance;
   AutoCVar_Int cvar_rtgi_max_temporal_samples;
   AutoCVar_Float cvar_rtgi_fast_convergence_samples;
   AutoCVar_Int cvar_rtgi_temporal_fast_history_frames;
@@ -69,6 +70,8 @@ struct RendererCVar {
   AutoCVar_Int cvar_rtgi_firefly_filter;
   AutoCVar_Float cvar_rtgi_firefly_tolerance;
   AutoCVar_Float cvar_rtgi_pre_blur_width;
+  AutoCVar_Int cvar_rtgi_ddgi_bounce;
+  AutoCVar_Float cvar_rtgi_bounce_range;
 
   AutoCVar_Int cvar_ddgi_enable;
   AutoCVar_Int cvar_ddgi_rays_per_probe;
