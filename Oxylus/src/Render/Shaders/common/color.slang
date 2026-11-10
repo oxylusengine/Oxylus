@@ -80,4 +80,20 @@ public func luminance(f32x3 color) -> f32 {
     return dot(color, f32x3(0.299, 0.587, 0.114));
 }
 
+public func rgb_to_ycocg(f32x3 rgb) -> f32x3 {
+    return f32x3(
+        0.25 * rgb.r + 0.5 * rgb.g + 0.25 * rgb.b,
+        0.5 * rgb.r - 0.5 * rgb.b,
+        -0.25 * rgb.r + 0.5 * rgb.g - 0.25 * rgb.b
+    );
+}
+
+public func ycocg_to_rgb(f32x3 ycocg) -> f32x3 {
+    return f32x3(
+        ycocg.x + ycocg.y - ycocg.z,
+        ycocg.x + ycocg.z,
+        ycocg.x - ycocg.y - ycocg.z
+    );
+}
+
 }

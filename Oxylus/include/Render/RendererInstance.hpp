@@ -324,6 +324,7 @@ struct FrameShape {
   bool has_eye_adaptation = false;
   bool has_ddgi = false;
   bool has_sssr = false;
+  bool has_rtgi = false;
   bool has_tlas = false;
   bool has_debug_renderer = false;
   bool use_mesh_shaders = false;
@@ -656,6 +657,9 @@ struct DebugContext {
   vir::ValueID sssr_confidence_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_variance_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_sample_count_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID rtgi_half_res_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_half_res_normal_roughness_attachment = vir::ValueID::Invalid;
 };
 
 // Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
@@ -720,6 +724,23 @@ struct SSSRContext {
   vir::ValueID intersection_radiance = vir::ValueID::Invalid;
   vir::ValueID confidence = vir::ValueID::Invalid;
   vir::ValueID specular_occlusion = vir::ValueID::Invalid;
+};
+
+struct RTGIContext {
+  constexpr static auto HISTORY_REST = vir::Access::ComputeSampled;
+
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID albedo_attachment = vir::ValueID::Invalid;
+  vir::ValueID normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID metallic_roughness_occlusion_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID half_res_depth = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_depth = vir::ValueID::Invalid;
+  vir::ValueID half_res_face_normal = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_face_normal = vir::ValueID::Invalid;
+  vir::ValueID half_res_normal_roughness = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_normal_roughness = vir::ValueID::Invalid;
+  vir::ValueID half_res_albedo_metalness = vir::ValueID::Invalid;
 };
 
 struct PostProcessContext {
@@ -892,6 +913,17 @@ struct SSSRVariables {
   vir::ValueID average_radiance = vir::ValueID::Invalid;
 };
 
+struct RTGIVariables {
+  vir::ValueID is_reset = vir::ValueID::Invalid;
+  vir::ValueID half_res_depth = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_depth = vir::ValueID::Invalid;
+  vir::ValueID half_res_face_normal = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_face_normal = vir::ValueID::Invalid;
+  vir::ValueID half_res_normal_roughness = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_normal_roughness = vir::ValueID::Invalid;
+  vir::ValueID settings = vir::ValueID::Invalid;
+};
+
 struct PostProcessVariables {
   vir::ValueID histogram_generate_push = vir::ValueID::Invalid;
   vir::ValueID histogram_average_push = vir::ValueID::Invalid;
@@ -1000,6 +1032,7 @@ struct PreparedFrame {
   DDGIVariables ddgi = {};
   FSR3Variables fsr3 = {};
   SSSRVariables sssr = {};
+  RTGIVariables rtgi = {};
   PostProcessVariables post_process = {};
   ParticleVariables particle = {};
   DebugVariables debug = {};
@@ -1034,6 +1067,10 @@ struct FrameParams {
   // sssr
   bool sssr_reset = false;
   bool sssr_history_ping = false;
+
+  // rtgi
+  bool rtgi_reset = false;
+  bool rtgi_history_ping = false;
 
   // ddgi
   u32 ddgi_total_probe_count = 0;
@@ -1180,6 +1217,8 @@ public:
     -> void;
   auto bind_sssr_variables(this const RendererInstance& self, vir::Program& program, const SSSRVariables& variables)
     -> void;
+  auto bind_rtgi_variables(this const RendererInstance& self, vir::Program& program, const RTGIVariables& variables)
+    -> void;
   auto bind_fsr3_variables(this const RendererInstance& self, vir::Program& program, const FSR3Variables& variables)
     -> void;
   auto bind_eye_adaptation_variables(
@@ -1283,6 +1322,15 @@ public:
     vir::ValueID depth,
     vir::ValueID hierarchy
   ) -> std::pair<vir::ValueID, vir::ValueID>;
+
+  auto allocate_rtgi_resources(this RendererInstance& self, glm::uvec2 render_size) -> void;
+  auto record_rtgi(
+    this RendererInstance& self,
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    RTGIContext& context
+  ) -> void;
 
   auto allocate_fsr3_resources(this RendererInstance& self, glm::uvec2 render_size, glm::uvec2 display_size) -> void;
   auto apply_fsr3(this RendererInstance& self, vir::Module& module, FrameRecording& recording, FSR3Context& context)
@@ -1473,6 +1521,13 @@ private:
   std::array<Texture, 2> sssr_roughness{};
   std::array<Texture, 2> sssr_normal{};
   Texture sssr_average_radiance{};
+
+  glm::uvec2 rtgi_render_size = {};
+  bool rtgi_history_valid = false;
+  bool rtgi_history_ping = false;
+  std::array<Texture, 2> rtgi_half_res_depth{};
+  std::array<Texture, 2> rtgi_half_res_face_normal{};
+  std::array<Texture, 2> rtgi_half_res_normal_roughness{};
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};

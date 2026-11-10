@@ -98,10 +98,6 @@ public func sssr_is_mirror_reflection(f32 alpha) -> bool {
 }
 
 // geometry is rasterized with the jitter added to clip xy, so a raster pixel really sits at uv - jitter / resolution
-public func sssr_screen_to_view(in Camera camera, f32x2 uv, f32 z) -> f32x3 {
-    let unjittered_uv = uv - camera.temporalaa_jitter / camera.resolution;
-    return sssr_inv_project_position(f32x3(unjittered_uv, z), camera.inv_projection);
-}
 
 // http://jcgt.org/published/0007/04/01/paper.pdf by Eric Heitz
 // Input Ve: view direction
@@ -356,8 +352,8 @@ public func sssr_validate_hit(
         return 0.0;
     }
 
-    let view_space_surface = sssr_screen_to_view(camera, hit.xy, surface_z);
-    let view_space_hit = sssr_screen_to_view(camera, hit.xy, hit.z);
+    let view_space_surface = camera.view_position(hit.xy, surface_z);
+    let view_space_hit = camera.view_position(hit.xy, hit.z);
     let distance = length(view_space_surface - view_space_hit);
 
     // Fade out hits near the screen borders
@@ -412,7 +408,7 @@ public func sssr_dnsr_linear_depth(in Camera camera, f32x2 uv, f32 depth) -> f32
         return 1.0e6;
     }
 
-    return abs(sssr_inv_project_position(f32x3(uv, depth), camera.inv_projection).z);
+    return camera.linear_depth(depth);
 }
 
 public func sssr_dnsr_luminance(f32x3 color) -> f32 {

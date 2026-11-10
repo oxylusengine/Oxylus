@@ -55,6 +55,13 @@ static auto is_sssr_debug_view(GPU::DebugView debug_view) -> bool {
   }
 }
 
+static auto is_rtgi_debug_view(GPU::DebugView debug_view) -> bool {
+  switch (debug_view) {
+    case GPU::DebugView::RTGIHalfRes: return true;
+    default                         : return false;
+  }
+}
+
 static auto to_lut_size(const vir::Extent3D& extent) -> glm::ivec3 {
   return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
 }
@@ -492,6 +499,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_eye_adaptation,
     shape.has_ddgi,
     shape.has_sssr,
+    shape.has_rtgi,
     shape.has_tlas,
     shape.has_debug_renderer,
     shape.use_mesh_shaders,
@@ -974,6 +982,12 @@ auto RendererInstance::render(
   } else {
     self.sssr_history_valid = false;
   }
+  if (shape.has_rtgi && ticket) {
+    self.rtgi_history_ping = !self.rtgi_history_ping;
+    self.rtgi_history_valid = true;
+  } else {
+    self.rtgi_history_valid = false;
+  }
   if (self.frame_params.is_upscaling) {
     if (ticket) {
       self.fsr3_history_ping = !self.fsr3_history_ping;
@@ -1000,12 +1014,15 @@ auto RendererInstance::frame_shape(
   const auto is_upscaling = upscaler != UpscalerBackend::None;
   const auto debug_view = static_cast<GPU::DebugView>(cvar.cvar_debug_view.get());
   const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
-                            (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool());
+                            (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool()) &&
+                            (!is_rtgi_debug_view(debug_view) || cvar.cvar_rtgi_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
   const auto has_rtao = cvar.cvar_rtao_enable.as_bool() && has_tlas;
-  const auto has_ddgi = !self.probe_volumes.empty() && has_tlas && render_context.use_ray_tracing_pipeline();
+  const auto is_tracing = has_tlas && render_context.use_ray_tracing_pipeline();
+  const auto has_ddgi = !self.probe_volumes.empty() && is_tracing;
+  const auto has_rtgi = cvar.cvar_rtgi_enable.as_bool() && is_tracing;
 
   if (cvar.cvar_bloom_enable.as_bool()) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasBloom;
@@ -1035,6 +1052,9 @@ auto RendererInstance::frame_shape(
   }
   if (cvar.cvar_sssr_enable.as_bool()) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasSSSR;
+  }
+  if (has_rtgi) {
+    self.gpu_scene_flags |= GPU::SceneFlags::HasRTGI;
   }
 
   if (is_upscaling) {
@@ -1074,6 +1094,7 @@ auto RendererInstance::frame_shape(
     .has_eye_adaptation = static_cast<bool>(flags & GPU::SceneFlags::HasEyeAdaptation),
     .has_ddgi = has_ddgi,
     .has_sssr = static_cast<bool>(flags & GPU::SceneFlags::HasSSSR),
+    .has_rtgi = static_cast<bool>(flags & GPU::SceneFlags::HasRTGI),
     .has_tlas = has_tlas,
     .has_debug_renderer = cvar.cvar_enable_debug_renderer.as_bool(),
     .use_mesh_shaders = self.frame_data.use_mesh_shaders,
@@ -1174,6 +1195,13 @@ auto RendererInstance::prepare_frame_params(
     self.allocate_sssr_resources(shape.render_size);
     params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
     params.sssr_history_ping = self.sssr_history_ping;
+  }
+
+  params.rtgi_reset = false;
+  if (shape.has_rtgi) {
+    self.allocate_rtgi_resources(shape.render_size);
+    params.rtgi_reset = !self.rtgi_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.rtgi_history_ping = self.rtgi_history_ping;
   }
 
   params.is_terrain_brush_active = false;
@@ -1442,6 +1470,7 @@ auto RendererInstance::bind_frame(
   self.bind_ddgi_variables(program, prepared.ddgi);
   self.bind_fsr3_variables(program, prepared.fsr3);
   self.bind_sssr_variables(program, prepared.sssr);
+  self.bind_rtgi_variables(program, prepared.rtgi);
   self.bind_eye_adaptation_variables(program, prepared.post_process);
   self.bind_bloom_variables(program, prepared.post_process);
   self.bind_tonemap_variables(program, prepared.post_process);
@@ -1503,8 +1532,9 @@ auto RendererInstance::bind_frame(
 }
 
 auto RendererInstance::tlas_has_consumer(this const RendererInstance& self, const RendererCVar& cvar) -> bool {
-  return cvar.cvar_rtao_enable.as_bool() ||
-         (!self.probe_volumes.empty() && self.renderer.render_context->use_ray_tracing_pipeline());
+  const auto is_pipeline = self.renderer.render_context->use_ray_tracing_pipeline();
+  return cvar.cvar_rtao_enable.as_bool() || (cvar.cvar_rtgi_enable.as_bool() && is_pipeline) ||
+         (!self.probe_volumes.empty() && is_pipeline);
 }
 
 auto RendererInstance::tlas_handle(this const RendererInstance& self) -> VkAccelerationStructureKHR {
@@ -2212,6 +2242,20 @@ auto RendererInstance::record_frame(
     }
   }
 
+  // --- RTGI ---
+  auto rtgi_context = RTGIContext{};
+  if (shape.has_rtgi) {
+    rtgi_context.depth_attachment = depth_attachment;
+    rtgi_context.albedo_attachment = albedo_attachment;
+    rtgi_context.normal_attachment = normal_attachment;
+    rtgi_context.metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment;
+    self.record_rtgi(module, render_context, recording, rtgi_context);
+    depth_attachment = rtgi_context.depth_attachment;
+    albedo_attachment = rtgi_context.albedo_attachment;
+    normal_attachment = rtgi_context.normal_attachment;
+    metallic_roughness_occlusion_attachment = rtgi_context.metallic_roughness_occlusion_attachment;
+  }
+
   // --- lighting ---
   auto pbr_context = PBRContext{
     .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
@@ -2564,12 +2608,16 @@ auto RendererInstance::record_frame(
       .sssr_confidence_attachment = sssr_context.confidence,
       .sssr_variance_attachment = sssr_context.variance,
       .sssr_sample_count_attachment = sssr_context.sample_count,
+      .rtgi_half_res_depth_attachment = rtgi_context.half_res_depth,
+      .rtgi_half_res_normal_roughness_attachment = rtgi_context.half_res_normal_roughness,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
     sssr_context.radiance = debug_context.sssr_reflection_attachment;
     sssr_context.confidence = debug_context.sssr_confidence_attachment;
     sssr_context.variance = debug_context.sssr_variance_attachment;
     sssr_context.sample_count = debug_context.sssr_sample_count_attachment;
+    rtgi_context.half_res_depth = debug_context.rtgi_half_res_depth_attachment;
+    rtgi_context.half_res_normal_roughness = debug_context.rtgi_half_res_normal_roughness_attachment;
     vsm_virtual_page_table_attachment = debug_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = debug_context.vsm_pointspot_page_table_attachment;
     if (module.resource_root(dst_attachment) == render_target_root) {
@@ -2654,6 +2702,18 @@ auto RendererInstance::record_frame(
       module.export_to(history, SSSRContext::HISTORY_REST);
     }
     module.export_to(sssr_context.blue_noise_tables, vir::Access::MemoryRead);
+  }
+
+  if (shape.has_rtgi) {
+    for (const auto history :
+         {rtgi_context.half_res_depth,
+          rtgi_context.previous_half_res_depth,
+          rtgi_context.half_res_face_normal,
+          rtgi_context.previous_half_res_face_normal,
+          rtgi_context.half_res_normal_roughness,
+          rtgi_context.previous_half_res_normal_roughness}) {
+      module.export_to(history, RTGIContext::HISTORY_REST);
+    }
   }
 
   if (shape.has_tlas) {

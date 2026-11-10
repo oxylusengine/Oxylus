@@ -42,22 +42,6 @@ public func fsr3_get_4k_velocity(f32x2 motion_vector) -> f32 {
     return length(motion_vector * f32x2(3840.0, 2160.0));
 }
 
-public func fsr3_ycocg_to_rgb(f32x3 ycocg) -> f32x3 {
-    return f32x3(
-        ycocg.x + ycocg.y - ycocg.z,
-        ycocg.x + ycocg.z,
-        ycocg.x - ycocg.y - ycocg.z
-    );
-}
-
-public func fsr3_rgb_to_ycocg(f32x3 rgb) -> f32x3 {
-    return f32x3(
-        0.25 * rgb.r + 0.5 * rgb.g + 0.25 * rgb.b,
-        0.5 * rgb.r - 0.5 * rgb.b,
-        -0.25 * rgb.r + 0.5 * rgb.g - 0.25 * rgb.b
-    );
-}
-
 public func fsr3_rgb_to_luma(f32x3 linear_rgb) -> f32 {
     return dot(linear_rgb, f32x3(0.2126, 0.7152, 0.0722));
 }
@@ -143,19 +127,18 @@ public struct BilinearSamplingData {
 public func fsr3_get_bilinear_sampling_data(f32x2 uv, i32x2 size) -> BilinearSamplingData {
     BilinearSamplingData data;
 
-    let px_sample = (uv * size) - f32x2(0.5);
-    data.base_pos = i32x2(floor(px_sample));
-    let px_frac = frac(px_sample);
+    let filter = com::bilinear_filter(uv, f32x2(size));
+    let weights = com::bilinear_weights(filter);
+    data.base_pos = i32x2(filter.origin);
 
     data.offsets[0] = i32x2(0, 0);
     data.offsets[1] = i32x2(1, 0);
     data.offsets[2] = i32x2(0, 1);
     data.offsets[3] = i32x2(1, 1);
 
-    data.weights[0] = (1.0 - px_frac.x) * (1.0 - px_frac.y);
-    data.weights[1] = (px_frac.x) * (1.0 - px_frac.y);
-    data.weights[2] = (1.0 - px_frac.x) * (px_frac.y);
-    data.weights[3] = (px_frac.x) * (px_frac.y);
+    for (u32 i = 0u; i < 4u; i++) {
+        data.weights[i] = weights[i];
+    }
 
     return data;
 }

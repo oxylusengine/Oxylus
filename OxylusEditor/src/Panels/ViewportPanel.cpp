@@ -1117,7 +1117,8 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "SSSR Reflection",
         "SSSR Confidence",
         "SSSR Variance",
-        "SSSR Sample Count"
+        "SSSR Sample Count",
+        "RTGI Half Resolution"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
     }
@@ -1349,6 +1350,28 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
       ui.drag("Ray Count", cvar_sys.cvar_rtao_ray_count, 1, 32);
       ui.drag("Radius", cvar_sys.cvar_rtao_radius, 0.05f, 20.0f);
       ui.drag("Power", cvar_sys.cvar_rtao_power, 0.0f, 10.0f);
+    }
+  );
+
+  ui.section(
+    {.name = "RT GI",
+     .toggle = &cvar_sys.cvar_rtgi_enable,
+     .toggle_tooltip = "Ray traced diffuse global illumination",
+     .locked_reason = ray_tracing_reason,
+     .unsupported = ray_tracing_reason != nullptr,
+     .tag = "Experimental",
+     .tag_tooltip = "Testing only, not ready for regular use"},
+    [&] {
+      ui.drag("Max Temporal Samples", cvar_sys.cvar_rtgi_max_temporal_samples, 1, 1024);
+      ui.drag("Fast Convergence Samples", cvar_sys.cvar_rtgi_fast_convergence_samples, 0.0f, 256.0f);
+      ui.drag("Fast History Frames", cvar_sys.cvar_rtgi_temporal_fast_history_frames, 1, 15);
+      ui.drag("Post Blur Max Width", cvar_sys.cvar_rtgi_post_blur_max_width, 1, 16);
+      ui.drag("Ray Percentage", cvar_sys.cvar_rtgi_ray_percentage, 0.05f, 4.0f);
+      ui.drag("Min Ray Budget", cvar_sys.cvar_rtgi_min_ray_budget, 0.0f, 1.0f);
+      ui.drag("Max Rays Per Pixel", cvar_sys.cvar_rtgi_max_rays_per_pixel, 1, 12);
+      ui.checkbox("Firefly Filter", cvar_sys.cvar_rtgi_firefly_filter);
+      ui.drag("Firefly Tolerance", cvar_sys.cvar_rtgi_firefly_tolerance, 0.0f, 16.0f);
+      ui.drag("Pre Blur Width", cvar_sys.cvar_rtgi_pre_blur_width, 1.0f, 64.0f);
     }
   );
 

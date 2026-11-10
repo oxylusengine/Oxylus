@@ -24,7 +24,7 @@ public func fsr3_reproject_history_color<L : ITexelLoader>(
     data.history_color = reprojected_history.rgb;
     data.history_color *= delta_pre_exposure;
     data.history_color *= exposure;
-    data.history_color = fsr3_rgb_to_ycocg(data.history_color);
+    data.history_color = com::rgb_to_ycocg(data.history_color);
 
     data.lock = reprojected_history.w;
 }

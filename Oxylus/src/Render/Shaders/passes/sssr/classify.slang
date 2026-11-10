@@ -153,7 +153,7 @@ func cs_main(u32x3 group_id : SV_GroupID, uniform SSSRSettings settings) -> void
     f32x4 intersection_output = f32x4(0.0);
     if (is_reflective_surface) {
         let uv = (f32x2(dispatch_thread_id) + 0.5) / f32x2(settings.render_size);
-        let view_space_ray = sssr_screen_to_view(camera, uv, depth);
+        let view_space_ray = camera.view_position(uv, depth);
         let view_space_ray_direction = normalize(view_space_ray);
         let view_direction = normalize(mul(camera.inv_view, f32x4(-view_space_ray, 0.0)).xyz);
         let NoV = abs(dot(world_space_normal, view_direction)) + 1e-5;

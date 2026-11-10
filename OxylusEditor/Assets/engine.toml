@@ -360,6 +360,16 @@ path = "passes/sssr/debug.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "rtgi_gbuffer"
+path = "passes/rtgi_gbuffer.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_debug"
+path = "passes/rtgi_debug.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "histogram_generate"
 path = "passes/histogram_generate.slang"
 entry_points = ["cs_main"]

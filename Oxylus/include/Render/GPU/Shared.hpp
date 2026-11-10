@@ -130,6 +130,7 @@ enum class DebugView : i32 {
   SSSRConfidence,
   SSSRVariance,
   SSSRSampleCount,
+  RTGIHalfRes,
 
   Count,
 };
@@ -408,6 +409,56 @@ struct ProbeVolume {
   u32 is_conservative_distance = 1;
 };
 
+// --- RTGI ---
+
+OX_CONST f32 RTGI_RADIANCE_SCALE = 1.0f;
+OX_CONST u32 RTGI_RAY_LIST_CAPACITY_MUL = 4;
+OX_CONST f32 RTGI_RAY_MISS_T = 1000000000000.0f;
+OX_CONST u32 RTGI_PIONEER_GRID_DIV = 4;
+
+struct RTGIRayEntry {
+  u32 packed_xy = 0;
+  u32 sample_index = 0;
+};
+
+struct RTGIRayResult {
+  f32x3 radiance = {};
+  f32 t = 0.0f;
+  u32 packed_dir = 0;
+};
+
+struct RTGIRayCounters {
+  u32 ray_list_count = 0;
+  u32 total_geo_rays = 0;
+  u32 total_extra_rays = 0;
+};
+
+struct RTGISettings {
+  u32x2 half_size = {};
+  f32 max_temporal_samples = 64.0f;
+  f32 fast_convergence_samples = 32.0f;
+  u32 temporal_fast_history_frames = 4;
+  f32 temporal_firefly_std_dev_clamp = 3.5f;
+  f32 temporal_variance_fast_history_blend = 4.0f;
+  f32 temporal_parallax_penalty_strength = 1.0f;
+  u32 post_blur_max_width = 16;
+  u32 post_blur_stride = 2;
+  f32 post_blur_ao_guide_floor = 0.2f;
+  f32 post_blur_perceptual_radiance_guide_tolerance = 0.5f;
+  f32 max_visibility_pixel_range = 20.0f;
+  u32 is_eye_adapted = 0;
+  f32 fixed_exposure = 1.0f;
+  f32 ray_percentage = 1.0f;
+  f32 min_ray_budget = 0.125f;
+  u32 max_rays_per_pixel = 12;
+  u32 frame_index = 0;
+  u32 firefly_filter_enabled = 1;
+  f32 firefly_perceptual_tolerance = 4.0f;
+  u32 firefly_clamp_mode = 0;
+  u32 pre_blur_iterations = 1;
+  f32 pre_blur_base_width = 20.0f;
+};
+
 // --- Post processing ---
 
 enum class SceneFlags : u32 {
@@ -432,6 +483,7 @@ enum class SceneFlags : u32 {
   HasTemporalUpscaler = 1 << 17,
   HasSSSR = 1 << 18,
   HasColorGrading = 1 << 19,
+  HasRTGI = 1 << 20,
 };
 OX_BITMASK(SceneFlags)
 

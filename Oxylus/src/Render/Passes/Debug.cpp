@@ -93,6 +93,34 @@ auto RendererInstance::apply_debug_view(
 
       return dst;
     }
+    case GPU::DebugView::RTGIHalfRes: {
+      if (!shape.has_rtgi) {
+        return dst;
+      }
+
+      std::tie(
+        dst,
+        context.rtgi_half_res_depth_attachment,
+        context.rtgi_half_res_normal_roughness_attachment
+      ) = std::tuple_cat( //
+        module
+          .begin_rendering(
+            {{dst, vir::Access::ColorWrite},
+             {context.rtgi_half_res_depth_attachment, vir::Access::FragmentSampled},
+             {context.rtgi_half_res_normal_roughness_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("rtgi debug pass")
+          .bind_graphics_pipeline(render_context.pipeline("rtgi_debug"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_image(0, 0, context.rtgi_half_res_depth_attachment)
+          .bind_image(0, 1, context.rtgi_half_res_normal_roughness_attachment)
+          .draw(3, 1)
+          .end_rendering()
+      );
+
+      return dst;
+    }
     default: break;
   }
 

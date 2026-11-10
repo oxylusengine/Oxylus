@@ -145,7 +145,7 @@ func get_surface_reprojection(f32x2 uv, f32x2 velocity) -> f32x2 {
 
 func get_hit_position_reprojection(i32x2 dispatch_thread_id, f32x2 uv, f32 reflected_ray_length) -> f32x2 {
     let z = load_depth(dispatch_thread_id);
-    var view_space_ray = sssr_screen_to_view(camera, uv, z);
+    var view_space_ray = camera.view_position(uv, z);
 
     let surface_depth = length(view_space_ray);
     let ray_length = surface_depth + reflected_ray_length;

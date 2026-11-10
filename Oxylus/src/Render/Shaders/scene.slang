@@ -211,6 +211,39 @@ public extension Camera {
     let world_pos_h = mul(this.inv_projection_view, ndc);
     return world_pos_h.xyz / world_pos_h.w;
   }
+
+  public func linear_depth(f32 depth) -> f32 {
+    let view = mul(this.inv_projection, f32x4(0.0, 0.0, depth, 1.0));
+    return abs(view.z / view.w);
+  }
+
+  // the raster pixel sits at uv - jitter / resolution
+  public func view_position(f32x2 uv, f32 depth) -> f32x3 {
+    let unjittered_uv = uv - this.temporalaa_jitter / this.resolution;
+    let view = mul(this.inv_projection, f32x4(2.0 * unjittered_uv - 1.0, depth, 1.0));
+    return view.xyz / view.w;
+  }
+
+  public func view_position_from_linear_depth(f32x2 uv, f32 linear_depth) -> f32x3 {
+    let on_near_plane = this.view_position(uv, 1.0);
+    return on_near_plane * (linear_depth / abs(on_near_plane.z));
+  }
+
+  public func world_position_from_linear_depth(f32x2 uv, f32 linear_depth) -> f32x3 {
+    return mul(this.inv_view, f32x4(this.view_position_from_linear_depth(uv, linear_depth), 1.0)).xyz;
+  }
+
+  public func previous_world_position_from_linear_depth(f32x2 uv, f32 linear_depth) -> f32x3 {
+    let unjittered_uv = uv - this.temporalaa_jitter_prev / this.resolution;
+    let on_near_plane_h = mul(this.previous_inv_projection, f32x4(2.0 * unjittered_uv - 1.0, 1.0, 1.0));
+    let on_near_plane = on_near_plane_h.xyz / on_near_plane_h.w;
+    let view_position = on_near_plane * (linear_depth / abs(on_near_plane.z));
+    return mul(this.previous_inv_view, f32x4(view_position, 1.0)).xyz;
+  }
+
+  public func previous_position() -> f32x3 {
+    return mul(this.previous_inv_view, f32x4(0.0, 0.0, 0.0, 1.0)).xyz;
+  }
 };
 
 public extension CullCamera {

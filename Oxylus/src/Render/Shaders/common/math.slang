@@ -219,4 +219,60 @@ public func quantize_half(f32 v) -> u16 {
 public func remap(float val, float start1, float end1, float start2, float end2) -> float {
   return (val - start1) / (end1 - start1) * (end2 - start2) + start2;
 }
+
+public func square(f32 x) -> f32 {
+    return x * x;
+}
+
+public func gaussian_weight(f32 r) -> f32 {
+    return exp(-0.66 * square(r * 2.71828182846 * 0.5));
+}
+
+public func plane_distance(f32x3 position, f32x3 normal, f32x3 other_position) -> f32 {
+    return dot(position - other_position, normal);
+}
+
+public struct BilinearFilter {
+    public f32x2 origin;
+    public f32x2 weights;
+};
+
+public func bilinear_filter(f32x2 uv, f32x2 size) -> BilinearFilter {
+    BilinearFilter result;
+    result.origin = floor(uv * size - 0.5);
+    result.weights = frac(uv * size - 0.5);
+    return result;
+}
+
+public func bilinear_weights(BilinearFilter filter) -> f32x4 {
+    return f32x4(
+        (1.0 - filter.weights.x) * (1.0 - filter.weights.y),
+        filter.weights.x * (1.0 - filter.weights.y),
+        (1.0 - filter.weights.x) * filter.weights.y,
+        filter.weights.x * filter.weights.y
+    );
+}
+
+public func apply_bilinear_weights(f32 s00, f32 s10, f32 s01, f32 s11, f32x4 w) -> f32 {
+    return (s00 * w.x + s10 * w.y + s01 * w.z + s11 * w.w) / dot(w, f32x4(1.0));
+}
+
+public func apply_bilinear_weights(f32x2 s00, f32x2 s10, f32x2 s01, f32x2 s11, f32x4 w) -> f32x2 {
+    return (s00 * w.x + s10 * w.y + s01 * w.z + s11 * w.w) / dot(w, f32x4(1.0));
+}
+
+public func apply_bilinear_weights(f32x4 s00, f32x4 s10, f32x4 s01, f32x4 s11, f32x4 w) -> f32x4 {
+    return (s00 * w.x + s10 * w.y + s01 * w.z + s11 * w.w) / dot(w, f32x4(1.0));
+}
+
+func bayer_m2(u32 a, u32 b) -> u32 {
+    return 2u * ((a ^ b) & 1u) + (a & 1u);
+}
+
+// 8x8 ordered dither rank in [0, 63], the finest level in the high bits so low thresholds still spread out
+public func bayer_8x8(u32x2 pixel) -> u32 {
+    return 16u * bayer_m2(pixel.x, pixel.y)
+        + 4u * bayer_m2(pixel.x >> 1u, pixel.y >> 1u)
+        + bayer_m2(pixel.x >> 2u, pixel.y >> 2u);
+}
 }

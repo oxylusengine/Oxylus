@@ -82,7 +82,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, SSSR_ATMOSPHERE_PARAMETER un
     let z = depth_hierarchy.Load(i32x3(i32x2(uv * mip_resolution), most_detailed_mip));
 
     let screen_uv_space_ray_origin = f32x3(uv, z);
-    let view_space_ray = sssr_screen_to_view(camera, uv, z);
+    let view_space_ray = camera.view_position(uv, z);
     let view_space_ray_direction = normalize(view_space_ray);
 
     let view_space_surface_normal = mul(camera.view, f32x4(world_space_normal, 0.0)).xyz;
@@ -118,7 +118,7 @@ func cs_main(u32x3 thread_id : SV_DispatchThreadID, SSSR_ATMOSPHERE_PARAMETER un
     );
 
     // the hit stays in view space, where the precision is
-    let view_space_hit = sssr_screen_to_view(camera, hit.xy, hit.z);
+    let view_space_hit = camera.view_position(hit.xy, hit.z);
     let world_space_ray = mul(camera.inv_view, f32x4(view_space_hit - view_space_ray, 0.0)).xyz;
 
     // a reflected ray's vanishing point is usually off screen, so a ray through open sky leaves the frame rather than

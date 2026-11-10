@@ -21,7 +21,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "0: None, 1: Triangles, 2: Meshlets, 3: Overdraw, 4: Materials, 5: Mesh Instances, 6: Mesh LoDs, 7: Albedo Color, "
     "8: Normal Color, 9: Emissive Color, 10: Metallic Color, 11: Roughness Color, 12: Baked Ambient Occlusion, 13: "
     "Screen Space Ambient Occlusion, 14: Geometric Normal, 15: Virtual Shadowmaps, 16: Virtual Shadowmaps "
-    "(Point/Spot), 17: DDGI Probes",
+    "(Point/Spot), 17: DDGI Probes, 18: SSSR Reflection, 19: SSSR Confidence, 20: SSSR Variance, 21: SSSR Sample "
+    "Count, 22: RTGI Half Resolution",
     0
   );
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
@@ -87,6 +88,31 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "sssr.variance_threshold", "variance above which a pixel gets an extra ray", 0.0f);
   self.cvar_sssr_temporal_stability
     .init(self.system, "sssr.temporal_stability", "how strongly the temporal pass favours history", 0.7f);
+  self.cvar_rtgi_enable.init(self.system, "rr.rtgi", "ray traced diffuse global illumination", 0);
+  self.cvar_rtgi_max_temporal_samples
+    .init(self.system, "rr.rtgi_max_temporal_samples", "rtgi temporal history length in samples", 64);
+  self.cvar_rtgi_fast_convergence_samples.init(
+    self.system,
+    "rr.rtgi_fast_convergence_samples",
+    "rtgi history length below which a pixel still counts as converging",
+    32.0f
+  );
+  self.cvar_rtgi_temporal_fast_history_frames
+    .init(self.system, "rr.rtgi_temporal_fast_history_frames", "rtgi fast history window in frames", 4);
+  self.cvar_rtgi_post_blur_max_width
+    .init(self.system, "rr.rtgi_post_blur_max_width", "rtgi post blur maximum half width in half res pixels", 16);
+  self.cvar_rtgi_ray_percentage
+    .init(self.system, "rr.rtgi_ray_percentage", "rtgi hard ray budget in rays per half res pixel", 1.0f);
+  self.cvar_rtgi_min_ray_budget
+    .init(self.system, "rr.rtgi_min_ray_budget", "rtgi fraction of half res pixels that always get a base ray", 0.125f);
+  self.cvar_rtgi_max_rays_per_pixel
+    .init(self.system, "rr.rtgi_max_rays_per_pixel", "rtgi most rays one half res pixel may request per frame", 12);
+  self.cvar_rtgi_firefly_filter
+    .init(self.system, "rr.rtgi_firefly_filter", "clamp rtgi rays that are far brighter than their neighbourhood", 1);
+  self.cvar_rtgi_firefly_tolerance
+    .init(self.system, "rr.rtgi_firefly_tolerance", "rtgi firefly ceiling headroom above the neighbourhood mean", 4.0f);
+  self.cvar_rtgi_pre_blur_width
+    .init(self.system, "rr.rtgi_pre_blur_width", "rtgi pre blur radius in half res pixels", 20.0f);
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
   self.cvar_ddgi_rays_per_probe
@@ -248,6 +274,20 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["temporal_stability"] = self.cvar_sssr_temporal_stability.get();
   writer.end_obj();
 
+  writer["rtgi"].begin_obj();
+  writer["enabled"] = self.cvar_rtgi_enable.as_bool();
+  writer["max_temporal_samples"] = self.cvar_rtgi_max_temporal_samples.get();
+  writer["fast_convergence_samples"] = self.cvar_rtgi_fast_convergence_samples.get();
+  writer["temporal_fast_history_frames"] = self.cvar_rtgi_temporal_fast_history_frames.get();
+  writer["post_blur_max_width"] = self.cvar_rtgi_post_blur_max_width.get();
+  writer["ray_percentage"] = self.cvar_rtgi_ray_percentage.get();
+  writer["min_ray_budget"] = self.cvar_rtgi_min_ray_budget.get();
+  writer["max_rays_per_pixel"] = self.cvar_rtgi_max_rays_per_pixel.get();
+  writer["firefly_filter"] = self.cvar_rtgi_firefly_filter.as_bool();
+  writer["firefly_tolerance"] = self.cvar_rtgi_firefly_tolerance.get();
+  writer["pre_blur_width"] = self.cvar_rtgi_pre_blur_width.get();
+  writer.end_obj();
+
   writer["ddgi"].begin_obj();
   writer["enabled"] = self.cvar_ddgi_enable.as_bool();
   writer["rays_per_probe"] = self.cvar_ddgi_rays_per_probe.get();
@@ -367,6 +407,41 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_sssr_temporal_variance_guided.set(sssr_obj["temporal_variance_guided"].get_bool());
     self.cvar_sssr_variance_threshold.set(static_cast<f32>(sssr_obj["variance_threshold"].get_double()));
     self.cvar_sssr_temporal_stability.set(static_cast<f32>(sssr_obj["temporal_stability"].get_double()));
+  }
+
+  auto rtgi_obj = json["rtgi"];
+  if (!rtgi_obj.error()) {
+    self.cvar_rtgi_enable.set(rtgi_obj["enabled"].get_bool());
+    if (auto samples = rtgi_obj["max_temporal_samples"]; !samples.error()) {
+      self.cvar_rtgi_max_temporal_samples.set(static_cast<i32>(samples.get_int64()));
+    }
+    if (auto convergence = rtgi_obj["fast_convergence_samples"]; !convergence.error()) {
+      self.cvar_rtgi_fast_convergence_samples.set(static_cast<f32>(convergence.get_double()));
+    }
+    if (auto frames = rtgi_obj["temporal_fast_history_frames"]; !frames.error()) {
+      self.cvar_rtgi_temporal_fast_history_frames.set(static_cast<i32>(frames.get_int64()));
+    }
+    if (auto width = rtgi_obj["post_blur_max_width"]; !width.error()) {
+      self.cvar_rtgi_post_blur_max_width.set(static_cast<i32>(width.get_int64()));
+    }
+    if (auto percentage = rtgi_obj["ray_percentage"]; !percentage.error()) {
+      self.cvar_rtgi_ray_percentage.set(static_cast<f32>(percentage.get_double()));
+    }
+    if (auto budget = rtgi_obj["min_ray_budget"]; !budget.error()) {
+      self.cvar_rtgi_min_ray_budget.set(static_cast<f32>(budget.get_double()));
+    }
+    if (auto rays = rtgi_obj["max_rays_per_pixel"]; !rays.error()) {
+      self.cvar_rtgi_max_rays_per_pixel.set(static_cast<i32>(rays.get_int64()));
+    }
+    if (auto filter = rtgi_obj["firefly_filter"]; !filter.error()) {
+      self.cvar_rtgi_firefly_filter.set(filter.get_bool());
+    }
+    if (auto tolerance = rtgi_obj["firefly_tolerance"]; !tolerance.error()) {
+      self.cvar_rtgi_firefly_tolerance.set(static_cast<f32>(tolerance.get_double()));
+    }
+    if (auto width = rtgi_obj["pre_blur_width"]; !width.error()) {
+      self.cvar_rtgi_pre_blur_width.set(static_cast<f32>(width.get_double()));
+    }
   }
 
   auto ddgi_obj = json["ddgi"];

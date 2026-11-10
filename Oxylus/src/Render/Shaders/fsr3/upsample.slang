@@ -22,7 +22,7 @@ public func fsr3_compute_max_kernel_weight(f32x2 downscale_factor) -> f32 {
 
 public func fsr3_load_prepared_color<L : IColorLoader>(L loader, i32x2 sample_pos, f32 exposure) -> f32x3 {
     let rgb = max(f32x3(0.0), loader.load_color(sample_pos)) * exposure;
-    return fsr3_rgb_to_ycocg(rgb);
+    return com::rgb_to_ycocg(rgb);
 }
 
 // a sliced 2-lobe lanczos: only the slice covered by this frame's jitter is resolved here, the rest
@@ -75,7 +75,7 @@ public func fsr3_compute_upsampled_color_and_weight<L : IColorLoader>(
     if (is_initial_sample) {
         [ForceUnroll]
         for (i32 i = 0; i < 9; i++) {
-            samples[i] = fsr3_rgb_to_ycocg(fsr3_tonemap(fsr3_ycocg_to_rgb(samples[i])));
+            samples[i] = com::rgb_to_ycocg(fsr3_tonemap(com::ycocg_to_rgb(samples[i])));
         }
     }
 
@@ -135,7 +135,7 @@ public func fsr3_compute_upsampled_color_and_weight<L : IColorLoader>(
     }
 
     if (is_initial_sample) {
-        data.upsampled_color = fsr3_rgb_to_ycocg(fsr3_inverse_tonemap(fsr3_ycocg_to_rgb(data.clipping_box.box_center)));
+        data.upsampled_color = com::rgb_to_ycocg(fsr3_inverse_tonemap(com::ycocg_to_rgb(data.clipping_box.box_center)));
         data.upsampled_weight = 1.0;
         data.history_weight = 0.0;
     }

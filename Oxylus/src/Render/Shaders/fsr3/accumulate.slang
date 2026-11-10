@@ -7,12 +7,12 @@ public func fsr3_accumulate(in AccumulationPassCommonParams params, inout Accumu
     data.history_weight *= f32(data.history_weight > FSR3_FP16_MIN);
     data.history_weight = max(FSR3_EPSILON, data.history_weight + data.upsampled_weight);
 
-    data.upsampled_color = fsr3_rgb_to_ycocg(fsr3_tonemap(fsr3_ycocg_to_rgb(data.upsampled_color)));
-    data.history_color = fsr3_rgb_to_ycocg(fsr3_tonemap(fsr3_ycocg_to_rgb(data.history_color)));
+    data.upsampled_color = com::rgb_to_ycocg(fsr3_tonemap(com::ycocg_to_rgb(data.upsampled_color)));
+    data.history_color = com::rgb_to_ycocg(fsr3_tonemap(com::ycocg_to_rgb(data.history_color)));
 
     let alpha = saturate(data.upsampled_weight / data.history_weight);
     data.history_color = lerp(data.history_color, data.upsampled_color, alpha);
-    data.history_color = fsr3_ycocg_to_rgb(data.history_color);
+    data.history_color = com::ycocg_to_rgb(data.history_color);
     data.history_color = fsr3_inverse_tonemap(data.history_color);
 }
 
