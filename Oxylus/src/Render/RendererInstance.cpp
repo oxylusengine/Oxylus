@@ -1552,7 +1552,8 @@ auto RendererInstance::record_acceleration_structures(
     values.mesh_instances,
     values.transforms_world,
     values.blas_addresses,
-    values.skinned_blas_addresses
+    values.skinned_blas_addresses,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -1560,7 +1561,8 @@ auto RendererInstance::record_acceleration_structures(
          {values.mesh_instances, vir::Access::ComputeRead},
          {values.transforms_world, vir::Access::ComputeRead},
          {values.blas_addresses, vir::Access::ComputeRead},
-         {values.skinned_blas_addresses, vir::Access::ComputeRead}}
+         {values.skinned_blas_addresses, vir::Access::ComputeRead},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("tlas write instances")
       .bind_compute_pipeline(render_context.pipeline("tlas_write_instances"))
@@ -1569,6 +1571,7 @@ auto RendererInstance::record_acceleration_structures(
       .bind_buffer(0, 2, values.blas_addresses)
       .bind_buffer(0, 3, instances)
       .bind_buffer(0, 4, values.skinned_blas_addresses)
+      .bind_buffer(0, 5, values.materials)
       .push_constants_from(prepared.tlas_instance_counts)
       .dispatch_invocations(prepared.tlas_instance_count, 1, 1)
       .end_compute()

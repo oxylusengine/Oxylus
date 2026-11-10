@@ -7,6 +7,7 @@ import scene;
 [[vk::binding(2)]] StructuredBuffer<u64> blas_addresses;
 [[vk::binding(3)]] RWStructuredBuffer<AccelerationStructureInstance> instances;
 [[vk::binding(4)]] StructuredBuffer<u64> skinned_blas_addresses;
+[[vk::binding(5)]] StructuredBuffer<Material> materials;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -55,7 +56,10 @@ func cs_main(
     // of the TLAS rather than tracing against address zero
     let mask = blas_address != 0 ? mesh_instance.tlas_mask() : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
-    instance.sbt_offset_and_flags = 0;
+    let material_flags = materials[mesh_instance.material_index].flags;
+    let is_non_opaque = (material_flags & (MaterialFlag::AlphaMask | MaterialFlag::AlphaBlend)) != 0;
+    let instance_flags = is_non_opaque ? 0x8u : 0u;
+    instance.sbt_offset_and_flags = instance_flags << 24;
     instance.blas_address = blas_address;
 
     instances[index] = instance;
