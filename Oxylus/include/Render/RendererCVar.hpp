@@ -76,6 +76,12 @@ struct RendererCVar {
   AutoCVar_Float cvar_ddgi_hysteresis_dark_bias;
   AutoCVar_Float cvar_ddgi_intensity;
   AutoCVar_Float cvar_ddgi_probe_debug_radius;
+  AutoCVar_Float cvar_ddgi_visibility_floor;
+  AutoCVar_Float cvar_ddgi_visibility_power;
+  AutoCVar_Float cvar_ddgi_facing_bias;
+  AutoCVar_Int cvar_ddgi_conservative_distance;
+  AutoCVar_Float cvar_ddgi_ambient_fill;
+  AutoCVar_Int cvar_ddgi_apply_terms;
 
   AutoCVar_Int cvar_bloom_enable;
   AutoCVar_Float cvar_bloom_threshold;

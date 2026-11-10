@@ -212,13 +212,41 @@ public func sample_probe_irradiance(Image2D<f32x4> atlas, Sampler atlas_sampler,
     return atlas.SampleLevel(atlas_sampler, uv, 0.0).rgb;
 }
 
-public func sample_probe_distance(Image2D<f32x2> atlas, Sampler atlas_sampler, u32 probe_row, f32x3 direction)
-    -> f32x2 {
+public func sample_probe_distance(
+    Image2D<f32x2> atlas,
+    Sampler atlas_sampler,
+    u32 probe_row,
+    f32x3 direction,
+    u32 is_conservative
+) -> f32x2 {
     u32 width, height;
     atlas.GetDimensions(width, height);
 
     let uv = probe_atlas_uv(probe_row, direction, DDGI_DISTANCE_TEXELS, f32x2(width, height));
-    return atlas.SampleLevel(atlas_sampler, uv, 0.0).rg;
+    if (is_conservative == 0u) {
+        return atlas.SampleLevel(atlas_sampler, uv, 0.0).rg;
+    }
+
+    // the nearest footprint texel wins so a depth edge rejects instead of blending, the tile border holds the octahedral wrap
+    let tile_min = i32x2(probe_tile_origin(probe_row, DDGI_DISTANCE_TEXELS));
+    let tile_max = tile_min + i32(DDGI_DISTANCE_TEXELS) + 1;
+    let base = i32x2(floor(uv * f32x2(width, height) - 0.5));
+    var nearest = f32x2(0.0);
+    var nearest_mean = 3.0e38;
+    for (u32 i = 0u; i < 4u; i++) {
+        let texel = clamp(base + i32x2(i & 1u, i >> 1u), tile_min, tile_max);
+        let moments = atlas.Load(i32x3(texel, 0)).rg;
+        if (moments.x < nearest_mean) {
+            nearest_mean = moments.x;
+            nearest = moments;
+        }
+    }
+
+    return nearest;
+}
+
+func apply_visibility_power(f32 chebyshev, f32 power) -> f32 {
+    return power == 2.0 ? chebyshev * chebyshev : pow(chebyshev, power);
 }
 
 public func probe_radiance_tile_origin(u32 probe_row, u32 atlas_y_offset) -> u32x2 {
@@ -402,11 +430,11 @@ public func sample_probe_volume(
 
         let to_probe = normalize(probe_position - params.world_position);
         let facing = (dot(to_probe, params.normal) + 1.0) * 0.5;
-        var weight = facing * facing + 0.2;
+        var weight = facing * facing + volume.facing_bias;
 
         let bias_vector = biased_position - probe_position;
         let probe_distance = length(bias_vector);
-        let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector);
+        let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector, volume.is_conservative_distance);
         let mean = moments.x;
         var chebyshev = 1.0;
         if (probe_distance > mean) {
@@ -414,10 +442,10 @@ public func sample_probe_volume(
             let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
-            chebyshev = chebyshev * chebyshev;
+            chebyshev = apply_visibility_power(chebyshev, volume.visibility_power);
         }
 
-        weight *= max(chebyshev, 0.05);
+        weight *= max(chebyshev, volume.visibility_floor);
         weight = max(weight, 1e-6);
 
         const f32 crush_threshold = 0.05;
@@ -504,7 +532,7 @@ public func sample_probe_radiance_volume(
 
         let bias_vector = biased_position - probe_position;
         let probe_distance = length(bias_vector);
-        let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector);
+        let moments = sample_probe_distance(distance_atlas, atlas_sampler, probe_row, bias_vector, volume.is_conservative_distance);
         let mean = moments.x;
         var chebyshev = 1.0;
         if (probe_distance > mean) {
@@ -512,10 +540,10 @@ public func sample_probe_radiance_volume(
             let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
-            chebyshev = chebyshev * chebyshev;
+            chebyshev = apply_visibility_power(chebyshev, volume.visibility_power);
         }
 
-        weight *= max(chebyshev, 0.05);
+        weight *= max(chebyshev, volume.visibility_floor);
         weight *= trilinear_weight;
 
         let direction = params.world_position - probe_position;

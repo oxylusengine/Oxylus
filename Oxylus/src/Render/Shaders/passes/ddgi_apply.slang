@@ -27,7 +27,9 @@ func fs_main(
     uniform f32 normal_bias,
     uniform f32 view_bias,
     uniform f32 intensity,
-    uniform f32x3 ambient_color
+    uniform f32x3 ambient_color,
+    uniform f32 ambient_fill,
+    uniform u32 terms
 ) -> f32x4 {
     let pixel_pos = u32x3(u32x2(input.position.xy), 0);
     let depth = depth_image.Load(pixel_pos);
@@ -78,8 +80,8 @@ func fs_main(
         params
     );
 
-    let diffuse = lerp(ambient_color, sample.irradiance * intensity, sample.coverage);
-    let specular = lerp(ambient_color, sample.specular * intensity, sample.coverage);
+    let diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);
+    let specular = lerp(ambient_color * ambient_fill, sample.specular * intensity, sample.coverage);
 
     let NoV = abs(dot(N, V)) + 1e-5;
     let F0 = lerp(f32x3(0.04), albedo_color, metallic);
@@ -88,8 +90,8 @@ func fs_main(
     let kD = (1.0 - metallic) * (1.0 - kS);
     let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-    let indirect_diffuse = kD * diffuse * albedo_color * occlusion;
-    let indirect_specular = is_sssr ? f32x3(0.0) : kS * specular * spec_occlusion;
+    let indirect_diffuse = kD * diffuse * albedo_color * occlusion * ((terms & 1u) != 0 ? 1.0 : 0.0);
+    let indirect_specular = (is_sssr ? f32x3(0.0) : kS * specular * spec_occlusion) * ((terms & 2u) != 0 ? 1.0 : 0.0);
 
     return f32x4(indirect_diffuse + indirect_specular, 1.0);
 }

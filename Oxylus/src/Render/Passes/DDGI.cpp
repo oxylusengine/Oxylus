@@ -17,7 +17,7 @@ using DDGITraceTailPush = PushConstants<u32, u32, glm::vec3>;
 using DDGIRelocatePush = PushConstants<u32, u32, f32, u32, u32>;
 using DDGIIrradiancePush = PushConstants<u32, u32, u32, f32, f32, f32, f32>;
 using DDGIDistancePush = PushConstants<u32, u32, f32>;
-using DDGIApplyPush = PushConstants<u32, f32, f32, f32, glm::vec3>;
+using DDGIApplyPush = PushConstants<u32, f32, f32, f32, glm::vec3, f32, u32>;
 using DDGIDebugPush = PushConstants<u32, u32, f32>;
 
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -219,7 +219,9 @@ auto RendererInstance::bind_ddgi_variables(
         cvar.cvar_ddgi_normal_bias.get(),
         cvar.cvar_ddgi_view_bias.get(),
         cvar.cvar_ddgi_intensity.get(),
-        self.sky_data.ambient_color
+        self.sky_data.ambient_color,
+        std::clamp(cvar.cvar_ddgi_ambient_fill.get(), 0.0f, 1.0f),
+        static_cast<u32>(std::clamp(cvar.cvar_ddgi_apply_terms.get(), 0, 3))
       )
     );
   }

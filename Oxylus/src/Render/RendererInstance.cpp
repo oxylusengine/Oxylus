@@ -2894,6 +2894,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       .build()
       .each(
         [&self,
+         &cvar,
          camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
           if (!e.enabled()) {
             return;
@@ -2924,6 +2925,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                 .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
                 .center = center,
                 .max_probe_distance = glm::length(spacing) * 1.5f,
+                .visibility_floor = std::clamp(cvar.cvar_ddgi_visibility_floor.get(), 0.0f, 1.0f),
+                .visibility_power = std::clamp(cvar.cvar_ddgi_visibility_power.get(), 1.0f, 8.0f),
+                .facing_bias = std::clamp(cvar.cvar_ddgi_facing_bias.get(), 0.0f, 1.0f),
+                .is_conservative_distance = static_cast<u32>(cvar.cvar_ddgi_conservative_distance.as_bool()),
               }
             );
           }

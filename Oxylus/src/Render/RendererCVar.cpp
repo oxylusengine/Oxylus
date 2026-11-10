@@ -146,6 +146,22 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   );
   self.cvar_ddgi_probe_debug_radius
     .init(self.system, "rr.ddgi_probe_debug_radius", "world space radius of debug drawn probes", 0.1f);
+  self.cvar_ddgi_visibility_floor
+    .init(self.system, "rr.ddgi_visibility_floor", "lowest weight the probe visibility test can give a probe", 0.0f);
+  self.cvar_ddgi_visibility_power
+    .init(self.system, "rr.ddgi_visibility_power", "exponent applied to the chebyshev probe visibility", 3.0f);
+  self.cvar_ddgi_facing_bias
+    .init(self.system, "rr.ddgi_facing_bias", "constant added to the probe facing weight", 0.05f);
+  self.cvar_ddgi_conservative_distance.init(
+    self.system,
+    "rr.ddgi_conservative_distance",
+    "probe visibility takes the nearest distance texel instead of filtering",
+    1
+  );
+  self.cvar_ddgi_apply_terms
+    .init(self.system, "rr.ddgi_apply_terms", "bit 0 applies the indirect diffuse, bit 1 the indirect specular", 3);
+  self.cvar_ddgi_ambient_fill
+    .init(self.system, "rr.ddgi_ambient_fill", "scales the ambient color blended in where probes lack coverage", 1.0f);
 
   self.cvar_bloom_enable.init(self.system, "pp.bloom", "use bloom", 1);
   self.cvar_bloom_threshold.init(self.system, "pp.bloom_threshold", "bloom threshold", 1.0f);
@@ -251,6 +267,12 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["intensity"] = self.cvar_ddgi_intensity.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer["distance_culling"] = self.cvar_ddgi_distance_culling.as_bool();
+  writer["visibility_floor"] = self.cvar_ddgi_visibility_floor.get();
+  writer["visibility_power"] = self.cvar_ddgi_visibility_power.get();
+  writer["facing_bias"] = self.cvar_ddgi_facing_bias.get();
+  writer["conservative_distance"] = self.cvar_ddgi_conservative_distance.as_bool();
+  writer["ambient_fill"] = self.cvar_ddgi_ambient_fill.get();
+  writer["apply_terms"] = self.cvar_ddgi_apply_terms.get();
   writer.end_obj();
 
   writer["bloom"].begin_obj();
@@ -369,6 +391,24 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     auto distance_culling_obj = ddgi_obj["distance_culling"];
     if (!distance_culling_obj.error())
       self.cvar_ddgi_distance_culling.set(distance_culling_obj.get_bool());
+    if (auto floor = ddgi_obj["visibility_floor"]; !floor.error()) {
+      self.cvar_ddgi_visibility_floor.set(static_cast<f32>(floor.get_double()));
+    }
+    if (auto power = ddgi_obj["visibility_power"]; !power.error()) {
+      self.cvar_ddgi_visibility_power.set(static_cast<f32>(power.get_double()));
+    }
+    if (auto bias = ddgi_obj["facing_bias"]; !bias.error()) {
+      self.cvar_ddgi_facing_bias.set(static_cast<f32>(bias.get_double()));
+    }
+    if (auto conservative = ddgi_obj["conservative_distance"]; !conservative.error()) {
+      self.cvar_ddgi_conservative_distance.set(conservative.get_bool());
+    }
+    if (auto terms = ddgi_obj["apply_terms"]; !terms.error()) {
+      self.cvar_ddgi_apply_terms.set(static_cast<i32>(terms.get_int64()));
+    }
+    if (auto fill = ddgi_obj["ambient_fill"]; !fill.error()) {
+      self.cvar_ddgi_ambient_fill.set(static_cast<f32>(fill.get_double()));
+    }
   }
 
   auto bloom_obj = json["bloom"];

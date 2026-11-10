@@ -402,6 +402,10 @@ struct ProbeVolume {
   f32 cascade_blend = 0.3f;
   f32x3 center = {};
   f32 max_probe_distance = 0.0f;
+  f32 visibility_floor = 0.0f;
+  f32 visibility_power = 3.0f;
+  f32 facing_bias = 0.05f;
+  u32 is_conservative_distance = 1;
 };
 
 // --- Post processing ---

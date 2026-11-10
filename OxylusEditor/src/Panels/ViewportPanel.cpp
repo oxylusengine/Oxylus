@@ -1474,6 +1474,45 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "Offsets the probe lookup toward the camera, in probe spacings"
       );
       ui.drag(
+        "Visibility Floor",
+        cvar_sys.cvar_ddgi_visibility_floor,
+        0.0f,
+        1.0f,
+        "Lowest weight the probe visibility test can give a probe, lower rejects occluded probes harder"
+      );
+      ui.drag(
+        "Visibility Power",
+        cvar_sys.cvar_ddgi_visibility_power,
+        1.0f,
+        8.0f,
+        "Exponent on the chebyshev visibility, 3 is the cubed variant"
+      );
+      ui.drag(
+        "Facing Bias",
+        cvar_sys.cvar_ddgi_facing_bias,
+        0.0f,
+        1.0f,
+        "Constant added to the probe facing weight, lower stops back facing probes leaking in"
+      );
+      ui.checkbox(
+        "Conservative Distance",
+        cvar_sys.cvar_ddgi_conservative_distance,
+        "Visibility takes the nearest distance texel instead of filtering, depth edges reject instead of blending"
+      );
+      auto apply_terms = *cvar_sys.cvar_ddgi_apply_terms.get_ptr();
+      auto is_apply_diffuse = (apply_terms & 1) != 0;
+      auto is_apply_specular = (apply_terms & 2) != 0;
+      ui.checkbox("Apply Diffuse", &is_apply_diffuse, true, "Adds the indirect diffuse term to the composite");
+      ui.checkbox("Apply Specular", &is_apply_specular, true, "Adds the indirect specular term to the composite");
+      *cvar_sys.cvar_ddgi_apply_terms.get_ptr() = (is_apply_diffuse ? 1 : 0) | (is_apply_specular ? 2 : 0);
+      ui.drag(
+        "Ambient Fill",
+        cvar_sys.cvar_ddgi_ambient_fill,
+        0.0f,
+        1.0f,
+        "Scales the ambient color blended in where probes lack coverage"
+      );
+      ui.drag(
         "Max Brightness Step",
         cvar_sys.cvar_ddgi_max_brightness_step,
         0.0f,
