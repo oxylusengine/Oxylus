@@ -75,7 +75,7 @@ func fs_main(
     let direct_illuminance = has_directional_light ? f32x3(Li) : f32x3(0.0);
 
     var indirect_illuminance = f32x3(0.0);
-    if ((scene_flags & SceneFlags::HasDDGI) == 0) {
+    if ((scene_flags & (SceneFlags::HasDDGI | SceneFlags::HasRTGI)) == 0) {
         let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
         let environment_radiance = has_sky ? sky.ambient_color : lighting.base_ambient_color;
 

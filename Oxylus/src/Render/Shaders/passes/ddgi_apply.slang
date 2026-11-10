@@ -3,6 +3,7 @@ import gpu;
 import pbr;
 import scene;
 import ddgi;
+import rtgi_common;
 
 #include <fullscreen.slang>
 
@@ -19,6 +20,7 @@ import ddgi;
 [[vk::binding(8, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(9, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(10, 0)]] StructuredBuffer<ProbeState> probe_states;
+[[vk::binding(11, 0)]] Texture2D<f32x4> rtgi_resolved_diffuse;
 
 [[shader("fragment")]]
 func fs_main(
@@ -80,8 +82,19 @@ func fs_main(
         params
     );
 
-    let diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);
-    let specular = lerp(ambient_color * ambient_fill, sample.specular * intensity, sample.coverage);
+    let ddgi_diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);
+    let ddgi_specular = lerp(ambient_color * ambient_fill, sample.specular * intensity, sample.coverage);
+
+    // without RTGI the binding is a 1x1 dummy
+    var rtgi = f32x4(0.0);
+    if ((scene_flags & SceneFlags::HasRTGI) != 0) {
+        rtgi = rtgi_resolved_diffuse.Load(pixel_pos);
+    }
+
+    let is_rtgi_resolved = rtgi.a > 0.0;
+    let diffuse = select(is_rtgi_resolved, rtgi.rgb / RTGI_RADIANCE_SCALE * intensity, ddgi_diffuse);
+    let specular = select(is_rtgi_resolved, diffuse, ddgi_specular);
+    let diffuse_occlusion = select(is_rtgi_resolved, albedo_occlusion.a, occlusion);
 
     let NoV = abs(dot(N, V)) + 1e-5;
     let F0 = lerp(f32x3(0.04), albedo_color, metallic);
@@ -90,8 +103,8 @@ func fs_main(
     let kD = (1.0 - metallic) * (1.0 - kS);
     let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-    let indirect_diffuse = kD * diffuse * albedo_color * occlusion * ((terms & 1u) != 0 ? 1.0 : 0.0);
-    let indirect_specular = (is_sssr ? f32x3(0.0) : kS * specular * spec_occlusion) * ((terms & 2u) != 0 ? 1.0 : 0.0);
+    let indirect_diffuse = kD * diffuse * albedo_color * diffuse_occlusion * f32((terms & 1u) != 0);
+    let indirect_specular = select(is_sssr, f32x3(0.0), kS * specular * spec_occlusion) * f32((terms & 2u) != 0);
 
     return f32x4(indirect_diffuse + indirect_specular, 1.0);
 }

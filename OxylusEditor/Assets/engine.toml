@@ -421,6 +421,11 @@ path = "passes/rtgi_post_blur.slang"
 entry_points = ["cs_vertical"]
 
 [[shader_sessions.programs]]
+name = "rtgi_upscale"
+path = "passes/rtgi_upscale.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rtgi_debug_denoised"
 path = "passes/rtgi_debug_denoised.slang"
 entry_points = ["vs_main", "fs_main"]

@@ -629,6 +629,8 @@ struct DDGIApplyContext {
   vir::ValueID ambient_occlusion_attachment = vir::ValueID::Invalid;
   vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
   vir::ValueID distance_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID rtgi_resolved_diffuse_attachment = vir::ValueID::Invalid;
 };
 
 struct DDGIDebugContext {
@@ -779,6 +781,7 @@ struct RTGIContext {
   vir::ValueID firefly_factor = vir::ValueID::Invalid;
   vir::ValueID post_blur_diffuse = vir::ValueID::Invalid;
   vir::ValueID post_blur_diffuse2 = vir::ValueID::Invalid;
+  vir::ValueID resolved_diffuse = vir::ValueID::Invalid;
 };
 
 struct PostProcessContext {

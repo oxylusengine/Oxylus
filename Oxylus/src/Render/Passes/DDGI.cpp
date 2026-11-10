@@ -589,6 +589,16 @@ auto RendererInstance::apply_ddgi(
     .dst_alpha_blend_factor = VK_BLEND_FACTOR_ONE,
     .alpha_blend_op = VK_BLEND_OP_ADD,
   };
+  const auto is_rtgi = recording.shape.has_rtgi;
+  if (!is_rtgi) {
+    context.rtgi_resolved_diffuse_attachment = module.clear(
+      module.transient_image(
+        {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "rtgi unused resolved diffuse"}
+      ),
+      vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
+    );
+  }
+
   std::tie(
     dst,
     context.depth_attachment,
@@ -600,7 +610,8 @@ auto RendererInstance::apply_ddgi(
     context.distance_attachment,
     values.camera,
     context.probe_volumes_buffer,
-    context.probe_states_buffer
+    context.probe_states_buffer,
+    context.rtgi_resolved_diffuse_attachment
   ) = std::tuple_cat( //
     module
       .begin_rendering(
@@ -614,7 +625,8 @@ auto RendererInstance::apply_ddgi(
          {context.distance_attachment, vir::Access::FragmentSampled},
          {values.camera, vir::Access::FragmentUniformRead},
          {context.probe_volumes_buffer, vir::Access::FragmentRead},
-         {context.probe_states_buffer, vir::Access::FragmentRead}}
+         {context.probe_states_buffer, vir::Access::FragmentRead},
+         {context.rtgi_resolved_diffuse_attachment, vir::Access::FragmentSampled}}
       )
       .with_name("ddgi apply")
       .bind_graphics_pipeline(render_context.pipeline("ddgi_apply"))
@@ -632,6 +644,7 @@ auto RendererInstance::apply_ddgi(
       .bind_image(0, 8, context.irradiance_attachment)
       .bind_image(0, 9, context.distance_attachment)
       .bind_buffer(0, 10, context.probe_states_buffer)
+      .bind_image(0, 11, context.rtgi_resolved_diffuse_attachment)
       .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
       .push_constants_from(prepared.ddgi.apply_push)
       .draw(3, 1)

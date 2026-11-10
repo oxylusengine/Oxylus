@@ -113,7 +113,7 @@ func fs_main(
     let aerial_perspective_contribution = aerial_perspective.rgb * aerial_perspective.a;
 
     var indirect_illuminance = f32x3(0.0);
-    if ((scene_flags & SceneFlags::HasDDGI) == 0) {
+    if ((scene_flags & (SceneFlags::HasDDGI | SceneFlags::HasRTGI)) == 0) {
         let diffuse_sample = sky_cubemap.SampleLevel(linear_clamp_sampler, N, 0.0);
         let diffuse_sky = diffuse_sample.rgb * diffuse_sample.a * horizon_darkening;
 

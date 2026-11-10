@@ -991,5 +991,46 @@ auto RendererInstance::record_rtgi(
       )
       .end_compute()
   );
+
+  context.resolved_diffuse = module.transient_image(
+    {.extent = {shape.render_size.x, shape.render_size.y, 1},
+     .format = vir::Format::RGBA16Sfloat,
+     .name = "rtgi resolved diffuse"}
+  );
+  std::tie(
+    values.camera,
+    context.post_blur_diffuse,
+    context.post_blur_diffuse2,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    context.depth_attachment,
+    context.normal_attachment,
+    context.resolved_diffuse
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.post_blur_diffuse, vir::Access::ComputeSampled},
+         {context.post_blur_diffuse2, vir::Access::ComputeSampled},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {context.half_res_face_normal, vir::Access::ComputeSampled},
+         {context.depth_attachment, vir::Access::ComputeSampled},
+         {context.normal_attachment, vir::Access::ComputeSampled},
+         {context.resolved_diffuse, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi upscale")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_upscale"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.post_blur_diffuse)
+      .bind_image(0, 2, context.post_blur_diffuse2)
+      .bind_image(0, 3, context.half_res_depth)
+      .bind_image(0, 4, context.half_res_face_normal)
+      .bind_image(0, 5, context.depth_attachment)
+      .bind_image(0, 6, context.normal_attachment)
+      .bind_image(0, 7, context.resolved_diffuse)
+      .push_constants(RTGIGBufferPush(shape.render_size))
+      .dispatch_invocations(shape.render_size.x, shape.render_size.y, 1)
+      .end_compute()
+  );
 }
 } // namespace ox

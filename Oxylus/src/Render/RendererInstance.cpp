@@ -2342,7 +2342,7 @@ auto RendererInstance::record_frame(
   vsm_virtual_page_table_attachment = pbr_context.vsm_page_table_attachment;
   vsm_directional_clipmaps_buffer = pbr_context.directional_clipmaps_buffer;
 
-  if (shape.has_ddgi) {
+  if (shape.has_ddgi || shape.has_rtgi) {
     auto ddgi_apply_context = DDGIApplyContext{
       .probe_volumes_buffer = probe_volumes_buffer,
       .probe_states_buffer = probe_states_buffer,
@@ -2353,6 +2353,7 @@ auto RendererInstance::record_frame(
       .ambient_occlusion_attachment = ambient_occlusion_attachment,
       .irradiance_attachment = ddgi_irradiance_attachment,
       .distance_attachment = ddgi_distance_attachment,
+      .rtgi_resolved_diffuse_attachment = rtgi_context.resolved_diffuse,
     };
     final_attachment = self.apply_ddgi(module, recording, ddgi_apply_context, final_attachment);
     probe_volumes_buffer = ddgi_apply_context.probe_volumes_buffer;
@@ -2364,6 +2365,9 @@ auto RendererInstance::record_frame(
     ambient_occlusion_attachment = ddgi_apply_context.ambient_occlusion_attachment;
     ddgi_irradiance_attachment = ddgi_apply_context.irradiance_attachment;
     ddgi_distance_attachment = ddgi_apply_context.distance_attachment;
+    if (shape.has_rtgi) {
+      rtgi_context.resolved_diffuse = ddgi_apply_context.rtgi_resolved_diffuse_attachment;
+    }
   }
 
   // --- SSSR ---
