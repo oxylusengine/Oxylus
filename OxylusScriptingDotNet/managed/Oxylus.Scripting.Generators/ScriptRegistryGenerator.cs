@@ -163,7 +163,7 @@ public sealed class ScriptRegistryGenerator : IIncrementalGenerator
         source.AppendLine("    {");
         for (var i = 0; i < validComponents.Count; i++)
         {
-            source.AppendLine($"        global::Oxylus.ComponentType<{validComponents[i].Type}>.Index = firstIndex + {i};");
+            source.AppendLine($"        global::Oxylus.ComponentType.Assign<{validComponents[i].Type}>(firstIndex + {i});");
         }
 
         source.AppendLine("        return");

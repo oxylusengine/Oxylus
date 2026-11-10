@@ -1212,6 +1212,8 @@ public sealed class DebugViewProbe : SceneBehaviour
         DebuggedWorld = World;
         World.CreateEntity("Kid").ChildOf(Debugged);
         Debugged.Add<TransformComponent>();
+        Debugged.Set(new Velocity { Value = new Vector3(1.0f, 2.0f, 3.0f) });
+        Debugged.Add<Expired>();
         Debugged.AddBehaviour<Spinner>();
         gone = World.CreateEntity("Gone");
         gone.Destruct();
@@ -1229,9 +1231,30 @@ public sealed class DebugViewProbe : SceneBehaviour
         Say($"DebugView.Status {view.Status} name={view.Name} path={view.Path}");
         Say($"DebugView.Kid parent={kidView.Parent?.Name}");
         Say($"DebugView.Children {view.Children.Length}");
-        var isTransform = view.Components.Any(component => component.EndsWith("TransformComponent", StringComparison.Ordinal));
-        var isIdentifier = view.Components.Any(component => component.StartsWith("(Identifier", StringComparison.Ordinal));
+        var components = view.Components;
+        var isTransform = components.Any(component => component.Name == nameof(TransformComponent) && component.Kind == ComponentKind.Value);
+        var isIdentifier = components.Any(component => component.Name.StartsWith("(Identifier", StringComparison.Ordinal));
         Say($"DebugView.Components transform={isTransform} identifier={isIdentifier}");
+        Say($"DebugView.Values {string.Join(",", components.Select(component => component.Display))}");
+        Say($"DebugView.KidComponents {string.Join(",", kidView.Components.Select(component => component.Display))}");
+        var transform = components.FirstOrDefault(component => component.Name == nameof(TransformComponent));
+        Say($"DebugView.Transform present={transform is not null} value={transform?.Value is not null}");
+        var velocity = components.FirstOrDefault(component => component.Name == nameof(Velocity));
+        var velocityValue = (Velocity)velocity!.Value!;
+        Say($"DebugView.Velocity {velocityValue.Value.X} {velocityValue.Value.Y} {velocityValue.Value.Z}");
+        var expired = components.FirstOrDefault(component => component.Name == nameof(Expired));
+        Say($"DebugView.Expired tag={expired?.Kind == ComponentKind.Tag} value={expired?.Value is null}");
+        string display;
+        try
+        {
+            display = velocity.Display;
+        }
+        catch
+        {
+            display = "threw";
+        }
+
+        Say($"DebugView.Display {(display == "threw" ? "threw" : "fine")}");
         Say($"DebugView.Behaviour {view.Behaviour?.DebuggerDisplay}");
         Say($"DebugView.None {default(Entity).DebuggerDisplay}");
         Say($"DebugView.Gone {gone.DebuggerDisplay} {goneView.Status}");

@@ -25,6 +25,7 @@ public static unsafe class Runtime
         registry = scripts;
         try
         {
+            ComponentType.ClearReaders();
             CoreComponents.AssignIndices();
             components = [.. CoreComponents.CreateDescriptors(), .. scripts.RegisterComponents(CoreComponents.Count)];
             systems = scripts.CreateSystems();
@@ -264,6 +265,7 @@ public static unsafe class Runtime
 
         Worlds.Clear();
         registry = null;
+        ComponentType.ClearReaders();
         components = [];
         systems = [];
     }
