@@ -94,7 +94,6 @@ func fs_main(
     let is_rtgi_resolved = rtgi.a > 0.0;
     let diffuse = select(is_rtgi_resolved, rtgi.rgb / RTGI_RADIANCE_SCALE * intensity, ddgi_diffuse);
     let specular = select(is_rtgi_resolved, diffuse, ddgi_specular);
-    let diffuse_occlusion = select(is_rtgi_resolved, albedo_occlusion.a, occlusion);
 
     let NoV = abs(dot(N, V)) + 1e-5;
     let F0 = lerp(f32x3(0.04), albedo_color, metallic);
@@ -103,7 +102,7 @@ func fs_main(
     let kD = (1.0 - metallic) * (1.0 - kS);
     let spec_occlusion = specular_occlusion_horizon(NoV, occlusion, roughness);
 
-    let indirect_diffuse = kD * diffuse * albedo_color * diffuse_occlusion * f32((terms & 1u) != 0);
+    let indirect_diffuse = kD * diffuse * albedo_color * occlusion * f32((terms & 1u) != 0);
     let indirect_specular = select(is_sssr, f32x3(0.0), kS * specular * spec_occlusion) * f32((terms & 2u) != 0);
 
     return f32x4(indirect_diffuse + indirect_specular, 1.0);
