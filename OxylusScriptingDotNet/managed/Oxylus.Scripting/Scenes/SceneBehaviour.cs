@@ -1,9 +1,11 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Oxylus;
 
 // one per scene that lists it in its "scripts", found by its full name, "Game.LevelLogic". [System] methods declared in
 // it run only in the scenes that have it, from OnAdd until OnRemove
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class SceneBehaviour
 {
     public World World { get; internal set; }
@@ -12,6 +14,9 @@ public abstract class SceneBehaviour
     internal readonly List<ulong> Systems = [];
     internal bool IsStarted;
     internal bool IsFaulted;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    internal string DebuggerDisplay => IsFaulted ? $"{GetType().Name} (faulted)" : GetType().Name;
 
     public virtual void OnAdd() { }
     public virtual void OnRemove() { }

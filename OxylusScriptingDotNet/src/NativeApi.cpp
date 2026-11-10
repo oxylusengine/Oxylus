@@ -84,6 +84,25 @@ static auto get_path(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u
   return static_cast<u32>(length);
 }
 
+static auto get_type_str(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 {
+  if (entity == 0 || !ecs_is_alive(world, entity)) {
+    return 0;
+  }
+
+  auto* type_str = ecs_type_str(world, ecs_get_type(world, entity));
+  if (!type_str) {
+    return 0;
+  }
+
+  const auto length = std::strlen(type_str);
+  if (out) {
+    std::memcpy(out, type_str, std::min<usize>(length, capacity));
+  }
+
+  ecs_os_free(type_str);
+  return static_cast<u32>(length);
+}
+
 static auto children_iter(ecs_world_t* world, u64 parent, void* iter) -> void {
   new (iter) ecs_iter_t(ecs_children(world, parent));
 }
@@ -424,6 +443,7 @@ auto make_native_api() -> OxNativeApi {
     .ecs_defer_suspend = ecs_defer_suspend,
     .ecs_defer_resume = ecs_defer_resume,
     .get_path = get_path,
+    .get_type_str = get_type_str,
     .children_iter = children_iter,
     .children_next = children_next,
     .lookup = lookup,

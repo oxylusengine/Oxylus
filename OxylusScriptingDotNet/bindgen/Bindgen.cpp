@@ -119,7 +119,7 @@ static auto write_registry(std::ostringstream& out, std::span<const Mirror> mirr
   out << fmt::format("        internal const int Count = {};\n\n", mirrors.size());
   out << "        internal static void AssignIndices()\n        {\n";
   for (usize i = 0; i < mirrors.size(); i++) {
-    out << fmt::format("            ComponentType<global::Oxylus.{}>.Index = {};\n", mirrors[i].name, i);
+    out << fmt::format("            ComponentType.Assign<global::Oxylus.{}>({});\n", mirrors[i].name, i);
   }
 
   out << "        }\n\n";

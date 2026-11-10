@@ -56,7 +56,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_theme.init();
 
   auto& input = App::mod<Input>();
-  input.set_context("editor");
+  // the editor's shortcuts sit beside the game's actions rather than replacing their context
+  input.set_context_persistent("editor", true);
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "new_scene",
@@ -680,6 +681,25 @@ void Editor::draw_menubar(this Editor& self) {
       }
       ImGui::EndMenu();
     }
+#ifdef OX_DOTNET
+    if (self.csharp_scripts.is_open() && ImGui::BeginMenu("Scripts")) {
+      ImGui::BeginDisabled(!self.csharp_scripts.can_attach_debugger());
+      if (ImGui::MenuItem("Attach Debugger...")) {
+        self.csharp_scripts.attach_debugger();
+      }
+      ImGui::EndDisabled();
+
+      auto is_waiting_on_play = self.editor_cvar.cvar_wait_for_debugger.as_bool();
+      if (ImGui::MenuItem("Wait for Debugger on Play", nullptr, &is_waiting_on_play)) {
+        self.editor_cvar.cvar_wait_for_debugger.set(is_waiting_on_play);
+        self.editor_cvar.save();
+      }
+
+      ImGui::Separator();
+      ImGui::TextDisabled(self.csharp_scripts.is_debugger_attached() ? "Debugger attached" : "No debugger attached");
+      ImGui::EndMenu();
+    }
+#endif
     if (ImGui::BeginMenu("Window")) {
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);

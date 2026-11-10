@@ -2542,6 +2542,52 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   ImGui::EndGroup();
 }
 
+#ifdef OX_DOTNET
+// true on the frame Play should go ahead
+static auto draw_debugger_wait_popup(bool& is_waiting) -> bool {
+  constexpr auto POPUP_NAME = "Waiting for a C# Debugger";
+
+  if (!is_waiting) {
+    return false;
+  }
+
+  if (!ImGui::IsPopupOpen(POPUP_NAME)) {
+    ImGui::OpenPopup(POPUP_NAME);
+  }
+
+  UI::center_next_window(ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal(POPUP_NAME, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    return false;
+  }
+
+  auto& scripts = App::mod<Editor>().csharp_scripts;
+  auto should_play = scripts.is_debugger_attached();
+  ImGui::TextUnformatted("Play starts once a debugger attaches, so breakpoints in OnAdd and OnStart are hit.");
+  ImGui::BeginDisabled(!scripts.can_attach_debugger());
+  if (ImGui::Button("Attach Debugger...")) {
+    scripts.attach_debugger();
+  }
+  ImGui::EndDisabled();
+
+  ImGui::SameLine();
+  if (ImGui::Button("Play Without Debugger")) {
+    should_play = true;
+  }
+
+  ImGui::SameLine();
+  const auto is_cancelled = ImGui::Button("Cancel");
+  if (should_play || is_cancelled) {
+    is_waiting = false;
+    ImGui::CloseCurrentPopup();
+  }
+
+  ImGui::EndPopup();
+
+  // the scripts may have changed since Play was pressed
+  return should_play && scripts.prepare_for_play();
+}
+#endif
+
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
   constexpr float button_count = 2.0f;
   const float y_pad = UI::scale(3.0f);
@@ -2559,17 +2605,20 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
 
     auto is_scene_playing = self.editor_scene->is_playing();
 
+    auto should_play = false;
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
 #ifdef OX_DOTNET
+      auto& editor = App::mod<Editor>();
       // waits for the build when the C# scripts changed, and stays in edit mode while they don't compile
-      const auto is_ready = App::mod<Editor>().csharp_scripts.prepare_for_play();
+      const auto is_ready = editor.csharp_scripts.prepare_for_play();
+      const auto is_debugger_wanted = editor.editor_cvar.cvar_wait_for_debugger.as_bool() &&
+                                      editor.csharp_scripts.can_attach_debugger();
+      self.is_waiting_for_debugger = is_ready && is_debugger_wanted;
+      should_play = is_ready && !is_debugger_wanted;
 #else
-      const auto is_ready = true;
+      should_play = true;
 #endif
-      if (is_ready) {
-        std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
-      }
     }
     ImGui::EndDisabled();
 
@@ -2582,6 +2631,14 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
     ImGui::EndDisabled();
 
     ImGui::PopStyleVar(3);
+
+#ifdef OX_DOTNET
+    should_play = draw_debugger_wait_popup(self.is_waiting_for_debugger) || should_play;
+#endif
+
+    if (should_play) {
+      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+    }
   }
   ImGui::EndGroup();
 }

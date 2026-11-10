@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -77,6 +78,8 @@ public unsafe ref struct ChildEnumerator
 
 // a flecs entity in one world. Components come back as `ref T` straight into flecs storage: writing through one
 // doesn't run OnSet observers, call Modified<T>() after, or use Set<T>() which does both
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
+[DebuggerTypeProxy(typeof(EntityDebugView))]
 public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
 {
     readonly nint world = world;
@@ -85,6 +88,61 @@ public readonly unsafe struct Entity(nint world, ulong id) : IEquatable<Entity>
     public World World => new(world);
 
     public bool IsAlive => Id != 0 && Runtime.Native.EcsIsAlive(world, Id);
+
+    // only an attached world is safe to ask about the entity, a debugger evaluates this while the process is stopped
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    internal string DebuggerStatus
+    {
+        get
+        {
+            try
+            {
+                if (Id == 0)
+                {
+                    return "none";
+                }
+
+                if (Worlds.TryGet(world) is null || Runtime.Native.EcsIsAlive is null)
+                {
+                    return "world gone";
+                }
+
+                return Runtime.Native.EcsIsAlive(world, Id) ? "alive" : "destroyed";
+            }
+            catch
+            {
+                return "unknown";
+            }
+        }
+    }
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    internal string DebuggerDisplay
+    {
+        get
+        {
+            try
+            {
+                switch (DebuggerStatus)
+                {
+                    case "none":
+                        return "none";
+                    case "world gone":
+                        return $"Entity({Id}), its world is gone";
+                    case "destroyed":
+                        return $"Entity({Id}), destroyed";
+                    case "alive":
+                        return Name is { } name ? $"{name} ({Id})" : $"unnamed ({Id})";
+                    default:
+                        return $"Entity({Id})";
+                }
+            }
+            catch
+            {
+                return $"Entity({Id})";
+            }
+        }
+    }
 
     public ref T Get<T>() where T : unmanaged
     {

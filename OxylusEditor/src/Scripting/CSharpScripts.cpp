@@ -4,6 +4,7 @@
 #include <SDL3/SDL_filesystem.h>
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fmt/format.h>
 
 #include "Core/App.hpp"
@@ -14,6 +15,8 @@
 namespace ox {
 // typing in an IDE saves several files in a burst, one build covers them all
 constexpr auto BUILD_DEBOUNCE = std::chrono::milliseconds(300);
+// a stop at a breakpoint would otherwise reach the scripts as one frame that long
+constexpr auto MAX_DEBUGGED_STEP_MILLIS = 250.0;
 
 static auto is_script_source(std::string_view relative_path) -> bool {
   constexpr auto EXTENSIONS = std::array<std::string_view, 3>{".cs", ".csproj", ".props"};
@@ -27,6 +30,20 @@ static auto is_script_source(std::string_view relative_path) -> bool {
   // what the build itself writes
   const auto path = std::filesystem::path(relative_path);
   return std::ranges::none_of(path, [](const std::filesystem::path& part) { return part == "obj" || part == "bin"; });
+}
+
+// argv[0] can be relative, and lacks its extension when a shell on Windows started it
+static auto editor_executable() -> std::filesystem::path {
+  const auto& args = App::get()->get_command_line_args().args;
+  auto name = args.empty() ? std::filesystem::path("OxylusEditor")
+                           : std::filesystem::path(args.front().arg_str).filename();
+#ifdef OX_PLATFORM_WINDOWS
+  if (!name.has_extension()) {
+    name += ".exe";
+  }
+#endif
+
+  return std::filesystem::path(SDL_GetBasePath()) / name;
 }
 
 static auto log_diagnostic(const DotNetDiagnostic& diagnostic) -> void {
@@ -121,6 +138,14 @@ auto CSharpScripts::open(this CSharpScripts& self, Project& project) -> void {
     OX_LOG_ERROR("{}", written.error());
   }
 
+  if (auto written = write_scripts_launch_config(project_dir); !written) {
+    OX_LOG_ERROR("{}", written.error());
+  }
+
+  if (auto written = write_scripts_rider_config(project_dir, editor_executable()); !written) {
+    OX_LOG_ERROR("{}", written.error());
+  }
+
   const auto on_change = [&self](const std::string& path, filewatch::Event) {
     if (is_script_source(path)) {
       self.is_dirty_.store(true, std::memory_order_relaxed);
@@ -152,6 +177,7 @@ auto CSharpScripts::close(this CSharpScripts& self) -> void {
     App::mod<DotNetScripting>().unload();
   }
 
+  App::set_max_step_millis(Timestep::NO_MAX_STEP);
   self.csproj_.clear();
   self.is_dirty_ = false;
   self.dirty_since_ = nullopt;
@@ -167,6 +193,8 @@ auto CSharpScripts::update(this CSharpScripts& self, bool is_playing) -> void {
   if (!self.is_open()) {
     return;
   }
+
+  App::set_max_step_millis(self.is_debugger_attached() ? MAX_DEBUGGED_STEP_MILLIS : Timestep::NO_MAX_STEP);
 
   if (self.build_.valid() && self.build_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     self.finish_build();
@@ -229,6 +257,22 @@ auto CSharpScripts::is_building(this const CSharpScripts& self) -> bool { return
 
 auto CSharpScripts::is_loading(this const CSharpScripts& self) -> bool {
   return self.is_open() && (self.build_.valid() || self.is_reload_pending_);
+}
+
+auto CSharpScripts::is_debugger_attached(this const CSharpScripts& self) -> bool {
+  return self.is_open() && App::mod<DotNetScripting>().is_debugger_attached();
+}
+
+auto CSharpScripts::can_attach_debugger(this const CSharpScripts& self) -> bool {
+  return self.is_open() && App::mod<DotNetScripting>().is_loaded() && !self.is_debugger_attached();
+}
+
+auto CSharpScripts::attach_debugger(this const CSharpScripts&) -> void {
+  App::defer_to_next_frame([] {
+    if (!App::mod<DotNetScripting>().launch_debugger()) {
+      OX_LOG_WARN("No debugger attached, you can also attach to this process from your IDE");
+    }
+  });
 }
 
 auto CSharpScripts::start_build(this CSharpScripts& self) -> void {

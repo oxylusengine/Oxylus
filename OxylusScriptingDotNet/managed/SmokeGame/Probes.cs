@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Numerics;
 
 using Oxylus;
@@ -1193,5 +1195,82 @@ public sealed class FieldProbe : FieldProbeMiddle<int>
         ticks++;
         shared += Limit + Auto;
         _ = (nothing, noNumbers, missing, locked, hiddenMode, point, hidden, thrower, entity, map, set, list, numbers, text, longText, position, ratio, isReady, mode, maybe);
+    }
+}
+
+// what a debugger shows for the handles, logged while the scene runs
+public sealed class DebugViewProbe : SceneBehaviour
+{
+    public static Entity Debugged;
+    public static World DebuggedWorld;
+
+    Entity gone;
+
+    public override void OnAdd()
+    {
+        Debugged = World.CreateEntity("Debugged");
+        DebuggedWorld = World;
+        World.CreateEntity("Kid").ChildOf(Debugged);
+        Debugged.Add<TransformComponent>();
+        Debugged.Set(new Velocity { Value = new Vector3(1.0f, 2.0f, 3.0f) });
+        Debugged.Add<Expired>();
+        Debugged.AddBehaviour<Spinner>();
+        gone = World.CreateEntity("Gone");
+        gone.Destruct();
+    }
+
+    public override void OnStart()
+    {
+        var view = new EntityDebugView(Debugged);
+        var kid = World.Lookup("Debugged.Kid");
+        var kidView = new EntityDebugView(kid);
+        var goneView = new EntityDebugView(gone);
+        var worldView = new WorldDebugView(World);
+
+        Say($"DebugView.Display {Debugged.DebuggerDisplay}");
+        Say($"DebugView.Status {view.Status} name={view.Name} path={view.Path}");
+        Say($"DebugView.Kid parent={kidView.Parent?.Name}");
+        Say($"DebugView.Children {view.Children.Length}");
+        var components = view.Components;
+        var isTransform = components.Any(component => component.Name == nameof(TransformComponent) && component.Kind == ComponentKind.Value);
+        var isIdentifier = components.Any(component => component.Name.StartsWith("(Identifier", StringComparison.Ordinal));
+        Say($"DebugView.Components transform={isTransform} identifier={isIdentifier}");
+        Say($"DebugView.Values {string.Join(",", components.Select(component => component.Display))}");
+        Say($"DebugView.KidComponents {string.Join(",", kidView.Components.Select(component => component.Display))}");
+        var transform = components.FirstOrDefault(component => component.Name == nameof(TransformComponent));
+        Say($"DebugView.Transform present={transform is not null} value={transform?.Value is not null}");
+        var velocity = components.FirstOrDefault(component => component.Name == nameof(Velocity));
+        var velocityValue = (Velocity)velocity!.Value!;
+        Say($"DebugView.Velocity {velocityValue.Value.X} {velocityValue.Value.Y} {velocityValue.Value.Z}");
+        var expired = components.FirstOrDefault(component => component.Name == nameof(Expired));
+        Say($"DebugView.Expired tag={expired?.Kind == ComponentKind.Tag} value={expired?.Value is null}");
+        string display;
+        try
+        {
+            display = velocity.Display;
+        }
+        catch
+        {
+            display = "threw";
+        }
+
+        Say($"DebugView.Display {(display == "threw" ? "threw" : "fine")}");
+        Say($"DebugView.Behaviour {view.Behaviour?.DebuggerDisplay}");
+        Say($"DebugView.None {default(Entity).DebuggerDisplay}");
+        Say($"DebugView.Gone {gone.DebuggerDisplay} {goneView.Status}");
+        Say($"DebugView.World {World.DebuggerDisplay} scripts={worldView.Scripts.Length} behaviours={worldView.Behaviours.Length}");
+    }
+
+    internal static void Say(FormattableString message) => Log.Info(message.ToString(CultureInfo.InvariantCulture));
+}
+
+// runs in a scene made after DebugViewProbe's scene is gone, whose handles it still holds
+public sealed class DebugViewLateProbe : SceneBehaviour
+{
+    public override void OnAdd()
+    {
+        var view = new EntityDebugView(DebugViewProbe.Debugged);
+        DebugViewProbe.Say($"DebugViewLate.Entity {DebugViewProbe.Debugged.DebuggerDisplay} {view.Status}");
+        DebugViewProbe.Say($"DebugViewLate.World {DebugViewProbe.DebuggedWorld.DebuggerDisplay}");
     }
 }

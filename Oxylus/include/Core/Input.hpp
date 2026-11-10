@@ -138,6 +138,8 @@ public:
   auto push_context(this Input& self, std::string_view context) -> void;
   auto pop_context(this Input& self) -> void;
   auto get_active_context(this const Input& self) -> std::string_view;
+  // a persistent context's bindings stay active whatever the active context is
+  auto set_context_persistent(this Input& self, std::string_view context, bool is_persistent) -> void;
 
   auto get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
   auto get_action_released(this const Input& self, std::string_view action_id, u32 instance_id = 0) -> bool;
@@ -232,6 +234,7 @@ private:
 
   std::string active_context = "default";
   std::vector<std::string> context_stack = {};
+  std::vector<std::string> persistent_contexts = {};
   std::unordered_multimap<std::string, ActionBinding> action_bindings = {};
   std::unordered_multimap<InputCode, std::string, InputCode::Hash> input_to_actions = {};
   std::chrono::nanoseconds gamepad_repeat_delay = std::chrono::nanoseconds(500);
@@ -268,6 +271,7 @@ private:
   auto check_input_axis(this const Input& self, const InputCode& input, const u32 instance_id, InputType check_type)
     -> option<glm::vec2>;
 
+  auto is_context_active(this const Input& self, std::string_view context) -> bool;
   auto find_conflicts(this const Input& self, const ActionBinding& binding) -> std::vector<std::string>;
   auto add_to_reverse_map(this Input& self, const ActionBinding& binding) -> void;
   auto remove_from_reverse_map(this Input& self, const ActionBinding& binding) -> void;

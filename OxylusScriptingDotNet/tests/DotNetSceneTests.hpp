@@ -1537,3 +1537,79 @@ TEST_F(DotNetSceneTest, ReadsAVehicleAndItsWheelsFromCSharp) {
   EXPECT_EQ(absent.exists, 0);
   EXPECT_EQ(absent.threw, 1);
 }
+
+TEST_F(DotNetSceneTest, DebuggerViewsDescribeHandles) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+
+  const auto id = id_of("Debugged");
+  ASSERT_NE(id, 0_u64);
+  const auto info = [](std::string_view line) {
+    return count_logs(ox::OxLogLevel::Info, line);
+  };
+  EXPECT_EQ(info(std::format("DebugView.Display Debugged ({})", id)), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Status alive name=Debugged path=Debugged"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Kid parent=Debugged"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Children 1"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Components transform=True identifier=False"), 1) << logs_text();
+  EXPECT_EQ(info(std::format("DebugView.Behaviour Spinner on Debugged ({})", id)), 1) << logs_text();
+  // in component index order: the engine's first, then the scripts' sorted by path
+  EXPECT_EQ(info("DebugView.Values ScriptComponent,TransformComponent,Expired (tag),Velocity"), 1) << logs_text();
+  // a pair has no C# struct, so it shows by its flecs name
+  EXPECT_EQ(info("DebugView.KidComponents (ChildOf,Debugged)"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Transform present=True value=True"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Velocity 1 2 3"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Expired tag=True value=True"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Display fine"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.None none"), 1) << logs_text();
+  EXPECT_EQ(count_logs_containing(ox::OxLogLevel::Info, ", destroyed destroyed"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.World World, 1 scripts, 1 behaviours, running scripts=1 behaviours=1"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, ReadsComponentValuesAgainAfterAHotReload) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+  ASSERT_EQ(count_logs(ox::OxLogLevel::Info, "DebugView.Velocity 1 2 3"), 1) << logs_text();
+
+  scene.reset();
+  scripting().unload();
+  EXPECT_EQ(count_logs_containing(ox::OxLogLevel::Warn, "still referenced after unloading"), 0) << logs_text();
+
+  const auto loaded = scripting().load(smoke_game(), capturing_native_api());
+  ASSERT_TRUE(loaded.has_value()) << loaded.error();
+
+  // the readers registered by this load, not ones left from the unloaded assembly
+  scene = std::make_unique<ox::Scene>("DotNetSceneTestReloaded");
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.DebugViewProbe").has_value());
+  scene->runtime_start();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "DebugView.Velocity 1 2 3"), 2) << logs_text();
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, "DebugView.Values ScriptComponent,TransformComponent,Expired (tag),Velocity"),
+    2
+  ) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, DebuggerViewsSurviveTheirWorld) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+  const auto id = id_of("Debugged");
+  ASSERT_NE(id, 0_u64);
+
+  // made first so the new world can't be handed the freed one's address
+  auto later = std::make_unique<ox::Scene>("DotNetSceneTestLater");
+  scene.reset();
+
+  const auto late = later->add_script_type("SmokeGame.DebugViewLateProbe");
+  ASSERT_TRUE(late.has_value()) << late.error();
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, std::format("DebugViewLate.Entity Entity({}), its world is gone world gone", id)),
+    1
+  ) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "DebugViewLate.World World, gone"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}

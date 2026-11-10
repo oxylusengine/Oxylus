@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Text;
 
 using Oxylus.Hosting;
@@ -6,6 +7,8 @@ using Oxylus.Interop;
 
 namespace Oxylus;
 
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
+[DebuggerTypeProxy(typeof(WorldDebugView))]
 public readonly unsafe struct World(nint handle) : IEquatable<World>
 {
     public nint Handle { get; } = handle;
@@ -51,6 +54,33 @@ public readonly unsafe struct World(nint handle) : IEquatable<World>
         where T2 : unmanaged
         where T3 : unmanaged
         where T4 : unmanaged => new(this);
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    internal string DebuggerDisplay
+    {
+        get
+        {
+            try
+            {
+                if (Handle == 0)
+                {
+                    return "none";
+                }
+
+                if (Worlds.TryGet(Handle) is not { } state)
+                {
+                    return "World, gone";
+                }
+
+                var display = $"World, {state.Scripts.Count} scripts, {state.Behaviours.Count} behaviours";
+                return state.IsRunning ? display + ", running" : display;
+            }
+            catch
+            {
+                return "World";
+            }
+        }
+    }
 
     internal ulong IdOf<T>() where T : unmanaged => Worlds.IdOf<T>(Handle);
 
