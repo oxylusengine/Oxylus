@@ -22,7 +22,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "8: Normal Color, 9: Emissive Color, 10: Metallic Color, 11: Roughness Color, 12: Baked Ambient Occlusion, 13: "
     "Screen Space Ambient Occlusion, 14: Geometric Normal, 15: Virtual Shadowmaps, 16: Virtual Shadowmaps "
     "(Point/Spot), 17: DDGI Probes, 18: SSSR Reflection, 19: SSSR Confidence, 20: SSSR Variance, 21: SSSR Sample "
-    "Count, 22: RTGI Half Resolution, 23: RTGI Raw Radiance, 24: RTGI Ray Count",
+    "Count, 22: RTGI Half Resolution, 23: RTGI Raw Radiance, 24: RTGI Denoised, 25: RTGI Ray Count, "
+    "26: RTGI Firefly Factor",
     0
   );
   self.cvar_culling_frustum.init(self.system, "rr.culling_frustum", "Frustum Culling", 1);
@@ -112,6 +113,9 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "rr.rtgi_firefly_filter", "clamp rtgi rays that are far brighter than their neighbourhood", 1);
   self.cvar_rtgi_firefly_tolerance
     .init(self.system, "rr.rtgi_firefly_tolerance", "rtgi firefly ceiling headroom above the neighbourhood mean", 4.0f);
+  self.cvar_rtgi_pre_blur.init(self.system, "rr.rtgi_pre_blur", "blur rtgi before temporal accumulation", 1);
+  self.cvar_rtgi_pre_blur_iterations
+    .init(self.system, "rr.rtgi_pre_blur_iterations", "rtgi pre blur iterations, 1 to 4", 1);
   self.cvar_rtgi_pre_blur_width
     .init(self.system, "rr.rtgi_pre_blur_width", "rtgi pre blur radius in half res pixels", 20.0f);
   self.cvar_rtgi_bounce_range.init(
@@ -295,6 +299,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["max_rays_per_pixel"] = self.cvar_rtgi_max_rays_per_pixel.get();
   writer["firefly_filter"] = self.cvar_rtgi_firefly_filter.as_bool();
   writer["firefly_tolerance"] = self.cvar_rtgi_firefly_tolerance.get();
+  writer["pre_blur"] = self.cvar_rtgi_pre_blur.as_bool();
+  writer["pre_blur_iterations"] = self.cvar_rtgi_pre_blur_iterations.get();
   writer["pre_blur_width"] = self.cvar_rtgi_pre_blur_width.get();
   writer["bounce_range"] = self.cvar_rtgi_bounce_range.get();
   writer["ddgi_bounce"] = self.cvar_rtgi_ddgi_bounce.as_bool();
@@ -454,6 +460,12 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     }
     if (auto tolerance = rtgi_obj["firefly_tolerance"]; !tolerance.error()) {
       self.cvar_rtgi_firefly_tolerance.set(static_cast<f32>(tolerance.get_double()));
+    }
+    if (auto blur = rtgi_obj["pre_blur"]; !blur.error()) {
+      self.cvar_rtgi_pre_blur.set(blur.get_bool());
+    }
+    if (auto iterations = rtgi_obj["pre_blur_iterations"]; !iterations.error()) {
+      self.cvar_rtgi_pre_blur_iterations.set(static_cast<i32>(iterations.get_int64()));
     }
     if (auto width = rtgi_obj["pre_blur_width"]; !width.error()) {
       self.cvar_rtgi_pre_blur_width.set(static_cast<f32>(width.get_double()));

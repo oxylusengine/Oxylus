@@ -95,8 +95,7 @@ func shade_ray_hit(in RTGIPayload payload, f32x3 origin, f32x3 direction) -> f32
 
     if (!is_front_face) {
         let material_flags = materials[mesh_instances[payload.instance_id].material_index].flags;
-        let is_two_sided = ((material_flags & MaterialFlag::AlphaMask) != 0) ||
-                           ((material_flags & MaterialFlag::AlphaBlend) != 0);
+        let is_two_sided = (material_flags & (MaterialFlag::AlphaMask | MaterialFlag::AlphaBlend)) != 0;
         if (!is_two_sided) {
             return f32x3(0.0);
         }

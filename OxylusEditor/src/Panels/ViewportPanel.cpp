@@ -1120,7 +1120,9 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "SSSR Sample Count",
         "RTGI Half Resolution",
         "RTGI Raw Radiance",
-        "RTGI Ray Count"
+        "RTGI Denoised",
+        "RTGI Ray Count",
+        "RTGI Firefly Factor"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
     }
@@ -1374,6 +1376,8 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
       ui.drag("Max Rays Per Pixel", cvar_sys.cvar_rtgi_max_rays_per_pixel, 1, 12);
       ui.checkbox("Firefly Filter", cvar_sys.cvar_rtgi_firefly_filter);
       ui.drag("Firefly Tolerance", cvar_sys.cvar_rtgi_firefly_tolerance, 0.0f, 16.0f);
+      ui.checkbox("Pre Blur", cvar_sys.cvar_rtgi_pre_blur);
+      ui.drag("Pre Blur Iterations", cvar_sys.cvar_rtgi_pre_blur_iterations, 1, 4);
       ui.drag("Pre Blur Width", cvar_sys.cvar_rtgi_pre_blur_width, 1.0f, 64.0f);
       ui.drag("Bounce Range", cvar_sys.cvar_rtgi_bounce_range, 0.0f, 16.0f);
       ui.checkbox("DDGI Bounce", cvar_sys.cvar_rtgi_ddgi_bounce);

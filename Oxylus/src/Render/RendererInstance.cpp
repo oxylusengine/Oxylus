@@ -57,10 +57,12 @@ static auto is_sssr_debug_view(GPU::DebugView debug_view) -> bool {
 
 static auto is_rtgi_debug_view(GPU::DebugView debug_view) -> bool {
   switch (debug_view) {
-    case GPU::DebugView::RTGIHalfRes :
-    case GPU::DebugView::RTGIRaw     :
-    case GPU::DebugView::RTGIRayCount: return true;
-    default                          : return false;
+    case GPU::DebugView::RTGIHalfRes      :
+    case GPU::DebugView::RTGIRaw          :
+    case GPU::DebugView::RTGIDenoised     :
+    case GPU::DebugView::RTGIRayCount     :
+    case GPU::DebugView::RTGIFireflyFactor: return true;
+    default                               : return false;
   }
 }
 
@@ -518,6 +520,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
   mix(shape.probe_volume_count);
   mix(shape.ddgi_probe_count);
   mix(shape.ddgi_rays_per_probe);
+  mix(shape.rtgi_pre_blur_iterations);
   for (const auto& stage : shape.stages) {
     mix(ankerl::unordered_dense::hash<std::string>{}(stage));
   }
@@ -1106,6 +1109,9 @@ auto RendererInstance::frame_shape(
     .probe_volume_count = static_cast<u32>(self.probe_volumes.size()),
     .ddgi_probe_count = total_probe_count,
     .ddgi_rays_per_probe = static_cast<u32>(std::clamp(cvar.cvar_ddgi_rays_per_probe.get(), 8, 512)),
+    .rtgi_pre_blur_iterations = has_rtgi && cvar.cvar_rtgi_pre_blur.as_bool()
+                                  ? static_cast<u32>(std::clamp(cvar.cvar_rtgi_pre_blur_iterations.get(), 1, 4))
+                                  : 0_u32,
   };
   for (const auto& callback : self.stage_callbacks) {
     shape.stages.push_back(callback.name);
@@ -2656,7 +2662,10 @@ auto RendererInstance::record_frame(
       .rtgi_half_res_depth_attachment = rtgi_context.half_res_depth,
       .rtgi_half_res_normal_roughness_attachment = rtgi_context.half_res_normal_roughness,
       .rtgi_radiance_attachment = rtgi_context.radiance,
+      .rtgi_post_blur_diffuse_attachment = rtgi_context.post_blur_diffuse,
+      .rtgi_post_blur_diffuse2_attachment = rtgi_context.post_blur_diffuse2,
       .rtgi_ray_count_attachment = rtgi_context.ray_count,
+      .rtgi_firefly_factor_attachment = rtgi_context.firefly_factor,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
     sssr_context.radiance = debug_context.sssr_reflection_attachment;
@@ -2666,7 +2675,10 @@ auto RendererInstance::record_frame(
     rtgi_context.half_res_depth = debug_context.rtgi_half_res_depth_attachment;
     rtgi_context.half_res_normal_roughness = debug_context.rtgi_half_res_normal_roughness_attachment;
     rtgi_context.radiance = debug_context.rtgi_radiance_attachment;
+    rtgi_context.post_blur_diffuse = debug_context.rtgi_post_blur_diffuse_attachment;
+    rtgi_context.post_blur_diffuse2 = debug_context.rtgi_post_blur_diffuse2_attachment;
     rtgi_context.ray_count = debug_context.rtgi_ray_count_attachment;
+    rtgi_context.firefly_factor = debug_context.rtgi_firefly_factor_attachment;
     vsm_virtual_page_table_attachment = debug_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = debug_context.vsm_pointspot_page_table_attachment;
     if (module.resource_root(dst_attachment) == render_target_root) {
@@ -2762,7 +2774,17 @@ auto RendererInstance::record_frame(
           rtgi_context.half_res_normal_roughness,
           rtgi_context.previous_half_res_normal_roughness,
           rtgi_context.half_res_sample_count,
-          rtgi_context.previous_half_res_sample_count}) {
+          rtgi_context.previous_half_res_sample_count,
+          rtgi_context.half_res_diffuse,
+          rtgi_context.previous_half_res_diffuse,
+          rtgi_context.half_res_diffuse2,
+          rtgi_context.previous_half_res_diffuse2,
+          rtgi_context.fast_temporal_history,
+          rtgi_context.previous_fast_temporal_history,
+          rtgi_context.half_res_ao_guide,
+          rtgi_context.previous_half_res_ao_guide,
+          rtgi_context.temporal_perceptual_radiance,
+          rtgi_context.previous_temporal_perceptual_radiance}) {
       module.export_to(history, RTGIContext::HISTORY_REST);
     }
   }

@@ -19,6 +19,8 @@ constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BI
                                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
 constexpr static auto RTGI_TRACE_GROUP_WIDTH = 128_u32;
+constexpr static auto RTGI_POST_BLUR_ALONG = 16_u32;
+constexpr static auto RTGI_POST_BLUR_ACROSS = 4_u32;
 
 static auto rtgi_half_extent(const glm::uvec2 render_size) -> vir::Extent3D {
   return {(render_size.x + 1_u32) / 2_u32, (render_size.y + 1_u32) / 2_u32, 1};
@@ -94,6 +96,7 @@ auto RendererInstance::bind_rtgi_variables(
       .firefly_filter_enabled = static_cast<u32>(cvar.cvar_rtgi_firefly_filter.as_bool()),
       .firefly_perceptual_tolerance = std::clamp(cvar.cvar_rtgi_firefly_tolerance.get(), 0.0f, 16.0f),
       .firefly_clamp_mode = 0,
+      .pre_blur_iterations = std::max(params.shape.rtgi_pre_blur_iterations, 1_u32),
       .pre_blur_base_width = std::clamp(cvar.cvar_rtgi_pre_blur_width.get(), 1.0f, 64.0f),
     }
   );
@@ -121,6 +124,25 @@ auto RendererInstance::bind_rtgi_variables(
     variables.previous_half_res_sample_count,
     self.rtgi_half_res_sample_count[previous_index].attachment_info()
   );
+  program.set(variables.half_res_diffuse, self.rtgi_half_res_diffuse[current_index].attachment_info());
+  program.set(variables.previous_half_res_diffuse, self.rtgi_half_res_diffuse[previous_index].attachment_info());
+  program.set(variables.half_res_diffuse2, self.rtgi_half_res_diffuse2[current_index].attachment_info());
+  program.set(variables.previous_half_res_diffuse2, self.rtgi_half_res_diffuse2[previous_index].attachment_info());
+  program.set(variables.fast_temporal_history, self.rtgi_fast_temporal_history[current_index].attachment_info());
+  program.set(
+    variables.previous_fast_temporal_history,
+    self.rtgi_fast_temporal_history[previous_index].attachment_info()
+  );
+  program.set(variables.half_res_ao_guide, self.rtgi_half_res_ao_guide[current_index].attachment_info());
+  program.set(variables.previous_half_res_ao_guide, self.rtgi_half_res_ao_guide[previous_index].attachment_info());
+  program.set(
+    variables.temporal_perceptual_radiance,
+    self.rtgi_temporal_perceptual_radiance[current_index].attachment_info()
+  );
+  program.set(
+    variables.previous_temporal_perceptual_radiance,
+    self.rtgi_temporal_perceptual_radiance[previous_index].attachment_info()
+  );
 }
 
 auto RendererInstance::allocate_rtgi_resources(this RendererInstance& self, const glm::uvec2 render_size) -> void {
@@ -146,17 +168,37 @@ auto RendererInstance::allocate_rtgi_resources(this RendererInstance& self, cons
     self.rtgi_half_res_sample_count[i] = Texture::create(
       {.format = vir::Format::R16Uint, .extent = half_extent, .usage = history_usage}
     );
+    self.rtgi_half_res_diffuse[i] = Texture::create(
+      {.format = vir::Format::RGBA16Sfloat, .extent = half_extent, .usage = history_usage}
+    );
+    self.rtgi_half_res_diffuse2[i] = Texture::create(
+      {.format = vir::Format::RG16Sfloat, .extent = half_extent, .usage = history_usage}
+    );
+    self.rtgi_fast_temporal_history[i] = Texture::create(
+      {.format = vir::Format::RG16Sfloat, .extent = half_extent, .usage = history_usage}
+    );
+    self.rtgi_half_res_ao_guide[i] = Texture::create(
+      {.format = vir::Format::R16Sfloat, .extent = half_extent, .usage = history_usage}
+    );
+    self.rtgi_temporal_perceptual_radiance[i] = Texture::create(
+      {.format = vir::Format::R16Sfloat, .extent = half_extent, .usage = history_usage}
+    );
   }
 
   auto module = vir::Module{};
   const auto black = vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f);
   const auto zero = vir::ClearValue::rgba_u32(0, 0, 0, 0);
   for (auto i = 0_u32; i < 2; i++) {
-    const auto cleared_depth = module.clear(
-      self.rtgi_half_res_depth[i].import_discarded(module, vir::Access::None),
-      black
-    );
-    module.export_to(cleared_depth, RTGIContext::HISTORY_REST);
+    for (const auto* texture :
+         {&self.rtgi_half_res_depth[i],
+          &self.rtgi_half_res_diffuse[i],
+          &self.rtgi_half_res_diffuse2[i],
+          &self.rtgi_fast_temporal_history[i],
+          &self.rtgi_half_res_ao_guide[i],
+          &self.rtgi_temporal_perceptual_radiance[i]}) {
+      const auto cleared = module.clear(texture->import_discarded(module, vir::Access::None), black);
+      module.export_to(cleared, RTGIContext::HISTORY_REST);
+    }
 
     for (const auto* texture :
          {&self.rtgi_half_res_face_normal[i],
@@ -228,6 +270,56 @@ auto RendererInstance::record_rtgi(
     vir::Format::R16Uint,
     RTGIContext::HISTORY_REST
   );
+  variables.half_res_diffuse = module.declare_image_var(
+    "rtgi half res diffuse",
+    vir::Format::RGBA16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_half_res_diffuse = module.declare_image_var(
+    "rtgi previous half res diffuse",
+    vir::Format::RGBA16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.half_res_diffuse2 = module.declare_image_var(
+    "rtgi half res diffuse2",
+    vir::Format::RG16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_half_res_diffuse2 = module.declare_image_var(
+    "rtgi previous half res diffuse2",
+    vir::Format::RG16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.fast_temporal_history = module.declare_image_var(
+    "rtgi fast temporal history",
+    vir::Format::RG16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_fast_temporal_history = module.declare_image_var(
+    "rtgi previous fast temporal history",
+    vir::Format::RG16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.half_res_ao_guide = module.declare_image_var(
+    "rtgi half res ao guide",
+    vir::Format::R16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_half_res_ao_guide = module.declare_image_var(
+    "rtgi previous half res ao guide",
+    vir::Format::R16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.temporal_perceptual_radiance = module.declare_image_var(
+    "rtgi temporal perceptual radiance",
+    vir::Format::R16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
+  variables.previous_temporal_perceptual_radiance = module.declare_image_var(
+    "rtgi previous temporal perceptual radiance",
+    vir::Format::R16Sfloat,
+    RTGIContext::HISTORY_REST
+  );
   variables.trace_push = module.declare_bytes_var("rtgi trace push", sizeof(RTGITracePush));
   variables.trace_groups = module.declare_u32_var("rtgi trace groups", 0);
   variables.settings = module.declare_bytes_var("rtgi settings", sizeof(GPU::RTGISettings));
@@ -236,13 +328,23 @@ auto RendererInstance::record_rtgi(
   context.half_res_face_normal = variables.half_res_face_normal;
   context.half_res_normal_roughness = variables.half_res_normal_roughness;
   context.half_res_sample_count = variables.half_res_sample_count;
+  context.half_res_diffuse = variables.half_res_diffuse;
+  context.half_res_diffuse2 = variables.half_res_diffuse2;
+  context.fast_temporal_history = variables.fast_temporal_history;
+  context.half_res_ao_guide = variables.half_res_ao_guide;
+  context.temporal_perceptual_radiance = variables.temporal_perceptual_radiance;
 
   // after a reset a depth of 0 (sky) and a count of 0 make every pixel look disoccluded
   std::tie(
     context.previous_half_res_depth,
     context.previous_half_res_face_normal,
     context.previous_half_res_normal_roughness,
-    context.previous_half_res_sample_count
+    context.previous_half_res_sample_count,
+    context.previous_half_res_diffuse,
+    context.previous_half_res_diffuse2,
+    context.previous_fast_temporal_history,
+    context.previous_half_res_ao_guide,
+    context.previous_temporal_perceptual_radiance
   ) = std::tuple_cat( //
     module.set_condition(
       variables.is_reset,
@@ -254,6 +356,11 @@ auto RendererInstance::record_rtgi(
           arm.clear(variables.previous_half_res_face_normal, zero),
           arm.clear(variables.previous_half_res_normal_roughness, zero),
           arm.clear(variables.previous_half_res_sample_count, zero),
+          arm.clear(variables.previous_half_res_diffuse, black),
+          arm.clear(variables.previous_half_res_diffuse2, black),
+          arm.clear(variables.previous_fast_temporal_history, black),
+          arm.clear(variables.previous_half_res_ao_guide, black),
+          arm.clear(variables.previous_temporal_perceptual_radiance, black),
         };
       },
       [&](vir::Module&) {
@@ -262,6 +369,11 @@ auto RendererInstance::record_rtgi(
           variables.previous_half_res_face_normal,
           variables.previous_half_res_normal_roughness,
           variables.previous_half_res_sample_count,
+          variables.previous_half_res_diffuse,
+          variables.previous_half_res_diffuse2,
+          variables.previous_fast_temporal_history,
+          variables.previous_half_res_ao_guide,
+          variables.previous_temporal_perceptual_radiance,
         };
       }
     )
@@ -559,6 +671,325 @@ auto RendererInstance::record_rtgi(
       .end_compute()
   );
 
+  auto pre_filtered_diffuse = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi pre filtered diffuse"}
+  );
+  auto pre_filtered_diffuse2 = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RG16Sfloat, .name = "rtgi pre filtered diffuse2"}
+  );
+  auto ao_guide = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::R8Unorm, .name = "rtgi ao guide"}
+  );
+  auto perceptual_radiance = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::R16Sfloat, .name = "rtgi perceptual radiance"}
+  );
+  auto firefly_factor = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::R16Sfloat, .name = "rtgi firefly factor"}
+  );
+  std::tie(
+    values.camera,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    ray_count_image,
+    pixel_ray_alloc,
+    ray_result,
+    perceptual_rgb_shortness,
+    values.exposure,
+    pre_filtered_diffuse,
+    pre_filtered_diffuse2,
+    ao_guide,
+    perceptual_radiance,
+    firefly_factor
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {context.half_res_face_normal, vir::Access::ComputeSampled},
+         {ray_count_image, vir::Access::ComputeSampled},
+         {pixel_ray_alloc, vir::Access::ComputeSampled},
+         {ray_result, vir::Access::ComputeRead},
+         {perceptual_rgb_shortness, vir::Access::ComputeSampled},
+         {values.exposure, vir::Access::ComputeUniformRead},
+         {pre_filtered_diffuse, vir::Access::ComputeWrite},
+         {pre_filtered_diffuse2, vir::Access::ComputeWrite},
+         {ao_guide, vir::Access::ComputeWrite},
+         {perceptual_radiance, vir::Access::ComputeWrite},
+         {firefly_factor, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi pre filter")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_pre_filter"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.half_res_depth)
+      .bind_image(0, 2, context.half_res_face_normal)
+      .bind_image(0, 3, ray_count_image)
+      .bind_image(0, 4, pixel_ray_alloc)
+      .bind_buffer(0, 5, ray_result)
+      .bind_image(0, 6, perceptual_rgb_shortness)
+      .bind_buffer(0, 7, values.exposure)
+      .bind_image(0, 8, pre_filtered_diffuse)
+      .bind_image(0, 9, pre_filtered_diffuse2)
+      .bind_image(0, 10, ao_guide)
+      .bind_image(0, 11, perceptual_radiance)
+      .bind_image(0, 12, firefly_factor)
+      .push_constants_from(variables.settings)
+      .dispatch_invocations(half_extent.width, half_extent.height, 1)
+      .end_compute()
+  );
+
+  // the pre blur ping pongs between two sets, the second only exists from two iterations on
+  auto accumulate_diffuse = pre_filtered_diffuse;
+  auto accumulate_diffuse2 = pre_filtered_diffuse2;
+  if (shape.rtgi_pre_blur_iterations > 0) {
+    auto ping_diffuse = module.transient_image(
+      {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi pre blurred diffuse"}
+    );
+    auto ping_diffuse2 = module.transient_image(
+      {.extent = half_extent, .format = vir::Format::RG16Sfloat, .name = "rtgi pre blurred diffuse2"}
+    );
+    auto pong_diffuse = vir::ValueID::Invalid;
+    auto pong_diffuse2 = vir::ValueID::Invalid;
+    if (shape.rtgi_pre_blur_iterations >= 2) {
+      pong_diffuse = module.transient_image(
+        {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi pre blurred diffuse pong"}
+      );
+      pong_diffuse2 = module.transient_image(
+        {.extent = half_extent, .format = vir::Format::RG16Sfloat, .name = "rtgi pre blurred diffuse2 pong"}
+      );
+    }
+
+    for (auto i = 0_u32; i < shape.rtgi_pre_blur_iterations; i++) {
+      auto& source_diffuse = i == 0 ? pre_filtered_diffuse : (i % 2 == 1 ? ping_diffuse : pong_diffuse);
+      auto& source_diffuse2 = i == 0 ? pre_filtered_diffuse2 : (i % 2 == 1 ? ping_diffuse2 : pong_diffuse2);
+      auto& destination_diffuse = i % 2 == 0 ? ping_diffuse : pong_diffuse;
+      auto& destination_diffuse2 = i % 2 == 0 ? ping_diffuse2 : pong_diffuse2;
+      std::tie(
+        values.camera,
+        context.half_res_depth,
+        context.half_res_face_normal,
+        source_diffuse,
+        source_diffuse2,
+        firefly_factor,
+        perceptual_radiance,
+        ao_guide,
+        ray_count_image,
+        destination_diffuse,
+        destination_diffuse2
+      ) = std::tuple_cat( //
+        module
+          .begin_compute(
+            {{values.camera, vir::Access::ComputeUniformRead},
+             {context.half_res_depth, vir::Access::ComputeSampled},
+             {context.half_res_face_normal, vir::Access::ComputeSampled},
+             {source_diffuse, vir::Access::ComputeSampled},
+             {source_diffuse2, vir::Access::ComputeSampled},
+             {firefly_factor, vir::Access::ComputeSampled},
+             {perceptual_radiance, vir::Access::ComputeSampled},
+             {ao_guide, vir::Access::ComputeSampled},
+             {ray_count_image, vir::Access::ComputeSampled},
+             {destination_diffuse, vir::Access::ComputeWrite},
+             {destination_diffuse2, vir::Access::ComputeWrite}}
+          )
+          .with_name("rtgi pre blur")
+          .bind_compute_pipeline(render_context.pipeline("rtgi_pre_blur"))
+          .bind_buffer(0, 0, values.camera)
+          .bind_image(0, 1, context.half_res_depth)
+          .bind_image(0, 2, context.half_res_face_normal)
+          .bind_image(0, 3, source_diffuse)
+          .bind_image(0, 4, source_diffuse2)
+          .bind_image(0, 5, firefly_factor)
+          .bind_image(0, 6, perceptual_radiance)
+          .bind_image(0, 7, ao_guide)
+          .bind_image(0, 8, ray_count_image)
+          .bind_image(0, 9, destination_diffuse)
+          .bind_image(0, 10, destination_diffuse2)
+          .push_constants_from(variables.settings)
+          .push_constants_at(static_cast<u32>(sizeof(GPU::RTGISettings)), i)
+          .dispatch_invocations(half_extent.width, half_extent.height, 1)
+          .end_compute()
+      );
+    }
+
+    const auto is_last_in_ping = shape.rtgi_pre_blur_iterations % 2 == 1;
+    accumulate_diffuse = is_last_in_ping ? ping_diffuse : pong_diffuse;
+    accumulate_diffuse2 = is_last_in_ping ? ping_diffuse2 : pong_diffuse2;
+  }
+
+  context.firefly_factor = firefly_factor;
+
+  std::tie(
+    context.half_res_sample_count,
+    context.previous_half_res_sample_count,
+    ray_count_image,
+    reproject_corner,
+    reproject_weights,
+    accumulate_diffuse,
+    accumulate_diffuse2,
+    ao_guide,
+    perceptual_radiance,
+    context.previous_half_res_diffuse,
+    context.previous_half_res_diffuse2,
+    context.previous_fast_temporal_history,
+    context.previous_half_res_ao_guide,
+    context.previous_temporal_perceptual_radiance,
+    context.half_res_diffuse,
+    context.half_res_diffuse2,
+    context.fast_temporal_history,
+    context.half_res_ao_guide,
+    context.temporal_perceptual_radiance
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{context.half_res_sample_count, vir::Access::ComputeRW},
+         {context.previous_half_res_sample_count, vir::Access::ComputeSampled},
+         {ray_count_image, vir::Access::ComputeSampled},
+         {reproject_corner, vir::Access::ComputeSampled},
+         {reproject_weights, vir::Access::ComputeSampled},
+         {accumulate_diffuse, vir::Access::ComputeSampled},
+         {accumulate_diffuse2, vir::Access::ComputeSampled},
+         {ao_guide, vir::Access::ComputeSampled},
+         {perceptual_radiance, vir::Access::ComputeSampled},
+         {context.previous_half_res_diffuse, vir::Access::ComputeSampled},
+         {context.previous_half_res_diffuse2, vir::Access::ComputeSampled},
+         {context.previous_fast_temporal_history, vir::Access::ComputeSampled},
+         {context.previous_half_res_ao_guide, vir::Access::ComputeSampled},
+         {context.previous_temporal_perceptual_radiance, vir::Access::ComputeSampled},
+         {context.half_res_diffuse, vir::Access::ComputeWrite},
+         {context.half_res_diffuse2, vir::Access::ComputeWrite},
+         {context.fast_temporal_history, vir::Access::ComputeWrite},
+         {context.half_res_ao_guide, vir::Access::ComputeWrite},
+         {context.temporal_perceptual_radiance, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi temporal accumulate")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_temporal_accumulate"))
+      .bind_image(0, 0, context.half_res_sample_count)
+      .bind_image(0, 1, context.previous_half_res_sample_count)
+      .bind_image(0, 2, ray_count_image)
+      .bind_image(0, 3, reproject_corner)
+      .bind_image(0, 4, reproject_weights)
+      .bind_image(0, 5, accumulate_diffuse)
+      .bind_image(0, 6, accumulate_diffuse2)
+      .bind_image(0, 7, ao_guide)
+      .bind_image(0, 8, perceptual_radiance)
+      .bind_image(0, 9, context.previous_half_res_diffuse)
+      .bind_image(0, 10, context.previous_half_res_diffuse2)
+      .bind_image(0, 11, context.previous_fast_temporal_history)
+      .bind_image(0, 12, context.previous_half_res_ao_guide)
+      .bind_image(0, 13, context.previous_temporal_perceptual_radiance)
+      .bind_image(0, 14, context.half_res_diffuse)
+      .bind_image(0, 15, context.half_res_diffuse2)
+      .bind_image(0, 16, context.fast_temporal_history)
+      .bind_image(0, 17, context.half_res_ao_guide)
+      .bind_image(0, 18, context.temporal_perceptual_radiance)
+      .push_constants_from(variables.settings)
+      .dispatch_invocations(half_extent.width, half_extent.height, 1)
+      .end_compute()
+  );
+
   context.ray_count = ray_count_image;
+
+  auto horizontal_diffuse = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi post blur horizontal diffuse"}
+  );
+  auto horizontal_diffuse2 = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RG16Sfloat, .name = "rtgi post blur horizontal diffuse2"}
+  );
+  std::tie(
+    values.camera,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    context.half_res_sample_count,
+    context.half_res_ao_guide,
+    context.temporal_perceptual_radiance,
+    context.half_res_diffuse,
+    context.half_res_diffuse2,
+    horizontal_diffuse,
+    horizontal_diffuse2
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {context.half_res_face_normal, vir::Access::ComputeSampled},
+         {context.half_res_sample_count, vir::Access::ComputeSampled},
+         {context.half_res_ao_guide, vir::Access::ComputeSampled},
+         {context.temporal_perceptual_radiance, vir::Access::ComputeSampled},
+         {context.half_res_diffuse, vir::Access::ComputeSampled},
+         {context.half_res_diffuse2, vir::Access::ComputeSampled},
+         {horizontal_diffuse, vir::Access::ComputeWrite},
+         {horizontal_diffuse2, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi post blur horizontal")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_post_blur_horizontal"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.half_res_depth)
+      .bind_image(0, 2, context.half_res_face_normal)
+      .bind_image(0, 3, context.half_res_sample_count)
+      .bind_image(0, 4, context.half_res_ao_guide)
+      .bind_image(0, 5, context.temporal_perceptual_radiance)
+      .bind_image(0, 6, context.half_res_diffuse)
+      .bind_image(0, 7, context.half_res_diffuse2)
+      .bind_image(0, 8, horizontal_diffuse)
+      .bind_image(0, 9, horizontal_diffuse2)
+      .push_constants_from(variables.settings)
+      .dispatch(
+        (half_extent.width + RTGI_POST_BLUR_ALONG - 1_u32) / RTGI_POST_BLUR_ALONG,
+        (half_extent.height + RTGI_POST_BLUR_ACROSS - 1_u32) / RTGI_POST_BLUR_ACROSS,
+        1
+      )
+      .end_compute()
+  );
+
+  context.post_blur_diffuse = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RGBA16Sfloat, .name = "rtgi post blur diffuse"}
+  );
+  context.post_blur_diffuse2 = module.transient_image(
+    {.extent = half_extent, .format = vir::Format::RG16Sfloat, .name = "rtgi post blur diffuse2"}
+  );
+  std::tie(
+    values.camera,
+    context.half_res_depth,
+    context.half_res_face_normal,
+    context.half_res_sample_count,
+    context.half_res_ao_guide,
+    context.temporal_perceptual_radiance,
+    horizontal_diffuse,
+    horizontal_diffuse2,
+    context.post_blur_diffuse,
+    context.post_blur_diffuse2
+  ) = std::tuple_cat( //
+    module
+      .begin_compute(
+        {{values.camera, vir::Access::ComputeUniformRead},
+         {context.half_res_depth, vir::Access::ComputeSampled},
+         {context.half_res_face_normal, vir::Access::ComputeSampled},
+         {context.half_res_sample_count, vir::Access::ComputeSampled},
+         {context.half_res_ao_guide, vir::Access::ComputeSampled},
+         {context.temporal_perceptual_radiance, vir::Access::ComputeSampled},
+         {horizontal_diffuse, vir::Access::ComputeSampled},
+         {horizontal_diffuse2, vir::Access::ComputeSampled},
+         {context.post_blur_diffuse, vir::Access::ComputeWrite},
+         {context.post_blur_diffuse2, vir::Access::ComputeWrite}}
+      )
+      .with_name("rtgi post blur vertical")
+      .bind_compute_pipeline(render_context.pipeline("rtgi_post_blur_vertical"))
+      .bind_buffer(0, 0, values.camera)
+      .bind_image(0, 1, context.half_res_depth)
+      .bind_image(0, 2, context.half_res_face_normal)
+      .bind_image(0, 3, context.half_res_sample_count)
+      .bind_image(0, 4, context.half_res_ao_guide)
+      .bind_image(0, 5, context.temporal_perceptual_radiance)
+      .bind_image(0, 6, horizontal_diffuse)
+      .bind_image(0, 7, horizontal_diffuse2)
+      .bind_image(0, 8, context.post_blur_diffuse)
+      .bind_image(0, 9, context.post_blur_diffuse2)
+      .push_constants_from(variables.settings)
+      .dispatch(
+        (half_extent.width + RTGI_POST_BLUR_ACROSS - 1_u32) / RTGI_POST_BLUR_ACROSS,
+        (half_extent.height + RTGI_POST_BLUR_ALONG - 1_u32) / RTGI_POST_BLUR_ALONG,
+        1
+      )
+      .end_compute()
+  );
 }
 } // namespace ox

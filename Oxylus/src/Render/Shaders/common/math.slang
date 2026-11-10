@@ -228,6 +228,10 @@ public func gaussian_weight(f32 r) -> f32 {
     return exp(-0.66 * square(r * 2.71828182846 * 0.5));
 }
 
+public func softplus(f32 z) -> f32 {
+    return max(z, 0.0) + log(1.0 + exp(-abs(z)));
+}
+
 public func plane_distance(f32x3 position, f32x3 normal, f32x3 other_position) -> f32 {
     return dot(position - other_position, normal);
 }

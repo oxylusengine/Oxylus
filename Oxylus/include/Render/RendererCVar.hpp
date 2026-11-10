@@ -69,6 +69,8 @@ struct RendererCVar {
   AutoCVar_Int cvar_rtgi_max_rays_per_pixel;
   AutoCVar_Int cvar_rtgi_firefly_filter;
   AutoCVar_Float cvar_rtgi_firefly_tolerance;
+  AutoCVar_Int cvar_rtgi_pre_blur;
+  AutoCVar_Int cvar_rtgi_pre_blur_iterations;
   AutoCVar_Float cvar_rtgi_pre_blur_width;
   AutoCVar_Int cvar_rtgi_ddgi_bounce;
   AutoCVar_Float cvar_rtgi_bounce_range;

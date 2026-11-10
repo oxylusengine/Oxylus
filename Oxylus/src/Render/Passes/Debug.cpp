@@ -142,6 +142,37 @@ auto RendererInstance::apply_debug_view(
 
       return dst;
     }
+    case GPU::DebugView::RTGIDenoised: {
+      if (!shape.has_rtgi) {
+        return dst;
+      }
+
+      std::tie(
+        dst,
+        context.rtgi_post_blur_diffuse_attachment,
+        context.rtgi_post_blur_diffuse2_attachment,
+        context.rtgi_half_res_normal_roughness_attachment
+      ) = std::tuple_cat( //
+        module
+          .begin_rendering(
+            {{dst, vir::Access::ColorWrite},
+             {context.rtgi_post_blur_diffuse_attachment, vir::Access::FragmentSampled},
+             {context.rtgi_post_blur_diffuse2_attachment, vir::Access::FragmentSampled},
+             {context.rtgi_half_res_normal_roughness_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("rtgi denoised debug pass")
+          .bind_graphics_pipeline(render_context.pipeline("rtgi_debug_denoised"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_image(0, 0, context.rtgi_post_blur_diffuse_attachment)
+          .bind_image(0, 1, context.rtgi_post_blur_diffuse2_attachment)
+          .bind_image(0, 2, context.rtgi_half_res_normal_roughness_attachment)
+          .draw(3, 1)
+          .end_rendering()
+      );
+
+      return dst;
+    }
     case GPU::DebugView::RTGIRayCount: {
       if (!shape.has_rtgi) {
         return dst;
@@ -158,6 +189,27 @@ auto RendererInstance::apply_debug_view(
           .set_scissor(0, vir::Rect2D::framebuffer())
           .bind_image(0, 0, context.rtgi_ray_count_attachment)
           .push_constants_from(prepared.rtgi.settings)
+          .draw(3, 1)
+          .end_rendering()
+      );
+
+      return dst;
+    }
+    case GPU::DebugView::RTGIFireflyFactor: {
+      if (!shape.has_rtgi) {
+        return dst;
+      }
+
+      std::tie(dst, context.rtgi_firefly_factor_attachment) = std::tuple_cat( //
+        module
+          .begin_rendering(
+            {{dst, vir::Access::ColorWrite}, {context.rtgi_firefly_factor_attachment, vir::Access::FragmentSampled}}
+          )
+          .with_name("rtgi firefly factor debug pass")
+          .bind_graphics_pipeline(render_context.pipeline("rtgi_debug_firefly_factor"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_image(0, 0, context.rtgi_firefly_factor_attachment)
           .draw(3, 1)
           .end_rendering()
       );

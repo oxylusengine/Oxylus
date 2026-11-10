@@ -132,7 +132,9 @@ enum class DebugView : i32 {
   SSSRSampleCount,
   RTGIHalfRes,
   RTGIRaw,
+  RTGIDenoised,
   RTGIRayCount,
+  RTGIFireflyFactor,
 
   Count,
 };

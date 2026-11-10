@@ -45,7 +45,7 @@ func reproject_pixel(u32x2 half_pixel, in RTGISettings settings) -> u32 {
     // the history was rasterized with the previous frame's jitter
     let previous_clip = mul(camera.previous_projection_view, f32x4(position_ws, 1.0));
     let uv_prev = previous_clip.xy / previous_clip.w * 0.5 + 0.5 + camera.temporalaa_jitter_prev / camera.resolution;
-    let is_in_screen = previous_clip.w > 0.0 && all(uv_prev > 0.0) && all(uv_prev < 1.0);
+    let is_in_screen = and(previous_clip.w > 0.0, and(all(uv_prev > 0.0), all(uv_prev < 1.0)));
     let in_screen = f32(is_in_screen);
 
     let bilinear = com::bilinear_filter(saturate(uv_prev), half_size);

@@ -336,6 +336,8 @@ struct FrameShape {
   u32 probe_volume_count = 0;
   u32 ddgi_probe_count = 0;
   u32 ddgi_rays_per_probe = 0;
+  // the pre blur is one pass per iteration, 0 skips it
+  u32 rtgi_pre_blur_iterations = 0;
   std::vector<std::string> stages = {};
 
   auto operator==(const FrameShape&) const -> bool = default;
@@ -661,7 +663,10 @@ struct DebugContext {
   vir::ValueID rtgi_half_res_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID rtgi_half_res_normal_roughness_attachment = vir::ValueID::Invalid;
   vir::ValueID rtgi_radiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_post_blur_diffuse_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_post_blur_diffuse2_attachment = vir::ValueID::Invalid;
   vir::ValueID rtgi_ray_count_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_firefly_factor_attachment = vir::ValueID::Invalid;
 };
 
 // Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as
@@ -746,6 +751,16 @@ struct RTGIContext {
 
   vir::ValueID half_res_sample_count = vir::ValueID::Invalid;
   vir::ValueID previous_half_res_sample_count = vir::ValueID::Invalid;
+  vir::ValueID half_res_diffuse = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_diffuse = vir::ValueID::Invalid;
+  vir::ValueID half_res_diffuse2 = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_diffuse2 = vir::ValueID::Invalid;
+  vir::ValueID fast_temporal_history = vir::ValueID::Invalid;
+  vir::ValueID previous_fast_temporal_history = vir::ValueID::Invalid;
+  vir::ValueID half_res_ao_guide = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_ao_guide = vir::ValueID::Invalid;
+  vir::ValueID temporal_perceptual_radiance = vir::ValueID::Invalid;
+  vir::ValueID previous_temporal_perceptual_radiance = vir::ValueID::Invalid;
 
   vir::ValueID tlas_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
@@ -761,6 +776,9 @@ struct RTGIContext {
 
   vir::ValueID radiance = vir::ValueID::Invalid;
   vir::ValueID ray_count = vir::ValueID::Invalid;
+  vir::ValueID firefly_factor = vir::ValueID::Invalid;
+  vir::ValueID post_blur_diffuse = vir::ValueID::Invalid;
+  vir::ValueID post_blur_diffuse2 = vir::ValueID::Invalid;
 };
 
 struct PostProcessContext {
@@ -943,6 +961,16 @@ struct RTGIVariables {
   vir::ValueID previous_half_res_normal_roughness = vir::ValueID::Invalid;
   vir::ValueID half_res_sample_count = vir::ValueID::Invalid;
   vir::ValueID previous_half_res_sample_count = vir::ValueID::Invalid;
+  vir::ValueID half_res_diffuse = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_diffuse = vir::ValueID::Invalid;
+  vir::ValueID half_res_diffuse2 = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_diffuse2 = vir::ValueID::Invalid;
+  vir::ValueID fast_temporal_history = vir::ValueID::Invalid;
+  vir::ValueID previous_fast_temporal_history = vir::ValueID::Invalid;
+  vir::ValueID half_res_ao_guide = vir::ValueID::Invalid;
+  vir::ValueID previous_half_res_ao_guide = vir::ValueID::Invalid;
+  vir::ValueID temporal_perceptual_radiance = vir::ValueID::Invalid;
+  vir::ValueID previous_temporal_perceptual_radiance = vir::ValueID::Invalid;
   vir::ValueID trace_push = vir::ValueID::Invalid;
   vir::ValueID trace_groups = vir::ValueID::Invalid;
   vir::ValueID settings = vir::ValueID::Invalid;
@@ -1553,6 +1581,11 @@ private:
   std::array<Texture, 2> rtgi_half_res_face_normal{};
   std::array<Texture, 2> rtgi_half_res_normal_roughness{};
   std::array<Texture, 2> rtgi_half_res_sample_count{};
+  std::array<Texture, 2> rtgi_half_res_diffuse{};
+  std::array<Texture, 2> rtgi_half_res_diffuse2{};
+  std::array<Texture, 2> rtgi_fast_temporal_history{};
+  std::array<Texture, 2> rtgi_half_res_ao_guide{};
+  std::array<Texture, 2> rtgi_temporal_perceptual_radiance{};
 
   Texture vsm_virtual_page_table = {};
   Texture vsm_pointspot_virtual_page_table = {};

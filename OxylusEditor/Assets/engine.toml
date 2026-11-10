@@ -391,13 +391,48 @@ path = "passes/rtgi_blend_rays.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rtgi_pre_filter"
+path = "passes/rtgi_pre_filter.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_pre_blur"
+path = "passes/rtgi_pre_blur.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rtgi_temporal_reproject"
 path = "passes/rtgi_temporal_reproject.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "rtgi_temporal_accumulate"
+path = "passes/rtgi_temporal_accumulate.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_post_blur_horizontal"
+path = "passes/rtgi_post_blur.slang"
+entry_points = ["cs_horizontal"]
+
+[[shader_sessions.programs]]
+name = "rtgi_post_blur_vertical"
+path = "passes/rtgi_post_blur.slang"
+entry_points = ["cs_vertical"]
+
+[[shader_sessions.programs]]
+name = "rtgi_debug_denoised"
+path = "passes/rtgi_debug_denoised.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "rtgi_debug_ray_count"
 path = "passes/rtgi_debug_ray_count.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_debug_firefly_factor"
+path = "passes/rtgi_debug_firefly_factor.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
