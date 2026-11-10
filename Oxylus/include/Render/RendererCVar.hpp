@@ -72,8 +72,10 @@ struct RendererCVar {
   AutoCVar_Int cvar_rtgi_pre_blur;
   AutoCVar_Int cvar_rtgi_pre_blur_iterations;
   AutoCVar_Float cvar_rtgi_pre_blur_width;
+  AutoCVar_Int cvar_rtgi_pioneer_guiding;
   AutoCVar_Int cvar_rtgi_ddgi_bounce;
   AutoCVar_Float cvar_rtgi_bounce_range;
+  AutoCVar_Float cvar_rtgi_guide_concentration;
 
   AutoCVar_Int cvar_ddgi_enable;
   AutoCVar_Int cvar_ddgi_rays_per_probe;

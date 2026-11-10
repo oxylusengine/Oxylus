@@ -386,6 +386,22 @@ entry_points = ["rgs_main", "miss_main", "shadow_miss_main", "closesthit_main", 
 requires = ["ray_tracing", "ray_tracing_pipeline", "bindless"]
 
 [[shader_sessions.programs]]
+name = "rtgi_pioneer"
+path = "passes/rtgi_pioneer.slang"
+entry_points = ["rgs_pioneer", "miss_main", "shadow_miss_main", "closesthit_main", "anyhit_main"]
+requires = ["ray_tracing", "ray_tracing_pipeline", "bindless"]
+
+[[shader_sessions.programs]]
+name = "rtgi_guide_resample_h"
+path = "passes/rtgi_guide_resample_h.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "rtgi_guide_resample_v"
+path = "passes/rtgi_guide_resample_v.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rtgi_blend_rays"
 path = "passes/rtgi_blend_rays.slang"
 entry_points = ["cs_main"]

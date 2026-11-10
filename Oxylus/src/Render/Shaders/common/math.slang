@@ -183,6 +183,32 @@ public func build_orthonormal_basis(f32x3 n) -> f32x3x3 {
     return transpose(f32x3x3(b1, b2, n));
 }
 
+public struct TangentBasis {
+    public f32x3 tangent;
+    public f32x3 bitangent;
+    public f32x3 axis;
+
+    public func to_world(f32x3 local) -> f32x3 {
+        return tangent * local.x + bitangent * local.y + axis * local.z;
+    }
+
+    public func to_local(f32x3 world) -> f32x3 {
+        return f32x3(dot(tangent, world), dot(bitangent, world), dot(axis, world));
+    }
+};
+
+public func build_tangent_basis(f32x3 axis) -> TangentBasis {
+    TangentBasis basis;
+    basis.tangent = normalize(cross(axis, f32x3(0.0, 0.0, 1.0) + 0.0001));
+    basis.bitangent = cross(basis.tangent, axis);
+    basis.axis = axis;
+    return basis;
+}
+
+public func cosine_hemi_pdf(f32x3 normal, f32x3 direction) -> f32 {
+    return max(dot(normal, direction), 0.0) / PI;
+}
+
 public func unpack_u32_low(u32 packed) -> u32 { return packed & 0xFFFF; }
 public func unpack_u32_high(u32 packed) -> u32 { return (packed >> 16) & 0xFFFF; }
 

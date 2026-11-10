@@ -126,6 +126,18 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   );
   self.cvar_rtgi_ddgi_bounce
     .init(self.system, "rr.rtgi_ddgi_bounce", "rtgi hits sample DDGI for their indirect bounce", 1);
+  self.cvar_rtgi_pioneer_guiding.init(
+    self.system,
+    "rr.rtgi_pioneer_guiding",
+    "steer rtgi rays toward bright spots found by sparse pioneer rays",
+    1
+  );
+  self.cvar_rtgi_guide_concentration.init(
+    self.system,
+    "rr.rtgi_guide_concentration",
+    "how strongly guided rtgi rays favour the guide direction",
+    0.92f
+  );
 
   self.cvar_ddgi_enable.init(self.system, "rr.ddgi", "enable dynamic diffuse global illumination probe volumes", 1);
   self.cvar_ddgi_rays_per_probe
@@ -304,6 +316,8 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["pre_blur_width"] = self.cvar_rtgi_pre_blur_width.get();
   writer["bounce_range"] = self.cvar_rtgi_bounce_range.get();
   writer["ddgi_bounce"] = self.cvar_rtgi_ddgi_bounce.as_bool();
+  writer["pioneer_guiding"] = self.cvar_rtgi_pioneer_guiding.as_bool();
+  writer["guide_concentration"] = self.cvar_rtgi_guide_concentration.get();
   writer.end_obj();
 
   writer["ddgi"].begin_obj();
@@ -475,6 +489,12 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     }
     if (auto bounce = rtgi_obj["ddgi_bounce"]; !bounce.error()) {
       self.cvar_rtgi_ddgi_bounce.set(bounce.get_bool());
+    }
+    if (auto guiding = rtgi_obj["pioneer_guiding"]; !guiding.error()) {
+      self.cvar_rtgi_pioneer_guiding.set(guiding.get_bool());
+    }
+    if (auto concentration = rtgi_obj["guide_concentration"]; !concentration.error()) {
+      self.cvar_rtgi_guide_concentration.set(static_cast<f32>(concentration.get_double()));
     }
   }
 

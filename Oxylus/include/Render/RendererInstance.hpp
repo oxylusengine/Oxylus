@@ -325,6 +325,7 @@ struct FrameShape {
   bool has_ddgi = false;
   bool has_sssr = false;
   bool has_rtgi = false;
+  bool has_rtgi_pioneer = false;
   bool has_tlas = false;
   bool has_debug_renderer = false;
   bool use_mesh_shaders = false;

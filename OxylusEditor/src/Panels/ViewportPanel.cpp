@@ -1381,6 +1381,8 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
       ui.drag("Pre Blur Width", cvar_sys.cvar_rtgi_pre_blur_width, 1.0f, 64.0f);
       ui.drag("Bounce Range", cvar_sys.cvar_rtgi_bounce_range, 0.0f, 16.0f);
       ui.checkbox("DDGI Bounce", cvar_sys.cvar_rtgi_ddgi_bounce);
+      ui.checkbox("Pioneer Guiding", cvar_sys.cvar_rtgi_pioneer_guiding);
+      ui.drag("Guide Concentration", cvar_sys.cvar_rtgi_guide_concentration, 0.0f, 0.99f);
     }
   );
 

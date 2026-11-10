@@ -36,12 +36,14 @@ struct TraceConstants {
     u32 distance_culling_enabled;
     u32 frame_index;
     u32 ray_list_limit;
+    u32 is_guiding_enabled;
     f32 max_distance;
     f32 shadow_ray_offset;
     f32 normal_bias;
     f32 view_bias;
     f32 sun_intensity;
     f32 ao_range;
+    f32 guide_concentration;
     f32x3 sun_direction;
     f32x3 ambient_color;
     f32x3 light_grid_origin;

@@ -11,8 +11,25 @@
 
 namespace ox {
 using RTGIGBufferPush = PushConstants<glm::uvec2>;
-using RTGITracePush =
-  PushConstants<u32, u32, u32, u32, u32, u32, u32, f32, f32, f32, f32, f32, f32, glm::vec3, glm::vec3, glm::vec3>;
+using RTGITracePush = PushConstants<
+  u32,
+  u32,
+  u32,
+  u32,
+  u32,
+  u32,
+  u32,
+  u32,
+  f32,
+  f32,
+  f32,
+  f32,
+  f32,
+  f32,
+  f32,
+  glm::vec3,
+  glm::vec3,
+  glm::vec3>;
 
 constexpr static auto TRANSIENT_BUFFER_USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
@@ -65,12 +82,14 @@ auto RendererInstance::bind_rtgi_variables(
       static_cast<u32>(params.ddgi_distance_culling_enabled),
       params.frame_index & 0xFFF_u32,
       ray_list_limit,
+      static_cast<u32>(params.shape.has_rtgi_pioneer),
       cvar.cvar_rtgi_max_distance.get(),
       cvar.cvar_ddgi_shadow_ray_offset.get(),
       cvar.cvar_ddgi_normal_bias.get(),
       cvar.cvar_ddgi_view_bias.get(),
       self.directional_light.intensity,
       std::clamp(cvar.cvar_rtgi_bounce_range.get(), 0.0f, 16.0f),
+      std::clamp(cvar.cvar_rtgi_guide_concentration.get(), 0.0f, 0.999f),
       self.directional_light.direction,
       self.sky_data.ambient_color,
       self.light_grid_origin
@@ -541,6 +560,160 @@ auto RendererInstance::record_rtgi(
       .end_compute()
   );
 
+  const auto pioneer_grid = glm::uvec2(
+    (half_extent.width + GPU::RTGI_PIONEER_GRID_DIV - 1_u32) / GPU::RTGI_PIONEER_GRID_DIV,
+    (half_extent.height + GPU::RTGI_PIONEER_GRID_DIV - 1_u32) / GPU::RTGI_PIONEER_GRID_DIV
+  );
+  const auto pioneer_extent = vir::Extent3D{pioneer_grid.x, pioneer_grid.y, 1};
+  auto pioneer_guide_hit_y = module.transient_image(
+    {.extent = pioneer_extent, .format = vir::Format::RGBA32Sfloat, .name = "rtgi pioneer guide hit y"}
+  );
+  if (shape.has_rtgi_pioneer) {
+    auto pioneer_hit_y = module.transient_image(
+      {.extent = pioneer_extent, .format = vir::Format::RGBA32Sfloat, .name = "rtgi pioneer hit y"}
+    );
+    auto pioneer_pass = //
+      module
+        .begin_compute(
+          {{context.tlas_buffer, vir::Access::RayTracingRead},
+           {context.probe_volumes_buffer, vir::Access::RayTracingRead},
+           {values.mesh_instances, vir::Access::RayTracingRead},
+           {values.meshes, vir::Access::RayTracingRead},
+           {values.transforms_world, vir::Access::RayTracingRead},
+           {values.materials, vir::Access::RayTracingRead},
+           {values.lights, vir::Access::RayTracingRead},
+           {context.sky_view_lut_attachment, vir::Access::RayTracingSampled},
+           {context.sky_transmittance_lut_attachment, vir::Access::RayTracingSampled},
+           {context.irradiance_attachment, vir::Access::RayTracingSampled},
+           {context.distance_attachment, vir::Access::RayTracingSampled},
+           {context.probe_states_buffer, vir::Access::RayTracingRead},
+           {context.pointspot_page_table_attachment, vir::Access::RayTracingSampled},
+           {context.vsm_physical_pages_attachment, vir::Access::RayTracingSampled},
+           {values.camera, vir::Access::RayTracingUniformRead},
+           {context.half_res_depth, vir::Access::RayTracingSampled},
+           {context.half_res_face_normal, vir::Access::RayTracingSampled},
+           {pioneer_hit_y, vir::Access::RayTracingWrite},
+           {values.atmosphere, vir::Access::RayTracingRead},
+           {context.light_grid_buffer, vir::Access::RayTracingRead},
+           {context.pointspot_views_buffer, vir::Access::RayTracingRead}}
+        )
+        .with_name("rtgi pioneer trace")
+        .bind_ray_tracing_pipeline(render_context.pipeline("rtgi_pioneer"));
+    std::tie(
+      context.tlas_buffer,
+      context.probe_volumes_buffer,
+      values.mesh_instances,
+      values.meshes,
+      values.transforms_world,
+      values.materials,
+      values.lights,
+      context.sky_view_lut_attachment,
+      context.sky_transmittance_lut_attachment,
+      context.irradiance_attachment,
+      context.distance_attachment,
+      context.probe_states_buffer,
+      context.pointspot_page_table_attachment,
+      context.vsm_physical_pages_attachment,
+      values.camera,
+      context.half_res_depth,
+      context.half_res_face_normal,
+      pioneer_hit_y,
+      values.atmosphere,
+      context.light_grid_buffer,
+      context.pointspot_views_buffer
+    ) = std::tuple_cat( //
+      bind_vsm_pointspot_spec_constants(pioneer_pass)
+        .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
+        .bind_buffer(0, 1, context.probe_volumes_buffer)
+        .bind_buffer(0, 2, values.mesh_instances)
+        .bind_buffer(0, 3, values.meshes)
+        .bind_buffer(0, 4, values.transforms_world)
+        .bind_buffer(0, 5, values.materials)
+        .bind_buffer(0, 6, values.lights)
+        .bind_image(0, 7, context.sky_view_lut_attachment)
+        .bind_image(0, 8, context.sky_transmittance_lut_attachment)
+        .bind_sampler(0, 9, render_context.cached_sampler_handle(LinearSamplerClamped))
+        .bind_image(0, 10, context.irradiance_attachment)
+        .bind_image(0, 11, context.distance_attachment)
+        .bind_buffer(0, 12, context.probe_states_buffer)
+        .bind_image(0, 13, context.pointspot_page_table_attachment)
+        .bind_image(0, 14, context.vsm_physical_pages_attachment)
+        .bind_buffer(0, 15, values.camera)
+        .bind_image(0, 16, context.half_res_depth)
+        .bind_image(0, 17, context.half_res_face_normal)
+        .bind_image(0, 18, pioneer_hit_y)
+        .specialize_constant(0, std::to_underlying(shape.scene_flags))
+        .push_constant_address(0, values.atmosphere)
+        .push_constant_address(8, context.light_grid_buffer)
+        .push_constant_address(16, context.pointspot_views_buffer)
+        .push_constants_from_at(24, variables.trace_push)
+        .trace_rays(pioneer_grid.x, pioneer_grid.y, 1)
+        .end_compute()
+    );
+
+    auto h_resample_hit_y = module.transient_image(
+      {.extent = pioneer_extent, .format = vir::Format::RGBA32Sfloat, .name = "rtgi guide resample h hit y"}
+    );
+    auto h_resample_weight = module.transient_image(
+      {.extent = pioneer_extent, .format = vir::Format::RG32Sfloat, .name = "rtgi guide resample h weight"}
+    );
+    std::tie(
+      values.camera,
+      context.half_res_depth,
+      pioneer_hit_y,
+      h_resample_hit_y,
+      h_resample_weight
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{values.camera, vir::Access::ComputeUniformRead},
+           {context.half_res_depth, vir::Access::ComputeSampled},
+           {pioneer_hit_y, vir::Access::ComputeSampled},
+           {h_resample_hit_y, vir::Access::ComputeWrite},
+           {h_resample_weight, vir::Access::ComputeWrite}}
+        )
+        .with_name("rtgi guide resample horizontal")
+        .bind_compute_pipeline(render_context.pipeline("rtgi_guide_resample_h"))
+        .bind_buffer(0, 0, values.camera)
+        .bind_image(0, 1, context.half_res_depth)
+        .bind_image(0, 2, pioneer_hit_y)
+        .bind_image(0, 3, h_resample_hit_y)
+        .bind_image(0, 4, h_resample_weight)
+        .push_constants_from(variables.settings)
+        .dispatch_invocations(pioneer_grid.x, pioneer_grid.y, 1)
+        .end_compute()
+    );
+
+    std::tie(
+      values.camera,
+      context.half_res_depth,
+      h_resample_hit_y,
+      h_resample_weight,
+      pioneer_guide_hit_y
+    ) = std::tuple_cat( //
+      module
+        .begin_compute(
+          {{values.camera, vir::Access::ComputeUniformRead},
+           {context.half_res_depth, vir::Access::ComputeSampled},
+           {h_resample_hit_y, vir::Access::ComputeSampled},
+           {h_resample_weight, vir::Access::ComputeSampled},
+           {pioneer_guide_hit_y, vir::Access::ComputeWrite}}
+        )
+        .with_name("rtgi guide resample vertical")
+        .bind_compute_pipeline(render_context.pipeline("rtgi_guide_resample_v"))
+        .bind_buffer(0, 0, values.camera)
+        .bind_image(0, 1, context.half_res_depth)
+        .bind_image(0, 2, h_resample_hit_y)
+        .bind_image(0, 3, h_resample_weight)
+        .bind_image(0, 4, pioneer_guide_hit_y)
+        .push_constants_from(variables.settings)
+        .dispatch_invocations(pioneer_grid.x, pioneer_grid.y, 1)
+        .end_compute()
+    );
+  } else {
+    pioneer_guide_hit_y = module.clear(pioneer_guide_hit_y, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f));
+  }
+
   auto trace_pass = //
     module
       .begin_compute(
@@ -562,6 +735,7 @@ auto RendererInstance::record_rtgi(
          {context.half_res_depth, vir::Access::RayTracingSampled},
          {context.half_res_face_normal, vir::Access::RayTracingSampled},
          {context.half_res_sample_count, vir::Access::RayTracingSampled},
+         {pioneer_guide_hit_y, vir::Access::RayTracingSampled},
          {ray_list, vir::Access::RayTracingRead},
          {counters, vir::Access::RayTracingRead},
          {ray_result, vir::Access::RayTracingWrite},
@@ -590,6 +764,7 @@ auto RendererInstance::record_rtgi(
     context.half_res_depth,
     context.half_res_face_normal,
     context.half_res_sample_count,
+    pioneer_guide_hit_y,
     ray_list,
     counters,
     ray_result,
@@ -620,6 +795,7 @@ auto RendererInstance::record_rtgi(
       .bind_buffer(0, 19, counters)
       .bind_buffer(0, 20, ray_result)
       .bind_image(0, 21, context.half_res_sample_count)
+      .bind_image(0, 22, pioneer_guide_hit_y)
       .specialize_constant(0, std::to_underlying(shape.scene_flags))
       .push_constant_address(0, values.atmosphere)
       .push_constant_address(8, context.light_grid_buffer)
