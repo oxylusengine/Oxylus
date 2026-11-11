@@ -7,6 +7,7 @@
 #include "Utils/PendingPick.hpp"
 #include "Utils/SceneManager.hpp"
 #include "Utils/SceneTarget.hpp"
+#include "Utils/VertexSnap.hpp"
 
 namespace ox {
 class ViewportPanel : public EditorPanelState {
@@ -80,6 +81,8 @@ private:
   bool use_snap = true;
   f32 snap_amount = 1.f;
   f32 rotate_snap_amount = 45.f;
+
+  VertexSnap vertex_snap = {};
 
   f32 volume_level = 0.f;
 

@@ -1605,7 +1605,17 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
     UI::property("Use Snap", &self.use_snap);
     UI::property<f32>("Snap Step", &self.snap_amount, 0.5f, 100.0f, nullptr, 0.5f, "%.1f");
-    UI::property<f32>("Rotate Snap Step", &self.snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>("Rotate Snap Step", &self.rotate_snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>(
+      "Vertex Snap Radius",
+      &self.vertex_snap.radius,
+      1.0f,
+      200.0f,
+      "Hold V while moving to drag the selection by its vertex nearest the cursor. It snaps onto the nearest mesh "
+      "or sprite vertex within this many pixels.",
+      1.0f,
+      "%.0f px"
+    );
     UI::end_properties();
   }
 }
@@ -1814,6 +1824,8 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
 
+  self.vertex_snap.is_active = false;
+
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_held(ScanCode::LeftControl)) {
     if (input_sys.get_key_pressed(ScanCode::Q)) {
@@ -1894,6 +1906,20 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   }
 
   if (selected_entity == flecs::entity::null())
+    return;
+
+  const auto is_vertex_snapping = self.vertex_snap.update({
+    .scene = self.editor_scene->get_scene().get(),
+    .camera = &cam,
+    .selected_entity = selected_entity,
+    .rect_min = {self.viewport_bounds_[0].x, self.viewport_bounds_[0].y},
+    .rect_max = {self.viewport_bounds_[1].x, self.viewport_bounds_[1].y},
+    .is_translating = (self.gizmo_type & ImGuizmo::TRANSLATE) != 0,
+    .is_gizmo_dragging = ImGuizmo::IsUsing(),
+    .is_hovered = self.is_viewport_hovered,
+    .can_begin_drag = self.is_viewport_hovered && !self.is_ui_capturing_mouse && !self.is_menubar_hovered,
+  });
+  if (is_vertex_snapping)
     return;
 
   if (auto* tc = selected_entity.try_get_mut<TransformComponent>()) {
@@ -2230,7 +2256,7 @@ auto ViewportPanel::mouse_picking_stages(
   self.resolve_pending_pick(self.pending_pick_2d, true);
 
   auto& render_context = App::get_rendercontext();
-  const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+  const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing() || self.vertex_snap.is_active;
   const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
                            !self.is_ui_capturing_mouse && !self.is_menubar_hovered && !self.pending_pick_2d.pending &&
                            !self.pending_pick_3d.pending;
