@@ -338,15 +338,26 @@ func miss_main(inout ProbeRayPayload payload) -> void {
 [[require(spvRayTracingKHR, spvRayQueryKHR)]]
 func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) -> void {
     let hit_distance = RayTCurrent();
-    if (HitKind() != HIT_KIND_TRIANGLE_FRONT_FACE) {
-        payload.hit_distance = -hit_distance;
-        return;
+    let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
+    let is_front_face = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    if (!is_front_face) {
+        let backface_triangle = resolve_ray_triangle(geometry, InstanceID(), PrimitiveIndex());
+        var is_two_sided = false;
+        if (backface_triangle.valid) {
+            let material_flags = materials[backface_triangle.material_index].flags;
+            is_two_sided = ((material_flags & MaterialFlag::AlphaMask) != 0) ||
+                           ((material_flags & MaterialFlag::AlphaBlend) != 0);
+        }
+
+        if (!is_two_sided) {
+            payload.hit_distance = -hit_distance;
+            return;
+        }
     }
 
     payload.hit_distance = hit_distance;
 
     let volume = probe_volumes[constants.volume_index];
-    let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
     let direction = WorldRayDirection();
 
     let use_radiance_cache = constants.distance_culling_enabled != 0 &&
@@ -359,7 +370,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         }
 
         let hit_position = WorldRayOrigin() + direction * hit_distance;
-        let face_normal = triangle.face_normal();
+        let face_normal = (is_front_face ? 1.0 : -1.0) * triangle.face_normal();
 
         ProbeSampleParams params;
         params.world_position = hit_position;
@@ -391,7 +402,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         InstanceID(),
         PrimitiveIndex(),
         attributes.barycentrics,
-        true,
+        is_front_face,
         HIT_TEXTURE_LOD
     );
     if (!hit.valid) {

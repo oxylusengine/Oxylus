@@ -6,7 +6,7 @@ public constexpr static f32 DISTANCE_SHARPNESS = 50.0;
 public constexpr static f32 IRRADIANCE_ENCODING_GAMMA = 5.0;
 
 public constexpr static bool SHARP_DISTANCE = true;
-public constexpr static f32 DISTANCE_VARIANCE_BIAS = 0.01;
+public constexpr static f32 DISTANCE_VARIANCE_BIAS = 0.05;
 
 public static const u32 PROBE_INACTIVE_BIT = 1u;
 public static const u32 PROBE_UPDATE_BIT = 2u;
@@ -17,6 +17,9 @@ public static const u32 PROBE_MESH_DISTANCE_GRACE_SHIFT = 8u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_MASK = 0x0f00u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_UPDATES = 8u;
 public static const u32 PROBE_MESH_DISTANCE_RECHECK_INTERVAL = 32u;
+public static const u32 PROBE_INSIDE_VOTES_SHIFT = 12u;
+public static const u32 PROBE_INSIDE_VOTES_MASK = 0xf000u;
+public static const u32 PROBE_INSIDE_VOTES_MAX = 4u;
 public static const u32 PROBE_INTERVAL_SHIFT = 16u;
 public static const u32 PROBE_INTERVAL_MASK = 0x00ff0000u;
 
@@ -51,6 +54,10 @@ public func probe_mesh_distance_grace(u32 flags) -> u32 {
     return (flags & PROBE_MESH_DISTANCE_GRACE_MASK) >> PROBE_MESH_DISTANCE_GRACE_SHIFT;
 }
 
+public func probe_inside_votes(u32 flags) -> u32 {
+    return (flags & PROBE_INSIDE_VOTES_MASK) >> PROBE_INSIDE_VOTES_SHIFT;
+}
+
 public func probe_update_interval(u32 flags) -> u32 {
     return max((flags & PROBE_INTERVAL_MASK) >> PROBE_INTERVAL_SHIFT, 1u);
 }
@@ -67,6 +74,7 @@ public func probe_pack_flags(
     bool update,
     bool reset,
     u32 mesh_distance_grace,
+    u32 inside_votes,
     u32 interval
 ) -> u32 {
     let inactive = inside_geometry || mesh_distant;
@@ -76,6 +84,7 @@ public func probe_pack_flags(
            (inside_geometry ? PROBE_INSIDE_GEOMETRY_BIT : 0u) |
            (mesh_distant ? PROBE_MESH_DISTANCE_BIT : 0u) |
            ((mesh_distance_grace << PROBE_MESH_DISTANCE_GRACE_SHIFT) & PROBE_MESH_DISTANCE_GRACE_MASK) |
+           ((inside_votes << PROBE_INSIDE_VOTES_SHIFT) & PROBE_INSIDE_VOTES_MASK) |
            ((interval << PROBE_INTERVAL_SHIFT) & PROBE_INTERVAL_MASK);
 }
 
@@ -405,13 +414,13 @@ public func sample_probe_volume(
             let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
-            chebyshev = chebyshev * chebyshev * chebyshev;
+            chebyshev = chebyshev * chebyshev;
         }
 
         weight *= max(chebyshev, 0.05);
         weight = max(weight, 1e-6);
 
-        const f32 crush_threshold = 0.2;
+        const f32 crush_threshold = 0.05;
         if (weight < crush_threshold) {
             weight *= (weight * weight) / (crush_threshold * crush_threshold);
         }
@@ -503,7 +512,7 @@ public func sample_probe_radiance_volume(
             let variance = max(abs(mean * mean - moments.y), variance_floor * variance_floor);
             let difference = probe_distance - mean;
             chebyshev = variance / (variance + difference * difference);
-            chebyshev = chebyshev * chebyshev * chebyshev;
+            chebyshev = chebyshev * chebyshev;
         }
 
         weight *= max(chebyshev, 0.05);

@@ -80,6 +80,12 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
       flags |= GPU::MaterialFlag::NormalTwoComponent;
     }
   }
+  switch (material.alpha_mode) {
+    case AlphaMode::Opaque: flags |= GPU::MaterialFlag::AlphaOpaque; break;
+    case AlphaMode::Mask  : flags |= GPU::MaterialFlag::AlphaMask; break;
+    case AlphaMode::Blend : flags |= GPU::MaterialFlag::AlphaBlend; break;
+  }
+
   flags |= material.flip_normal_y ? GPU::MaterialFlag::NormalFlipY : GPU::MaterialFlag::None;
   flags |= emissive_image_index.has_value() ? GPU::MaterialFlag::HasEmissiveImage : GPU::MaterialFlag::None;
   flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
