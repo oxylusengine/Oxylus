@@ -390,6 +390,7 @@ auto RendererInstance::record_sssr(
 
   auto probe_volumes_buffer = context.probe_volumes_buffer;
   auto probe_states_buffer = context.probe_states_buffer;
+  auto probe_requests_buffer = context.probe_requests_buffer;
   auto irradiance_attachment = context.irradiance_attachment;
   auto distance_attachment = context.distance_attachment;
   auto atmosphere = values.atmosphere;
@@ -405,6 +406,12 @@ auto RendererInstance::record_sssr(
       .usage = TRANSIENT_BUFFER_USAGE,
       .location = vir::MemoryLocation::GpuOnly,
       .name = "sssr unused probe states",
+    });
+    probe_requests_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "sssr unused probe requests",
     });
     irradiance_attachment = module.transient_image(
       {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused irradiance"}
@@ -450,6 +457,7 @@ auto RendererInstance::record_sssr(
                     {irradiance_attachment, vir::Access::ComputeSampled},
                     {distance_attachment, vir::Access::ComputeSampled},
                     {context.sky_cubemap_attachment, vir::Access::ComputeSampled},
+                    {probe_requests_buffer, vir::Access::ComputeRW},
                   })
                   .with_name("sssr classify");
     const auto* environment = is_ddgi ? "ddgi" : (is_sky ? "sky" : "ambient");
@@ -482,7 +490,8 @@ auto RendererInstance::record_sssr(
         .bind_buffer(0, 21, probe_volumes_buffer)
         .bind_buffer(0, 22, probe_states_buffer)
         .bind_image(0, 23, irradiance_attachment)
-        .bind_image(0, 24, distance_attachment);
+        .bind_image(0, 24, distance_attachment)
+        .bind_buffer(0, 26, probe_requests_buffer);
     } else if (is_sky) {
       module.bind_sampler(0, 20, linear_sampler).bind_image(0, 21, context.sky_cubemap_attachment);
     }
@@ -512,7 +521,8 @@ auto RendererInstance::record_sssr(
       probe_states_buffer,
       irradiance_attachment,
       distance_attachment,
-      context.sky_cubemap_attachment
+      context.sky_cubemap_attachment,
+      probe_requests_buffer
     ) = std::tuple_cat(pass.end_compute());
   }
 
@@ -552,6 +562,7 @@ auto RendererInstance::record_sssr(
           {distance_attachment, vir::Access::ComputeSampled},
           {atmosphere, vir::Access::ComputeRead},
           {context.sky_view_lut_attachment, vir::Access::ComputeSampled},
+          {probe_requests_buffer, vir::Access::ComputeRW},
         })
         .with_name("sssr intersect");
     const auto* environment = is_ddgi ? (is_sky ? "ddgi_sky" : "ddgi") : (is_sky ? "sky" : "ambient");
@@ -581,7 +592,8 @@ auto RendererInstance::record_sssr(
       module.bind_buffer(0, 21, probe_volumes_buffer)
         .bind_buffer(0, 22, probe_states_buffer)
         .bind_image(0, 23, irradiance_attachment)
-        .bind_image(0, 24, distance_attachment);
+        .bind_image(0, 24, distance_attachment)
+        .bind_buffer(0, 26, probe_requests_buffer);
     }
 
     if (is_sky) {
@@ -612,13 +624,15 @@ auto RendererInstance::record_sssr(
       irradiance_attachment,
       distance_attachment,
       atmosphere,
-      context.sky_view_lut_attachment
+      context.sky_view_lut_attachment,
+      probe_requests_buffer
     ) = std::tuple_cat(pass.end_compute());
   }
 
   if (is_ddgi) {
     context.probe_volumes_buffer = probe_volumes_buffer;
     context.probe_states_buffer = probe_states_buffer;
+    context.probe_requests_buffer = probe_requests_buffer;
     context.irradiance_attachment = irradiance_attachment;
     context.distance_attachment = distance_attachment;
   }

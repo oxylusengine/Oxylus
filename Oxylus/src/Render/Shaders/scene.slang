@@ -552,6 +552,6 @@ public extension TerrainData {
 [[vk::binding(0, 1)]]
 public SamplerState global_samplers[];
 [[vk::binding(1, 1)]]
-public Image2D<f32x4> global_images[];
+public Texture2D<f32x4> global_images[];
 [[vk::binding(2, 1)]]
-public StorageImage2D<f32x4> global_storage_images[];
+public RWTexture2D<f32x4> global_storage_images[];

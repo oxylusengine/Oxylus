@@ -84,7 +84,7 @@ public func test_frustum(in f32x4x4 mvp, in f32x3 aabb_center, in f32x3 aabb_ext
 }
 
 public func sample_level_min_reduction_2x2(
-    in Image2D<f32> img,
+    in Texture2D<f32> img,
     in f32x2 uv,
     in u32 mip_level
 ) -> f32 {
@@ -113,7 +113,7 @@ public func sample_level_min_reduction_2x2(
 
 public func test_occlusion(
     in ScreenAabb screen_aabb,
-    in Image2D<f32> hiz_image
+    in Texture2D<f32> hiz_image
 ) -> bool {
     var width = 0u;
     var height = 0u;

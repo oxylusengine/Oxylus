@@ -4,7 +4,7 @@ import scene;
 
 #include <fullscreen.slang>
 
-[[vk::binding(0, 0)]] Texture2D<u32> ray_count_image;
+[[vk::binding(0, 0)]] [[format("r8ui")]] Texture2D<u32> ray_count_image;
 
 [[shader("fragment")]]
 func fs_main(VertexOutput input, uniform RTGISettings settings) -> f32x4 {

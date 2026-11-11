@@ -10,10 +10,10 @@ struct ShaderParameters {
     StructuredBuffer<Material> materials;
     ConstantBuffer<TerrainData> terrain;
 
-    Image2D<u32> visbuffer;
-    Image2D<f32> depth;
-    Image2D<f32x2> terrain_normalmap;
-    Image2D<f32x4> terrain_splatmap;
+    Texture2D<u32> visbuffer;
+    Texture2D<f32> depth;
+    Texture2D<f32x2> terrain_normalmap;
+    Texture2D<f32x4> terrain_splatmap;
     SamplerState terrain_sampler;
     StructuredBuffer<TerrainBrushHit> brush_hit;
 };

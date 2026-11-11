@@ -701,6 +701,7 @@ RendererInstance::~RendererInstance() {
          &particle_counters,
          &particle_sort_keys,
          &ddgi_probe_states,
+         &ddgi_probe_requests,
          &ddgi_probe_update_list,
        }) {
     if (*buffer != BufferID::Invalid) {
@@ -2201,24 +2202,29 @@ auto RendererInstance::record_frame(
   // --- DDGI tracing ---
   auto probe_volumes_buffer = vir::ValueID::Invalid;
   auto probe_states_buffer = vir::ValueID::Invalid;
+  auto probe_requests_buffer = vir::ValueID::Invalid;
   auto ddgi_irradiance_attachment = vir::ValueID::Invalid;
   auto ddgi_distance_attachment = vir::ValueID::Invalid;
   if (shape.probe_volume_count > 0) {
     prepared.probe_volumes = module.declare_buffer_var("probe volumes", vir::Access::None);
     probe_volumes_buffer = prepared.probe_volumes;
     prepared.ddgi.probe_states = module.declare_buffer_var("ddgi probe states", GPU_STATE_REST);
+    prepared.ddgi.probe_requests = module.declare_buffer_var("ddgi probe requests", GPU_STATE_REST);
     prepared.ddgi.irradiance = module.declare_image_var("ddgi irradiance", vir::Format::RGBA16Sfloat, TEXTURE_REST);
     prepared.ddgi.distance = module.declare_image_var("ddgi distance", vir::Format::RG16Sfloat, TEXTURE_REST);
     probe_states_buffer = prepared.ddgi.probe_states;
+    probe_requests_buffer = prepared.ddgi.probe_requests;
     ddgi_irradiance_attachment = prepared.ddgi.irradiance;
     ddgi_distance_attachment = prepared.ddgi.distance;
 
     prepared.ddgi.is_history_invalid = module.declare_bool_var("ddgi history invalid", false);
-    probe_states_buffer = module.set_condition(
+    std::tie(probe_states_buffer, probe_requests_buffer) = std::tuple_cat(module.set_condition(
       prepared.ddgi.is_history_invalid,
-      [&](vir::Module& arm) { return arm.fill_buffer(probe_states_buffer, 0); },
-      [&](vir::Module&) { return probe_states_buffer; }
-    );
+      [&](vir::Module& arm) {
+        return std::array{arm.fill_buffer(probe_states_buffer, 0), arm.fill_buffer(probe_requests_buffer, 0)};
+      },
+      [&](vir::Module&) { return std::array{probe_states_buffer, probe_requests_buffer}; }
+    ));
 
     if (shape.has_ddgi) {
       prepared.ddgi.probe_update_list = module.declare_buffer_var("ddgi probe update list", GPU_STATE_REST);
@@ -2226,6 +2232,7 @@ auto RendererInstance::record_frame(
         .tlas_buffer = values.tlas,
         .probe_volumes_buffer = probe_volumes_buffer,
         .probe_states_buffer = probe_states_buffer,
+        .probe_requests_buffer = probe_requests_buffer,
         .probe_update_list_buffer = prepared.ddgi.probe_update_list,
         .light_grid_buffer = light_grid_buffer,
         .pointspot_views_buffer = pointspot_views_buffer,
@@ -2240,6 +2247,7 @@ auto RendererInstance::record_frame(
       values.tlas = ddgi_context.tlas_buffer;
       probe_volumes_buffer = ddgi_context.probe_volumes_buffer;
       probe_states_buffer = ddgi_context.probe_states_buffer;
+      probe_requests_buffer = ddgi_context.probe_requests_buffer;
       light_grid_buffer = ddgi_context.light_grid_buffer;
       pointspot_views_buffer = ddgi_context.pointspot_views_buffer;
       sky_view_lut_attachment = ddgi_context.sky_view_lut_attachment;
@@ -2267,6 +2275,12 @@ auto RendererInstance::record_frame(
       .location = vir::MemoryLocation::GpuOnly,
       .name = "rtgi unused probe states",
     });
+    probe_requests_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "rtgi unused probe requests",
+    });
     ddgi_irradiance_attachment = module.transient_image(
       {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "rtgi unused irradiance"}
     );
@@ -2283,6 +2297,7 @@ auto RendererInstance::record_frame(
     rtgi_context.tlas_buffer = values.tlas;
     rtgi_context.probe_volumes_buffer = probe_volumes_buffer;
     rtgi_context.probe_states_buffer = probe_states_buffer;
+    rtgi_context.probe_requests_buffer = probe_requests_buffer;
     rtgi_context.light_grid_buffer = light_grid_buffer;
     rtgi_context.pointspot_views_buffer = pointspot_views_buffer;
     rtgi_context.sky_view_lut_attachment = sky_view_lut_attachment;
@@ -2299,6 +2314,7 @@ auto RendererInstance::record_frame(
     values.tlas = rtgi_context.tlas_buffer;
     probe_volumes_buffer = rtgi_context.probe_volumes_buffer;
     probe_states_buffer = rtgi_context.probe_states_buffer;
+    probe_requests_buffer = rtgi_context.probe_requests_buffer;
     light_grid_buffer = rtgi_context.light_grid_buffer;
     pointspot_views_buffer = rtgi_context.pointspot_views_buffer;
     sky_view_lut_attachment = rtgi_context.sky_view_lut_attachment;
@@ -2348,6 +2364,7 @@ auto RendererInstance::record_frame(
     auto ddgi_apply_context = DDGIApplyContext{
       .probe_volumes_buffer = probe_volumes_buffer,
       .probe_states_buffer = probe_states_buffer,
+      .probe_requests_buffer = probe_requests_buffer,
       .depth_attachment = depth_attachment,
       .albedo_attachment = albedo_attachment,
       .normal_attachment = normal_attachment,
@@ -2360,6 +2377,7 @@ auto RendererInstance::record_frame(
     final_attachment = self.apply_ddgi(module, recording, ddgi_apply_context, final_attachment);
     probe_volumes_buffer = ddgi_apply_context.probe_volumes_buffer;
     probe_states_buffer = ddgi_apply_context.probe_states_buffer;
+    probe_requests_buffer = ddgi_apply_context.probe_requests_buffer;
     depth_attachment = ddgi_apply_context.depth_attachment;
     albedo_attachment = ddgi_apply_context.albedo_attachment;
     normal_attachment = ddgi_apply_context.normal_attachment;
@@ -2384,6 +2402,7 @@ auto RendererInstance::record_frame(
     sssr_context.velocity_attachment = velocity_attachment;
     sssr_context.probe_volumes_buffer = probe_volumes_buffer;
     sssr_context.probe_states_buffer = probe_states_buffer;
+    sssr_context.probe_requests_buffer = probe_requests_buffer;
     sssr_context.irradiance_attachment = ddgi_irradiance_attachment;
     sssr_context.distance_attachment = ddgi_distance_attachment;
     sssr_context.sky_cubemap_attachment = sky_cubemap_attachment;
@@ -2398,6 +2417,7 @@ auto RendererInstance::record_frame(
     velocity_attachment = sssr_context.velocity_attachment;
     probe_volumes_buffer = sssr_context.probe_volumes_buffer;
     probe_states_buffer = sssr_context.probe_states_buffer;
+    probe_requests_buffer = sssr_context.probe_requests_buffer;
     ddgi_irradiance_attachment = sssr_context.irradiance_attachment;
     ddgi_distance_attachment = sssr_context.distance_attachment;
     sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
@@ -2535,6 +2555,7 @@ auto RendererInstance::record_frame(
 
   if (shape.probe_volume_count > 0) {
     module.export_to(probe_states_buffer, GPU_STATE_REST);
+    module.export_to(probe_requests_buffer, GPU_STATE_REST);
     module.export_to(ddgi_irradiance_attachment, TEXTURE_REST);
     module.export_to(ddgi_distance_attachment, TEXTURE_REST);
   }

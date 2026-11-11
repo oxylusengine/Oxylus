@@ -15,7 +15,7 @@ struct ShaderParameters {
     StructuredBuffer<TransformPrevious> transforms_previous;
     StructuredBuffer<Material> materials;
 
-    Image2D<u32> visbuffer;
+    Texture2D<u32> visbuffer;
 };
 ParameterBlock<ShaderParameters> params;
 

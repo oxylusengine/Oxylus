@@ -132,7 +132,9 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
             distance_atlas,
             linear_clamp_sampler,
             constants.radiance_atlas_y_offset,
-            params
+            params,
+            probe_requests,
+            PROBE_REQUEST_NONE
         );
         payload.radiance = sample.radiance * sample.coverage;
         return;
@@ -145,6 +147,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         attributes.barycentrics,
         hit_distance,
         direction,
-        is_front_face
+        is_front_face,
+        PROBE_REQUEST_NONE
     );
 }

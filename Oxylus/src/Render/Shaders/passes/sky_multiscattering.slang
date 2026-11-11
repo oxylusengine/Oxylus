@@ -9,8 +9,8 @@ import embedded.hemisphere;
 
 struct ShaderParameters {
     Sampler sampler;
-    Image2D<f32x4> sky_transmittance_lut;
-    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_multiscattering_lut;
+    Texture2D<f32x4> sky_transmittance_lut;
+    RWTexture2D<f32x4> sky_multiscattering_lut;
     ConstantBuffer<Atmosphere> atmosphere;
 };
 

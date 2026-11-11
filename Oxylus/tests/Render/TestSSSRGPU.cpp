@@ -784,19 +784,22 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
       vir::MemoryLocation::CpuToGpu
     );
+    const auto requests = allocations
+                            .buffer(sizeof(u32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vir::MemoryLocation::CpuToGpu);
     const auto irradiance_texels = std::vector<u8>(4 * 4 * 8, 0);
     const auto distance_texels = std::vector<u8>(4 * 4 * 4, 0);
     const auto
       irradiance = upload_image(allocations, module, vir::Format::RGBA16Sfloat, sampled, irradiance_texels, {4, 4, 1});
     const auto
       distance = upload_image(allocations, module, vir::Format::RG16Sfloat, sampled, distance_texels, {4, 4, 1});
-    if (!volumes || !states || !irradiance || !distance) {
+    if (!volumes || !states || !requests || !irradiance || !distance) {
       ADD_FAILURE() << "ddgi resources";
       return result;
     }
 
     context.probe_volumes_buffer = module.import_buffer(*volumes, vir::Access::HostWrite);
     context.probe_states_buffer = module.import_buffer(*states, vir::Access::HostWrite);
+    context.probe_requests_buffer = module.import_buffer(*requests, vir::Access::HostWrite);
     context.irradiance_attachment = *irradiance;
     context.distance_attachment = *distance;
   }

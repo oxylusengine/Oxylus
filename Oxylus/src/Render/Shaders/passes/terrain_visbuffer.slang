@@ -8,7 +8,7 @@ import visbuffer;
 [[vk::binding(0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1)]] ConstantBuffer<TerrainData> terrain;
 [[vk::binding(2)]] StructuredBuffer<u32> visible_patches;
-[[vk::binding(3)]] Image2D<f32> heightmap;
+[[vk::binding(3)]] Texture2D<f32> heightmap;
 [[vk::binding(4)]] SamplerState heightmap_sampler;
 
 struct VertexOutput {

@@ -40,10 +40,10 @@ import passes.sssr.sssr_lib;
 [[vk::binding(12, 0)]] Texture2D<f32> previous_sample_count_image;
 [[vk::binding(13, 0)]] Sampler linear_sampler;
 [[vk::binding(14, 0)]] StructuredBuffer<u32> tile_list;
-[[vk::binding(15, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> reprojected_radiance_image;
-[[vk::binding(16, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> average_radiance_image;
-[[vk::binding(17, 0)]] StorageImage2D<f32, ImageFormat::R16F> variance_image;
-[[vk::binding(18, 0)]] StorageImage2D<f32, ImageFormat::R16F> sample_count_image;
+[[vk::binding(15, 0)]] RWTexture2D<f32x4> reprojected_radiance_image;
+[[vk::binding(16, 0)]] RWTexture2D<f32x4> average_radiance_image;
+[[vk::binding(17, 0)]] RWTexture2D<f32> variance_image;
+[[vk::binding(18, 0)]] RWTexture2D<f32> sample_count_image;
 
 groupshared f32x4 g_shared[16][16];
 

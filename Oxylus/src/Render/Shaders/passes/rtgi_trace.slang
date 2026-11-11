@@ -15,7 +15,7 @@ import rtgi_common;
 [[vk::binding(18, 0)]] StructuredBuffer<RTGIRayEntry> ray_list;
 [[vk::binding(19, 0)]] StructuredBuffer<RTGIRayCounters> counters;
 [[vk::binding(20, 0)]] RWStructuredBuffer<RTGIRayResult> ray_result;
-[[vk::binding(21, 0)]] Texture2D<u32> sample_count_image;
+[[vk::binding(21, 0)]] [[format("r16ui")]] Texture2D<u32> sample_count_image;
 [[vk::binding(22, 0)]] Texture2D<f32x4> pioneer_guide_hit_y;
 
 static const u32 RTGI_SEED_HISTORY = 6151u;

@@ -7,7 +7,7 @@ import rtgi_common;
 [[vk::binding(1, 0)]] Texture2D<f32> half_res_depth_image;
 [[vk::binding(2, 0)]] Texture2D<f32x4> h_resample_hit_y_image;
 [[vk::binding(3, 0)]] Texture2D<f32x2> h_resample_weight_image;
-[[vk::binding(4, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA32F> pioneer_guide_hit_y_image;
+[[vk::binding(4, 0)]] RWTexture2D<f32x4> pioneer_guide_hit_y_image;
 
 [[shader("compute")]]
 [numthreads(16, 16, 1)]

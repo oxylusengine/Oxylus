@@ -7,7 +7,7 @@ import scene;
 struct ShaderParameters {
     StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<MeshInstance> mesh_instances;
-    Image2D<u32> visbuffer;
+    Texture2D<u32> visbuffer;
 };
 
 [[shader("compute")]]

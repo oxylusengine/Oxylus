@@ -185,8 +185,8 @@ public func integrate_single_scattered_luminance(
     in AtmosphereIntegrateInfo info,
     in Atmosphere atmosphere,
     in Sampler lut_sampler,
-    in Image2D<f32x4> transmittance_image,
-    in Image2D<f32x4> multiscattering_image
+    in Texture2D<f32x4> transmittance_image,
+    in Texture2D<f32x4> multiscattering_image
 ) -> AtmosphereLuminance {
     AtmosphereLuminance result = {};
 
@@ -273,7 +273,7 @@ public func integrate_single_scattered_luminance(
 
 public func sample_aerial_perspective(
     Atmosphere *atmosphere,
-    in Image3D<f32x4> aerial_perspective_lut,
+    in Texture3D<f32x4> aerial_perspective_lut,
     in Sampler sampler,
     f32x2 uv,
     f32x3 camera_relative_pos
@@ -317,7 +317,7 @@ public struct SkyViewSample {
 public func sample_sky_view(
     Atmosphere *atmosphere,
     in Sampler sampler,
-    in Image2D<f32x4> sky_view_image,
+    in Texture2D<f32x4> sky_view_image,
     f32x3 sun_dir,
     f32x3 eye_pos,
     f32x3 eye_dir
@@ -347,7 +347,7 @@ public func sample_sky_view(
 public func get_atmosphere_illuminance_along_ray(
     Atmosphere *atmosphere,
     in Sampler sampler,
-    in Image2D<f32x4> sky_view_image,
+    in Texture2D<f32x4> sky_view_image,
     f32x3 sun_dir,
     f32x3 eye_pos,
     f32x3 eye_dir
@@ -359,7 +359,7 @@ public func get_atmosphere_illuminance_along_ray(
 public func get_direct_sun_lighting(
     Atmosphere *atmosphere,
     in Sampler sampler,
-    in Image2D<f32x4> transmittance_lut,
+    in Texture2D<f32x4> transmittance_lut,
     f32 eye_altitude,
     f32 sun_cos_theta
 ) -> f32x3 {

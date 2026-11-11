@@ -8,11 +8,11 @@ import rtgi_common;
 [[vk::binding(2, 0)]] Texture2D<u32> half_res_face_normal_image;
 [[vk::binding(3, 0)]] Texture2D<f32> previous_half_res_depth_image;
 [[vk::binding(4, 0)]] Texture2D<u32> previous_half_res_face_normal_image;
-[[vk::binding(5, 0)]] Texture2D<u32> previous_sample_count_image;
-[[vk::binding(6, 0)]] StorageImage2D<u32, ImageFormat::R16UI> sample_count_image;
-[[vk::binding(7, 0)]] StorageImage2D<u32x2, ImageFormat::RG16UI> reproject_corner_image;
-[[vk::binding(8, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA8> reproject_weights_image;
-[[vk::binding(9, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA8> ray_impact_image;
+[[vk::binding(5, 0)]] [[format("r16ui")]] Texture2D<u32> previous_sample_count_image;
+[[vk::binding(6, 0)]] [[format("r16ui")]] RWTexture2D<u32> sample_count_image;
+[[vk::binding(7, 0)]] [[format("rg16ui")]] RWTexture2D<u32x2> reproject_corner_image;
+[[vk::binding(8, 0)]] RWTexture2D<f32x4> reproject_weights_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32x4> ray_impact_image;
 [[vk::binding(10, 0)]] RWStructuredBuffer<RTGIRayCounters> counters;
 
 groupshared u32 gs_tile_total_desired;

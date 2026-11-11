@@ -8,10 +8,10 @@ import rtgi_common;
 [[vk::binding(2, 0)]] Texture2D<f32x4> albedo_image;
 [[vk::binding(3, 0)]] Texture2D<f32x4> normal_image;
 [[vk::binding(4, 0)]] Texture2D<f32x2> metallic_roughness_image;
-[[vk::binding(5, 0)]] StorageImage2D<f32, ImageFormat::R32F> half_res_depth_image;
-[[vk::binding(6, 0)]] StorageImage2D<u32, ImageFormat::R32UI> half_res_face_normal_image;
-[[vk::binding(7, 0)]] StorageImage2D<u32, ImageFormat::R32UI> half_res_normal_roughness_image;
-[[vk::binding(8, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA8> half_res_albedo_metalness_image;
+[[vk::binding(5, 0)]] RWTexture2D<f32> half_res_depth_image;
+[[vk::binding(6, 0)]] RWTexture2D<u32> half_res_face_normal_image;
+[[vk::binding(7, 0)]] RWTexture2D<u32> half_res_normal_roughness_image;
+[[vk::binding(8, 0)]] RWTexture2D<f32x4> half_res_albedo_metalness_image;
 
 [[shader("compute")]]
 [numthreads(16, 16, 1)]

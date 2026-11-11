@@ -6,7 +6,7 @@ import common;
 import gpu;
 
 struct ShaderParameters {
-  Image2D<f32x4> source_image_upsample;
+  Texture2D<f32x4> source_image_upsample;
   Sampler sampler;
 };
 

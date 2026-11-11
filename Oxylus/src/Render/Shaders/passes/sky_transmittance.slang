@@ -6,7 +6,7 @@ import sky;
 import scene;
 
 struct ShaderParameters {
-    StorageImage2D<f32x4, ImageFormat::RGBA16F> sky_transmittance_lut;
+    RWTexture2D<f32x4> sky_transmittance_lut;
     ConstantBuffer<Atmosphere> atmosphere;
 };
 

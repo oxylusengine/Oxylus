@@ -11,10 +11,10 @@ import lens;
 [[vk::constant_id(0)]] const u32 scene_flags = 0;
 [[vk::constant_id(1)]] const u32 tonemap_type = TonemapType::None;
 [[vk::binding(0, 0)]] Sampler sampler;
-[[vk::binding(1, 0)]] Image2D<f32x4> input_image;
-[[vk::binding(2, 0)]] Image2D<f32x4> bloom_image;
+[[vk::binding(1, 0)]] Texture2D<f32x4> input_image;
+[[vk::binding(2, 0)]] Texture2D<f32x4> bloom_image;
 [[vk::binding(3, 0)]] ConstantBuffer<HistogramLuminance> histogram_luminance;
-[[vk::binding(4, 0)]] Image3D<f32x4> color_grading_lut;
+[[vk::binding(4, 0)]] Texture3D<f32x4> color_grading_lut;
 
 struct PushConstants {
     PostProcessSettings post_process_settings;

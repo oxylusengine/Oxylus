@@ -3,7 +3,7 @@ import scene;
 import gpu;
 
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(1, 0)]] Image2D<f32> depth_image;
+[[vk::binding(1, 0)]] Texture2D<f32> depth_image;
 
 // mirrored in Debug.cpp
 static const u32 DEBUG_FLAG_DEPTH_TESTED = 1u << 0u;

@@ -15,6 +15,7 @@
 [[vk::binding(22, 0)]] StructuredBuffer<ProbeState> probe_states;
 [[vk::binding(23, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(24, 0)]] Texture2D<f32x2> distance_atlas;
+[[vk::binding(26, 0)]] RWStructuredBuffer<u32> probe_requests;
 #endif
 
 #if defined(SSSR_CLASSIFY)
@@ -51,7 +52,9 @@ func sssr_rough_environment(
         irradiance_atlas,
         distance_atlas,
         environment_sampler,
-        params
+        params,
+        probe_requests,
+        PROBE_REQUEST_NONE
     );
 
     return lerp(settings.sky_ambient_color, sample.specular * settings.ddgi_intensity, sample.coverage);
@@ -116,7 +119,9 @@ func sssr_ray_environment(
             irradiance_atlas,
             distance_atlas,
             environment_sampler,
-            params
+            params,
+            probe_requests,
+            PROBE_REQUEST_NONE
         );
 
         radiance = lerp(settings.sky_ambient_color, sample.specular * settings.ddgi_intensity, sample.coverage);

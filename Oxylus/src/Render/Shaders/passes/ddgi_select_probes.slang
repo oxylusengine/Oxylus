@@ -9,6 +9,7 @@ import ddgi;
 [[vk::binding(2, 0)]] RWStructuredBuffer<ProbeState> probe_states;
 [[vk::binding(3, 0)]] RWStructuredBuffer<u32> probe_update_list;
 [[vk::binding(4, 0)]] RWStructuredBuffer<ProbeUpdateArgs> probe_update_args;
+[[vk::binding(5, 0)]] RWStructuredBuffer<u32> probe_requests;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]

@@ -3,7 +3,7 @@ import gpu;
 import ddgi;
 
 [[vk::binding(0, 0)]] StructuredBuffer<ProbeVolume> probe_volumes;
-[[vk::binding(1, 0)]] Image2D<f32x4> ray_data;
+[[vk::binding(1, 0)]] Texture2D<f32x4> ray_data;
 [[vk::binding(2, 0)]] RWTexture2D<f32x4, 1, ImageFormat.RGBA16F> irradiance;
 [[vk::binding(3, 0)]] StructuredBuffer<ProbeState> probe_states;
 [[vk::binding(4, 0)]] StructuredBuffer<u32> probe_update_list;

@@ -595,7 +595,8 @@ auto RendererInstance::record_rtgi(
            {pioneer_hit_y, vir::Access::RayTracingWrite},
            {values.atmosphere, vir::Access::RayTracingRead},
            {context.light_grid_buffer, vir::Access::RayTracingRead},
-           {context.pointspot_views_buffer, vir::Access::RayTracingRead}}
+           {context.pointspot_views_buffer, vir::Access::RayTracingRead},
+           {context.probe_requests_buffer, vir::Access::RayTracingRW}}
         )
         .with_name("rtgi pioneer trace")
         .bind_ray_tracing_pipeline(render_context.pipeline("rtgi_pioneer"));
@@ -620,7 +621,8 @@ auto RendererInstance::record_rtgi(
       pioneer_hit_y,
       values.atmosphere,
       context.light_grid_buffer,
-      context.pointspot_views_buffer
+      context.pointspot_views_buffer,
+      context.probe_requests_buffer
     ) = std::tuple_cat( //
       bind_vsm_pointspot_spec_constants(pioneer_pass)
         .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
@@ -642,6 +644,7 @@ auto RendererInstance::record_rtgi(
         .bind_image(0, 16, context.half_res_depth)
         .bind_image(0, 17, context.half_res_face_normal)
         .bind_image(0, 18, pioneer_hit_y)
+        .bind_buffer(0, 23, context.probe_requests_buffer)
         .specialize_constant(0, std::to_underlying(shape.scene_flags))
         .push_constant_address(0, values.atmosphere)
         .push_constant_address(8, context.light_grid_buffer)
@@ -741,7 +744,8 @@ auto RendererInstance::record_rtgi(
          {ray_result, vir::Access::RayTracingWrite},
          {values.atmosphere, vir::Access::RayTracingRead},
          {context.light_grid_buffer, vir::Access::RayTracingRead},
-         {context.pointspot_views_buffer, vir::Access::RayTracingRead}}
+         {context.pointspot_views_buffer, vir::Access::RayTracingRead},
+         {context.probe_requests_buffer, vir::Access::RayTracingRW}}
       )
       .with_name("rtgi trace")
       .bind_ray_tracing_pipeline(render_context.pipeline("rtgi_trace"));
@@ -770,7 +774,8 @@ auto RendererInstance::record_rtgi(
     ray_result,
     values.atmosphere,
     context.light_grid_buffer,
-    context.pointspot_views_buffer
+    context.pointspot_views_buffer,
+    context.probe_requests_buffer
   ) = std::tuple_cat( //
     bind_vsm_pointspot_spec_constants(trace_pass)
       .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
@@ -796,6 +801,7 @@ auto RendererInstance::record_rtgi(
       .bind_buffer(0, 20, ray_result)
       .bind_image(0, 21, context.half_res_sample_count)
       .bind_image(0, 22, pioneer_guide_hit_y)
+      .bind_buffer(0, 23, context.probe_requests_buffer)
       .specialize_constant(0, std::to_underlying(shape.scene_flags))
       .push_constant_address(0, values.atmosphere)
       .push_constant_address(8, context.light_grid_buffer)

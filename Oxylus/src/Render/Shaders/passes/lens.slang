@@ -74,7 +74,7 @@ public func FfxLensGetRGMag(f32 chromAbIntensity) -> f32x2 {
 /// @param greenMag Magnitude value for the offset calculation of the green wavelength (texture channel).
 /// @return The final sampled RGB color.
 /// @ingroup FfxGPULens
-public func FfxLensSampleWithChromaticAberration(Image2D<f32x4> input_image, Sampler sampler, i32x2 coord, i32x2 centerCoord, f32 redMag, f32 greenMag) -> f32x3 {
+public func FfxLensSampleWithChromaticAberration(Texture2D<f32x4> input_image, Sampler sampler, i32x2 coord, i32x2 centerCoord, f32 redMag, f32 greenMag) -> f32x3 {
     f32x2 redShift = (coord - centerCoord) * redMag + centerCoord + 0.5;
     redShift *= rcp(2 * centerCoord);
     f32x2 greenShift = (coord - centerCoord) * greenMag + centerCoord + 0.5;

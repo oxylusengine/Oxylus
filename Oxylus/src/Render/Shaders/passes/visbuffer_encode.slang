@@ -11,7 +11,7 @@ import visbuffer;
 [[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(4)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5)]] StructuredBuffer<Material> materials;
-[[vk::binding(6)]] StorageImage2D<u32, ImageFormat::R32UI> overdraw;
+[[vk::binding(6)]] RWTexture2D<u32> overdraw;
 [[vk::constant_id(0)]] const bool RENDER_OVERDRAW = false;
 
 struct VertexOutput {

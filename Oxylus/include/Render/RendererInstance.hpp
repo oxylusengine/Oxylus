@@ -607,6 +607,7 @@ struct DDGIContext {
   vir::ValueID tlas_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_update_list_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_update_args_buffer = vir::ValueID::Invalid;
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
@@ -623,6 +624,7 @@ struct DDGIContext {
 struct DDGIApplyContext {
   vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
   vir::ValueID albedo_attachment = vir::ValueID::Invalid;
   vir::ValueID normal_attachment = vir::ValueID::Invalid;
@@ -705,6 +707,7 @@ struct SSSRContext {
 
   vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
   vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
   vir::ValueID distance_attachment = vir::ValueID::Invalid;
   vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
@@ -768,6 +771,7 @@ struct RTGIContext {
   vir::ValueID tlas_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
   vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
   vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
   vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
@@ -911,6 +915,7 @@ struct DDGIVariables {
   vir::ValueID apply_push = vir::ValueID::Invalid;
 
   vir::ValueID probe_states = vir::ValueID::Invalid;
+  vir::ValueID probe_requests = vir::ValueID::Invalid;
   vir::ValueID probe_update_list = vir::ValueID::Invalid;
   vir::ValueID irradiance = vir::ValueID::Invalid;
   vir::ValueID distance = vir::ValueID::Invalid;
@@ -1550,6 +1555,7 @@ private:
   Texture ddgi_irradiance = {};
   Texture ddgi_distance = {};
   BufferID ddgi_probe_states = BufferID::Invalid;
+  BufferID ddgi_probe_requests = BufferID::Invalid;
   BufferID ddgi_probe_update_list = BufferID::Invalid;
 
   // FSR3 history. the ping-pong pairs alternate on `fsr3_history_ping` each frame; sizes are keyed

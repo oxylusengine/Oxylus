@@ -16,7 +16,7 @@ import particles;
 [[vk::binding(8, 0)]] StructuredBuffer<f32x4> constants;
 [[vk::binding(9, 0)]] RWStructuredBuffer<ParticleSortKey> sort_keys;
 [[vk::binding(10, 0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(11, 0)]] Image2D<f32> depth_image;
+[[vk::binding(11, 0)]] Texture2D<f32> depth_image;
 
 func reconstruct_world(f32x2 uv, f32 depth) -> f32x3 {
     let ndc = f32x4(uv * 2.0 - 1.0, depth, 1.0);

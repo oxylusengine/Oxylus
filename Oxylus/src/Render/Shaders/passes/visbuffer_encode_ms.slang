@@ -10,7 +10,7 @@ import meshlet;
 [[vk::constant_id(0)]] const u32 CULL_FLAGS;
 [[vk::constant_id(1)]] const bool RENDER_OVERDRAW = false;
 
-[[vk::binding(0)]] Image2D<f32> hiz_image;
+[[vk::binding(0)]] Texture2D<f32> hiz_image;
 [[vk::binding(1)]] StructuredBuffer<Mesh> meshes;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;
@@ -18,7 +18,7 @@ import meshlet;
 [[vk::binding(5)]] StructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(6)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
 [[vk::binding(7)]] StructuredBuffer<Material> materials;
-[[vk::binding(8)]] StorageImage2D<u32, ImageFormat::R32UI> overdraw;
+[[vk::binding(8)]] RWTexture2D<u32> overdraw;
 
 [[vk::push_constant]] CullCamera camera;
 

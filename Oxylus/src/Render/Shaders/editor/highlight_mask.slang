@@ -7,7 +7,7 @@ import scene;
 struct MaskParameters {
   StructuredBuffer<MeshletInstance> meshlet_instances;
   StructuredBuffer<MeshInstance> mesh_instances;
-  Image2D<u32> visbuffer;
+  Texture2D<u32> visbuffer;
   RWTexture2D<f32> out_mask;
   StructuredBuffer<u32> transform_indices;
 };

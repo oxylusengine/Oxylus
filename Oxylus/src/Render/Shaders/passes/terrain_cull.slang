@@ -8,8 +8,8 @@ import cull;
 [[vk::constant_id(0)]] const u32 CULL_FLAGS = 0;
 
 [[vk::binding(0)]] ConstantBuffer<TerrainData> terrain;
-[[vk::binding(1)]] Image2D<f32x2> patch_minmax;
-[[vk::binding(2)]] Image2D<f32> hiz_image;
+[[vk::binding(1)]] Texture2D<f32x2> patch_minmax;
+[[vk::binding(2)]] Texture2D<f32> hiz_image;
 [[vk::binding(3)]] RWStructuredBuffer<u32> visible_patches;
 [[vk::binding(4)]] RWStructuredBuffer<u32> patch_visibility_mask;
 [[vk::binding(5)]] RWStructuredBuffer<DrawIndirectCommand> draw_cmd;

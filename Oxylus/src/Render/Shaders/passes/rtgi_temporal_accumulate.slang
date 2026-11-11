@@ -3,10 +3,10 @@ import gpu;
 import scene;
 import rtgi_common;
 
-[[vk::binding(0, 0)]] StorageImage2D<u32, ImageFormat::R16UI> sample_count_image;
-[[vk::binding(1, 0)]] Texture2D<u32> previous_sample_count_image;
-[[vk::binding(2, 0)]] Texture2D<u32> ray_count_image;
-[[vk::binding(3, 0)]] Texture2D<u32x2> reproject_corner_image;
+[[vk::binding(0, 0)]] [[format("r16ui")]] RWTexture2D<u32> sample_count_image;
+[[vk::binding(1, 0)]] [[format("r16ui")]] Texture2D<u32> previous_sample_count_image;
+[[vk::binding(2, 0)]] [[format("r8ui")]] Texture2D<u32> ray_count_image;
+[[vk::binding(3, 0)]] [[format("rg16ui")]] Texture2D<u32x2> reproject_corner_image;
 [[vk::binding(4, 0)]] Texture2D<f32x4> reproject_weights_image;
 [[vk::binding(5, 0)]] Texture2D<f32x4> pre_filtered_diffuse_image;
 [[vk::binding(6, 0)]] Texture2D<f32x2> pre_filtered_diffuse2_image;
@@ -17,11 +17,11 @@ import rtgi_common;
 [[vk::binding(11, 0)]] Texture2D<f32x2> previous_fast_history_image;
 [[vk::binding(12, 0)]] Texture2D<f32> previous_ao_guide_image;
 [[vk::binding(13, 0)]] Texture2D<f32> previous_perceptual_radiance_image;
-[[vk::binding(14, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> diffuse_image;
-[[vk::binding(15, 0)]] StorageImage2D<f32x2, ImageFormat::RG16F> diffuse2_image;
-[[vk::binding(16, 0)]] StorageImage2D<f32x2, ImageFormat::RG16F> fast_history_image;
-[[vk::binding(17, 0)]] StorageImage2D<f32, ImageFormat::R16F> ao_guide_history_image;
-[[vk::binding(18, 0)]] StorageImage2D<f32, ImageFormat::R16F> perceptual_radiance_history_image;
+[[vk::binding(14, 0)]] RWTexture2D<f32x4> diffuse_image;
+[[vk::binding(15, 0)]] RWTexture2D<f32x2> diffuse2_image;
+[[vk::binding(16, 0)]] RWTexture2D<f32x2> fast_history_image;
+[[vk::binding(17, 0)]] RWTexture2D<f32> ao_guide_history_image;
+[[vk::binding(18, 0)]] RWTexture2D<f32> perceptual_radiance_history_image;
 
 [[shader("compute")]]
 [numthreads(16, 16, 1)]

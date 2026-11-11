@@ -6,7 +6,7 @@ import cull;
 #include <defines.slang>
 
 [[vk::constant_id(0)]] const u32 CULL_FLAGS;
-[[vk::binding(0)]] Image2D<f32> hiz_image;
+[[vk::binding(0)]] Texture2D<f32> hiz_image;
 [[vk::binding(1)]] StructuredBuffer<Mesh, ScalarDataLayout> meshes;
 [[vk::binding(2)]] StructuredBuffer<MeshInstance> mesh_instances;
 [[vk::binding(3)]] StructuredBuffer<MeshletInstance> meshlet_instances;

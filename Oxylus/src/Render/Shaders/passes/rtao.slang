@@ -4,8 +4,8 @@ import scene;
 
 [[vk::binding(0)]] RaytracingAccelerationStructure scene_tlas;
 [[vk::binding(1)]] ConstantBuffer<Camera> camera;
-[[vk::binding(2)]] Image2D<f32> depth_image;
-[[vk::binding(3)]] Image2D<f32x4> normal_image;
+[[vk::binding(2)]] Texture2D<f32> depth_image;
+[[vk::binding(3)]] Texture2D<f32x4> normal_image;
 [[vk::binding(4)]] RWTexture2D<f32, 1, ImageFormat.R8> ambient_occlusion;
 [[vk::binding(5)]] Sampler nearest_clamp_sampler;
 

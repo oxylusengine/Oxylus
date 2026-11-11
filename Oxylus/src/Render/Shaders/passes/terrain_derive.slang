@@ -5,11 +5,11 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-    Image2D<f32> heightmap;
-    Image2D<f32> ridgemap;
-    StorageImage2D<f32x2, ImageFormat::RG16F> normalmap;
-    StorageImage2D<f32x4, ImageFormat::RGBA8> splatmap;
-    Image2D<f32x4> splat_edit;
+    Texture2D<f32> heightmap;
+    Texture2D<f32> ridgemap;
+    RWTexture2D<f32x2> normalmap;
+    RWTexture2D<f32x4> splatmap;
+    Texture2D<f32x4> splat_edit;
     StructuredBuffer<TerrainRegion> region;
 };
 

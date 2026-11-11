@@ -40,15 +40,15 @@ import ddgi;
 [[vk::binding(6, 0)]] RWStructuredBuffer<u32> ray_counters;
 [[vk::binding(7, 0)]] RWStructuredBuffer<u32> ray_list;
 [[vk::binding(8, 0)]] RWStructuredBuffer<u32> tile_list;
-[[vk::binding(9, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> intersection_radiance_image;
-[[vk::binding(10, 0)]] StorageImage2D<f32, ImageFormat::R8> confidence_image;
-[[vk::binding(11, 0)]] StorageImage2D<f32, ImageFormat::R8> roughness_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32x4> intersection_radiance_image;
+[[vk::binding(10, 0)]] RWTexture2D<f32> confidence_image;
+[[vk::binding(11, 0)]] RWTexture2D<f32> roughness_image;
 [[vk::binding(12, 0)]] Texture2D<f32> previous_variance_image;
-[[vk::binding(13, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> normal_history_image;
-[[vk::binding(14, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> radiance_history_image;
-[[vk::binding(15, 0)]] StorageImage2D<f32, ImageFormat::R16F> variance_history_image;
-[[vk::binding(16, 0)]] StorageImage2D<f32, ImageFormat::R16F> sample_count_history_image;
-[[vk::binding(17, 0)]] StorageImage2D<f32, ImageFormat::R8> specular_occlusion_image;
+[[vk::binding(13, 0)]] RWTexture2D<f32x4> normal_history_image;
+[[vk::binding(14, 0)]] RWTexture2D<f32x4> radiance_history_image;
+[[vk::binding(15, 0)]] RWTexture2D<f32> variance_history_image;
+[[vk::binding(16, 0)]] RWTexture2D<f32> sample_count_history_image;
+[[vk::binding(17, 0)]] RWTexture2D<f32> specular_occlusion_image;
 [[vk::binding(18, 0)]] ConstantBuffer<HistogramLuminance> exposure_buffer;
 
 #include <passes/sssr/env.slang>

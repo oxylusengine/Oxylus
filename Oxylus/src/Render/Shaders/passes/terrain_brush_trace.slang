@@ -3,7 +3,7 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-    Image2D<f32> heightmap;
+    Texture2D<f32> heightmap;
     SamplerState heightmap_sampler;
     RWStructuredBuffer<TerrainBrushHit> hit;
     RWStructuredBuffer<TerrainRegion> region;

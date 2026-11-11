@@ -3,8 +3,8 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-    Image2D<f32> heightmap;
-    StorageImage2D<f32x2, ImageFormat::RG16> patch_minmax;
+    Texture2D<f32> heightmap;
+    RWTexture2D<f32x2> patch_minmax;
     StructuredBuffer<TerrainRegion> region;
 };
 

@@ -6,7 +6,7 @@ import scene;
 #include <passes/tonemap_operators.slang>
 
 [[vk::constant_id(0)]] const u32 tonemap_type = TonemapType::None;
-[[vk::binding(0, 0)]] StorageImage3D<f32x4, ImageFormat::RGBA16F> color_grading_lut;
+[[vk::binding(0, 0)]] RWTexture3D<f32x4> color_grading_lut;
 [[vk::binding(1, 0)]] Sampler sampler;
 
 [[vk::push_constant]] ColorGradingSettings C;

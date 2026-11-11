@@ -10,7 +10,7 @@ import rtgi_common;
 [[vk::binding(4, 0)]] Texture2D<u32> half_res_face_normal_image;
 [[vk::binding(5, 0)]] Texture2D<f32> depth_image;
 [[vk::binding(6, 0)]] Texture2D<f32x4> normal_image;
-[[vk::binding(7, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> resolved_diffuse_image;
+[[vk::binding(7, 0)]] RWTexture2D<f32x4> resolved_diffuse_image;
 
 static const i32 UPSCALE_X = 16;
 static const i32 GS_PRELOAD_WIDTH = UPSCALE_X / 2 + 2;

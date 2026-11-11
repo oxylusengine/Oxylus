@@ -1,9 +1,9 @@
 import common;
 import gpu;
 
-[[vk::binding(0)]] StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
-[[vk::binding(1)]] Image2D<f32x4> source_image_upsample;
-[[vk::binding(2)]] Image2D<f32x4> source_image_downsample;
+[[vk::binding(0)]] RWTexture2D<f32x4> result_image;
+[[vk::binding(1)]] Texture2D<f32x4> source_image_upsample;
+[[vk::binding(2)]] Texture2D<f32x4> source_image_downsample;
 [[vk::binding(3)]] SamplerState sampler;
 
 struct PushConstants {
@@ -11,7 +11,7 @@ struct PushConstants {
   f32 radius;
 };
 
-func sample_color(Image2D<f32x4> src, SamplerState s, f32x2 uv, f32x2 offset) -> f32x3 {
+func sample_color(Texture2D<f32x4> src, SamplerState s, f32x2 uv, f32x2 offset) -> f32x3 {
   return src.SampleLevel(s, uv + offset, 0).rgb;
 }
 

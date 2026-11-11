@@ -12,8 +12,8 @@ typealias RWTextureCube<T:ITexelElement=float4, let sampleCount:int=0, let forma
 
 struct ShaderParameters {
     Sampler sampler;
-    Image2D<f32x4> sky_view_lut;
-    Image2D<f32x4> sky_transmittance_lut;
+    Texture2D<f32x4> sky_view_lut;
+    Texture2D<f32x4> sky_transmittance_lut;
     ConstantBuffer<Camera> camera;
     RWTextureCube<f32x4> ibl_cube;
 };

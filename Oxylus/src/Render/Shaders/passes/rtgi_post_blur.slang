@@ -6,13 +6,13 @@ import rtgi_common;
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] Texture2D<f32> half_res_depth_image;
 [[vk::binding(2, 0)]] Texture2D<u32> half_res_face_normal_image;
-[[vk::binding(3, 0)]] Texture2D<u32> sample_count_image;
+[[vk::binding(3, 0)]] [[format("r16ui")]] Texture2D<u32> sample_count_image;
 [[vk::binding(4, 0)]] Texture2D<f32> ao_guide_image;
 [[vk::binding(5, 0)]] Texture2D<f32> perceptual_radiance_image;
 [[vk::binding(6, 0)]] Texture2D<f32x4> diffuse_before_image;
 [[vk::binding(7, 0)]] Texture2D<f32x2> diffuse2_before_image;
-[[vk::binding(8, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> diffuse_blurred_image;
-[[vk::binding(9, 0)]] StorageImage2D<f32x2, ImageFormat::RG16F> diffuse2_blurred_image;
+[[vk::binding(8, 0)]] RWTexture2D<f32x4> diffuse_blurred_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32x2> diffuse2_blurred_image;
 
 // world position in xyz and linear depth in w for the group's span along the blur axis
 groupshared f32x4 gs_position_depth[RTGI_POST_BLUR_LDS_SPAN][RTGI_POST_BLUR_Y];

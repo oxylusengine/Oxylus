@@ -97,6 +97,7 @@ auto RendererInstance::allocate_ddgi_atlases(this RendererInstance& self, u32 pr
     }
   };
   reallocate(self.ddgi_probe_states, sizeof(GPU::ProbeState) * probe_count, "ddgi probe states");
+  reallocate(self.ddgi_probe_requests, sizeof(u32) * probe_count, "ddgi probe requests");
   reallocate(self.ddgi_probe_update_list, sizeof(u32) * probe_count, "ddgi probe update list");
 
   self.ddgi_atlas_probe_count = probe_count;
@@ -169,6 +170,7 @@ auto RendererInstance::bind_ddgi_variables(
 
   if (shape.probe_volume_count > 0) {
     program.set(variables.probe_states, render_context.buffer(self.ddgi_probe_states));
+    program.set(variables.probe_requests, render_context.buffer(self.ddgi_probe_requests));
     program.set(variables.irradiance, self.ddgi_irradiance.attachment_info());
     program.set(variables.distance, self.ddgi_distance.attachment_info());
   }
@@ -357,7 +359,8 @@ auto RendererInstance::record_ddgi(
       context.probe_volumes_buffer,
       values.camera,
       context.probe_update_list_buffer,
-      context.probe_update_args_buffer
+      context.probe_update_args_buffer,
+      context.probe_requests_buffer
     ) = std::tuple_cat( //
       module
         .begin_compute(
@@ -365,7 +368,8 @@ auto RendererInstance::record_ddgi(
            {context.probe_volumes_buffer, vir::Access::ComputeRead},
            {values.camera, vir::Access::ComputeUniformRead},
            {context.probe_update_list_buffer, vir::Access::ComputeRW},
-           {context.probe_update_args_buffer, vir::Access::ComputeRW}}
+           {context.probe_update_args_buffer, vir::Access::ComputeRW},
+           {context.probe_requests_buffer, vir::Access::ComputeRW}}
         )
         .with_name("ddgi select probes")
         .bind_compute_pipeline(render_context.pipeline("ddgi_select_probes"))
@@ -374,6 +378,7 @@ auto RendererInstance::record_ddgi(
         .bind_buffer(0, 2, context.probe_states_buffer)
         .bind_buffer(0, 3, context.probe_update_list_buffer)
         .bind_buffer(0, 4, context.probe_update_args_buffer)
+        .bind_buffer(0, 5, context.probe_requests_buffer)
         .push_constants_from(volume.select_push)
         .dispatch_invocations(volume.select_probe_count, 1, 1)
         .end_compute()
@@ -423,7 +428,8 @@ auto RendererInstance::record_ddgi(
            {context.sky_transmittance_lut_attachment, vir::Access::RayTracingSampled},
            {context.probe_states_buffer, vir::Access::RayTracingRead},
            {context.light_grid_buffer, vir::Access::RayTracingRead},
-           {context.pointspot_views_buffer, vir::Access::RayTracingRead}}
+           {context.pointspot_views_buffer, vir::Access::RayTracingRead},
+           {context.probe_requests_buffer, vir::Access::RayTracingRW}}
         )
         .with_name("ddgi trace")
         .bind_ray_tracing_pipeline(render_context.pipeline("ddgi_trace"));
@@ -445,7 +451,8 @@ auto RendererInstance::record_ddgi(
       context.sky_transmittance_lut_attachment,
       context.probe_states_buffer,
       context.light_grid_buffer,
-      context.pointspot_views_buffer
+      context.pointspot_views_buffer,
+      context.probe_requests_buffer
     ) = std::tuple_cat( //
       bind_vsm_pointspot_spec_constants(trace_pass)
         .bind_acceleration_structure(0, 0, context.tlas_buffer, self.tlas_handle())
@@ -464,6 +471,7 @@ auto RendererInstance::record_ddgi(
         .bind_buffer(0, 13, context.probe_states_buffer)
         .bind_image(0, 14, context.pointspot_page_table_attachment)
         .bind_image(0, 15, context.vsm_physical_pages_attachment)
+        .bind_buffer(0, 16, context.probe_requests_buffer)
         .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
         .push_constant_address(0, values.atmosphere)
         .push_constants_from_at(8, volume.trace_push)
@@ -611,7 +619,8 @@ auto RendererInstance::apply_ddgi(
     values.camera,
     context.probe_volumes_buffer,
     context.probe_states_buffer,
-    context.rtgi_resolved_diffuse_attachment
+    context.rtgi_resolved_diffuse_attachment,
+    context.probe_requests_buffer
   ) = std::tuple_cat( //
     module
       .begin_rendering(
@@ -626,7 +635,8 @@ auto RendererInstance::apply_ddgi(
          {values.camera, vir::Access::FragmentUniformRead},
          {context.probe_volumes_buffer, vir::Access::FragmentRead},
          {context.probe_states_buffer, vir::Access::FragmentRead},
-         {context.rtgi_resolved_diffuse_attachment, vir::Access::FragmentSampled}}
+         {context.rtgi_resolved_diffuse_attachment, vir::Access::FragmentSampled},
+         {context.probe_requests_buffer, vir::Access::FragmentRW}}
       )
       .with_name("ddgi apply")
       .bind_graphics_pipeline(render_context.pipeline("ddgi_apply"))
@@ -645,6 +655,7 @@ auto RendererInstance::apply_ddgi(
       .bind_image(0, 9, context.distance_attachment)
       .bind_buffer(0, 10, context.probe_states_buffer)
       .bind_image(0, 11, context.rtgi_resolved_diffuse_attachment)
+      .bind_buffer(0, 12, context.probe_requests_buffer)
       .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
       .push_constants_from(prepared.ddgi.apply_push)
       .draw(3, 1)

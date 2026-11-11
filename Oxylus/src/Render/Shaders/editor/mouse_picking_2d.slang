@@ -5,7 +5,7 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-    Image2D<u32> visbuffer;
+    Texture2D<u32> visbuffer;
 };
 
 [[shader("compute")]]

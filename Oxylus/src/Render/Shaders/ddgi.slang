@@ -23,6 +23,15 @@ public static const u32 PROBE_INSIDE_VOTES_MAX = 4u;
 public static const u32 PROBE_INTERVAL_SHIFT = 16u;
 public static const u32 PROBE_INTERVAL_MASK = 0x00ff0000u;
 
+public static const u32 PROBE_REQUEST_DIRECT = 0u;
+public static const u32 PROBE_REQUEST_INDIRECT = 1u;
+public static const u32 PROBE_REQUEST_NONE = 2u;
+public static const u32 PROBE_REQUEST_DIRECT_FRAMES = 63u;
+public static const u32 PROBE_REQUEST_INDIRECT_FRAMES = 255u;
+public static const u32 PROBE_REQUEST_REARM_FRAMES = 16u;
+public static const u32 PROBE_REQUEST_TIMER_MASK = 0xffu;
+public static const u32 PROBE_REQUEST_INDIRECT_SHIFT = 8u;
+
 // Above this share of backface hits a probe is taken to be inside geometry rather than merely facing a
 // wall. Coming back out is held to the lower figure: the ray set is rotated every frame, so a probe
 // sitting near the threshold would otherwise cross it on ray noise alone and blink in and out of the
@@ -203,7 +212,7 @@ public func decode_probe_irradiance(f32x3 encoded) -> f32x3 {
     return root * root;
 }
 
-public func sample_probe_irradiance(Image2D<f32x4> atlas, Sampler atlas_sampler, u32 probe_row, f32x3 direction)
+public func sample_probe_irradiance(Texture2D<f32x4> atlas, Sampler atlas_sampler, u32 probe_row, f32x3 direction)
     -> f32x3 {
     u32 width, height;
     atlas.GetDimensions(width, height);
@@ -213,7 +222,7 @@ public func sample_probe_irradiance(Image2D<f32x4> atlas, Sampler atlas_sampler,
 }
 
 public func sample_probe_distance(
-    Image2D<f32x2> atlas,
+    Texture2D<f32x2> atlas,
     Sampler atlas_sampler,
     u32 probe_row,
     f32x3 direction,
@@ -258,7 +267,7 @@ public func probe_radiance_tile_origin(u32 probe_row, u32 atlas_y_offset) -> u32
 }
 
 public func load_probe_radiance(
-    Image2D<f32x4> atlas,
+    Texture2D<f32x4> atlas,
     u32 probe_row,
     u32 atlas_y_offset,
     f32x3 direction
@@ -359,6 +368,31 @@ public func probe_world_position(in ProbeVolume volume, StructuredBuffer<ProbeSt
     return volume.probe_position(probe_index) + states[volume.probe_offset + probe_index].offset;
 }
 
+// a request is stored at the lowest corner probe of the cell and only re-armed when its timer runs low
+// so atomics stay rare
+public func probe_request_cell(
+    in ProbeVolume volume,
+    RWStructuredBuffer<u32> requests,
+    u32x3 base_coord,
+    u32 request_mode
+) -> void {
+    if (request_mode >= PROBE_REQUEST_NONE) {
+        return;
+    }
+
+    let row = volume.probe_offset + volume.probe_index_at(base_coord);
+    let shift = request_mode * PROBE_REQUEST_INDIRECT_SHIFT;
+    let timer = (requests[row] >> shift) & PROBE_REQUEST_TIMER_MASK;
+    if (timer < PROBE_REQUEST_REARM_FRAMES) {
+        let frames = select(
+            request_mode == PROBE_REQUEST_DIRECT,
+            PROBE_REQUEST_DIRECT_FRAMES,
+            PROBE_REQUEST_INDIRECT_FRAMES
+        );
+        __atomic_or(requests[row], frames << shift, MemoryOrder::Relaxed);
+    }
+}
+
 public struct IrradianceSample {
     public f32x3 irradiance;
     public f32x3 specular;
@@ -393,10 +427,12 @@ public struct ProbeSampleParams {
 public func sample_probe_volume(
     in ProbeVolume volume,
     StructuredBuffer<ProbeState> states,
-    Image2D<f32x4> irradiance_atlas,
-    Image2D<f32x2> distance_atlas,
+    Texture2D<f32x4> irradiance_atlas,
+    Texture2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
-    in ProbeSampleParams params
+    in ProbeSampleParams params,
+    RWStructuredBuffer<u32> requests,
+    u32 request_mode
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
@@ -404,6 +440,7 @@ public func sample_probe_volume(
     let grid_min = volume.grid_min();
     let grid_position = volume.grid_coord_of(biased_position);
     let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
+    probe_request_cell(volume, requests, u32x3(base_coord), request_mode);
     let alpha = saturate(grid_position - f32x3(base_coord));
 
     var sum = f32x3(0.0);
@@ -494,11 +531,13 @@ public func sample_probe_volume(
 public func sample_probe_radiance_volume(
     in ProbeVolume volume,
     StructuredBuffer<ProbeState> states,
-    Image2D<f32x4> irradiance_atlas,
-    Image2D<f32x2> distance_atlas,
+    Texture2D<f32x4> irradiance_atlas,
+    Texture2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
     u32 radiance_atlas_y_offset,
-    in ProbeSampleParams params
+    in ProbeSampleParams params,
+    RWStructuredBuffer<u32> requests,
+    u32 request_mode
 ) -> RadianceSample {
     RadianceSample result = { f32x3(0.0), 0.0 };
 
@@ -506,6 +545,7 @@ public func sample_probe_radiance_volume(
     let grid_min = volume.grid_min();
     let grid_position = volume.grid_coord_of(biased_position);
     let base_coord = clamp(i32x3(floor(grid_position)), i32x3(0), i32x3(volume.counts) - 1);
+    probe_request_cell(volume, requests, u32x3(base_coord), request_mode);
     let alpha = saturate(grid_position - f32x3(base_coord));
 
     var sum = f32x3(0.0);
@@ -573,11 +613,13 @@ public func sample_ddgi_radiance(
     StructuredBuffer<ProbeVolume> volumes,
     StructuredBuffer<ProbeState> states,
     u32 volume_count,
-    Image2D<f32x4> irradiance_atlas,
-    Image2D<f32x2> distance_atlas,
+    Texture2D<f32x4> irradiance_atlas,
+    Texture2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
     u32 radiance_atlas_y_offset,
-    in ProbeSampleParams params
+    in ProbeSampleParams params,
+    RWStructuredBuffer<u32> requests,
+    u32 request_mode
 ) -> RadianceSample {
     RadianceSample result = { f32x3(0.0), 0.0 };
 
@@ -601,7 +643,9 @@ public func sample_ddgi_radiance(
             distance_atlas,
             atlas_sampler,
             radiance_atlas_y_offset,
-            params
+            params,
+            requests,
+            request_mode
         );
 
         if (lower.coverage > 0.0) {
@@ -627,10 +671,12 @@ public func sample_ddgi_irradiance(
     StructuredBuffer<ProbeVolume> volumes,
     StructuredBuffer<ProbeState> states,
     u32 volume_count,
-    Image2D<f32x4> irradiance_atlas,
-    Image2D<f32x2> distance_atlas,
+    Texture2D<f32x4> irradiance_atlas,
+    Texture2D<f32x2> distance_atlas,
     Sampler atlas_sampler,
-    in ProbeSampleParams params
+    in ProbeSampleParams params,
+    RWStructuredBuffer<u32> requests,
+    u32 request_mode
 ) -> IrradianceSample {
     IrradianceSample result = { f32x3(0.0), f32x3(0.0), 0.0 };
 
@@ -654,7 +700,9 @@ public func sample_ddgi_irradiance(
             irradiance_atlas,
             distance_atlas,
             atlas_sampler,
-            params
+            params,
+            requests,
+            request_mode
         );
 
         var irradiance = lower.irradiance;
@@ -670,7 +718,9 @@ public func sample_ddgi_irradiance(
                 irradiance_atlas,
                 distance_atlas,
                 atlas_sampler,
-                params
+                params,
+                requests,
+                request_mode
             );
 
             let higher_missed = higher.coverage < CASCADE_FALLBACK_WEIGHT;

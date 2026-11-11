@@ -26,7 +26,7 @@ import gpu;
 // tables from Heitz et al. 2019, "A Low-Discrepancy Sampler that Distributes Monte Carlo Errors
 // as a Blue Noise in Screen Space", sobol then scrambling, packed into u32 words
 [[vk::binding(0, 0)]] StructuredBuffer<u32> blue_noise_tables;
-[[vk::binding(1, 0)]] StorageImage2D<f32x2, ImageFormat::RG8> blue_noise_texture;
+[[vk::binding(1, 0)]] RWTexture2D<f32x2> blue_noise_texture;
 
 static const u32 SOBOL_OFFSET = 0;
 static const u32 SCRAMBLING_OFFSET = 65536;

@@ -10,7 +10,7 @@ import rtgi_common;
 
 #include <passes/rtgi_rt_common.slang>
 
-[[vk::binding(18, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA32F> pioneer_hit_y;
+[[vk::binding(18, 0)]] RWTexture2D<f32x4> pioneer_hit_y;
 
 [[shader("raygeneration")]]
 [[require(spvRayTracingKHR)]]

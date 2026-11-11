@@ -4,7 +4,7 @@ import gpu;
 #include <passes/histogram.slang>
 
 [[vk::binding(0, 0)]]
-Image2D<f32x4> src_image;
+Texture2D<f32x4> src_image;
 
 struct PushConstants {
     u32 *histogram;

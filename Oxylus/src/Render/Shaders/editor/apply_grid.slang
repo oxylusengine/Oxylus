@@ -5,8 +5,8 @@ import gpu;
 import scene;
 
 struct ShaderParameters {
-  Image2D<f32x4> grid_image;
-  Image2D<f32x4> source_image;
+  Texture2D<f32x4> grid_image;
+  Texture2D<f32x4> source_image;
   Sampler linear_sampler;
 };
 

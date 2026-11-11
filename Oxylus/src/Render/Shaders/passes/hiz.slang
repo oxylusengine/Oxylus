@@ -9,9 +9,9 @@ import gpu;
 [[vk::binding(0)]] globallycoherent RWStructuredBuffer<u32> spd_global_atomic;
 
 [[vk::binding(1)]] Sampler sampler;
-[[vk::binding(2)]] Image2D<f32> src_image;
+[[vk::binding(2)]] Texture2D<f32> src_image;
 
-typealias HiZMip = StorageImage2D<f32, ImageFormat::R32F>;
+typealias HiZMip = RWTexture2D<f32>;
 [[vk::binding(3)]]  HiZMip dst_mip_0;
 [[vk::binding(4)]]  HiZMip dst_mip_1;
 [[vk::binding(5)]]  HiZMip dst_mip_2;

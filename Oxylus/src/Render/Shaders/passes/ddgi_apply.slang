@@ -21,6 +21,7 @@ import rtgi_common;
 [[vk::binding(9, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(10, 0)]] StructuredBuffer<ProbeState> probe_states;
 [[vk::binding(11, 0)]] Texture2D<f32x4> rtgi_resolved_diffuse;
+[[vk::binding(12, 0)]] RWStructuredBuffer<u32> probe_requests;
 
 [[shader("fragment")]]
 func fs_main(
@@ -79,7 +80,9 @@ func fs_main(
         irradiance_atlas,
         distance_atlas,
         linear_clamp_sampler,
-        params
+        params,
+        probe_requests,
+        PROBE_REQUEST_NONE
     );
 
     let ddgi_diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);

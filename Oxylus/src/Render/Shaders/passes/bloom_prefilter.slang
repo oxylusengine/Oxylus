@@ -6,8 +6,8 @@ import scene;
 
 [[vk::constant_id(0)]] const u32 scene_flags = 0;
 
-[[vk::binding(0, 0)]] StorageImage2D<f32x4, ImageFormat::R11F_G11F_B10F> result_image;
-[[vk::binding(1, 0)]] Image2D<f32x4> source_image;
+[[vk::binding(0, 0)]] RWTexture2D<f32x4> result_image;
+[[vk::binding(1, 0)]] Texture2D<f32x4> source_image;
 [[vk::binding(2, 0)]] SamplerState sampler;
 [[vk::binding(3, 0)]] ConstantBuffer<HistogramLuminance> histogram_luminance;
 
@@ -18,7 +18,7 @@ struct PushConstants {
   u32x3 img_size;
 };
 
-func sample_color(Image2D<f32x4> src, SamplerState s, f32x2 uv, f32x2 offset) -> f32x3 {
+func sample_color(Texture2D<f32x4> src, SamplerState s, f32x2 uv, f32x2 offset) -> f32x3 {
   return src.SampleLevel(s, uv + offset, 0).rgb;
 }
 

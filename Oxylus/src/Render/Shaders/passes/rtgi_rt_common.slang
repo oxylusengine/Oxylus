@@ -9,17 +9,18 @@
 [[vk::binding(4, 0)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5, 0)]] StructuredBuffer<Material> materials;
 [[vk::binding(6, 0)]] StructuredBuffer<Light> lights;
-[[vk::binding(7, 0)]] Image2D<f32x4> sky_view_lut;
-[[vk::binding(8, 0)]] Image2D<f32x4> sky_transmittance_lut;
+[[vk::binding(7, 0)]] Texture2D<f32x4> sky_view_lut;
+[[vk::binding(8, 0)]] Texture2D<f32x4> sky_transmittance_lut;
 [[vk::binding(9, 0)]] Sampler linear_clamp_sampler;
-[[vk::binding(10, 0)]] Image2D<f32x4> irradiance_atlas;
-[[vk::binding(11, 0)]] Image2D<f32x2> distance_atlas;
+[[vk::binding(10, 0)]] Texture2D<f32x4> irradiance_atlas;
+[[vk::binding(11, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(12, 0)]] StructuredBuffer<ProbeState> probe_states;
 [[vk::binding(13, 0)]] Texture2DArray<u32> pointspot_page_table;
 [[vk::binding(14, 0)]] Texture2D<f32> vsm_physical_pages;
 [[vk::binding(15, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(16, 0)]] Texture2D<f32> half_res_depth;
 [[vk::binding(17, 0)]] Texture2D<u32> half_res_face_normal;
+[[vk::binding(23, 0)]] RWStructuredBuffer<u32> probe_requests;
 
 static const f32 HIT_TEXTURE_LOD = 3.0;
 static const f32 RTGI_ALPHA_LOD = 2.0f;
@@ -133,7 +134,9 @@ func shade_ray_hit(in RTGIPayload payload, f32x3 origin, f32x3 direction) -> f32
             distance_atlas,
             linear_clamp_sampler,
             constants.radiance_atlas_y_offset,
-            params
+            params,
+            probe_requests,
+            PROBE_REQUEST_NONE
         );
 
         return sample.radiance * sample.coverage * rtgi_bounce_scale(t);
@@ -164,6 +167,7 @@ func shade_ray_hit(in RTGIPayload payload, f32x3 origin, f32x3 direction) -> f32
         constants.light_count,
         constants.bounce_valid,
         constants.atmosphere,
+        PROBE_REQUEST_NONE,
         rtgi_bounce_scale(t)
     );
 }

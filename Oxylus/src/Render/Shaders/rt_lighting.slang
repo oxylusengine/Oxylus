@@ -1,5 +1,5 @@
 // includer provides imports common, gpu, scene, hit, pbr, sky, ddgi, rmvsm
-// globals scene_tlas, lights, sky_view_lut, sky_transmittance_lut, linear_clamp_sampler, pointspot_page_table, vsm_physical_pages, probe_volumes, probe_states, irradiance_atlas, distance_atlas
+// globals scene_tlas, lights, sky_view_lut, sky_transmittance_lut, linear_clamp_sampler, pointspot_page_table, vsm_physical_pages, probe_volumes, probe_states, probe_requests, irradiance_atlas, distance_atlas
 // spec constant scene_flags, constants with pointspot_views, light_grid, light_grid_origin, and trace_occluded
 
 func sun_illuminance(Atmosphere *atmosphere, f32x3 world_position, f32x3 sun_direction, f32 sun_intensity) -> f32x3 {
@@ -135,6 +135,7 @@ func shade_hit(
     u32 light_count,
     u32 bounce_valid,
     Atmosphere *atmosphere,
+    u32 request_mode,
     f32 bounce_scale = 1.0
 ) -> f32x3 {
     let N = hit.surface.normal;
@@ -195,7 +196,9 @@ func shade_hit(
             irradiance_atlas,
             distance_atlas,
             linear_clamp_sampler,
-            params
+            params,
+            probe_requests,
+            request_mode
         );
         radiance += diffuse_albedo * bounce.irradiance * bounce.coverage * bounce_scale;
     }

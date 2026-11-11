@@ -3,8 +3,8 @@ module copy;
 import common;
 import gpu;
 
-[[vk::binding(0)]] Image2D<f32x4> src_image;
-[[vk::binding(1)]] StorageImage2D<f32x4> dst_image;
+[[vk::binding(0)]] Texture2D<f32x4> src_image;
+[[vk::binding(1)]] RWTexture2D<f32x4> dst_image;
 
 [[vk::push_constant]] u32x3 extent;
 

@@ -5,14 +5,15 @@
 [[vk::binding(4, 0)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(5, 0)]] StructuredBuffer<Material> materials;
 [[vk::binding(6, 0)]] StructuredBuffer<Light> lights;
-[[vk::binding(7, 0)]] Image2D<f32x4> sky_view_lut;
-[[vk::binding(8, 0)]] Image2D<f32x4> sky_transmittance_lut;
+[[vk::binding(7, 0)]] Texture2D<f32x4> sky_view_lut;
+[[vk::binding(8, 0)]] Texture2D<f32x4> sky_transmittance_lut;
 [[vk::binding(9, 0)]] Sampler linear_clamp_sampler;
-[[vk::binding(11, 0)]] Image2D<f32x4> irradiance_atlas;
-[[vk::binding(12, 0)]] Image2D<f32x2> distance_atlas;
+[[vk::binding(11, 0)]] Texture2D<f32x4> irradiance_atlas;
+[[vk::binding(12, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(13, 0)]] StructuredBuffer<ProbeState> probe_states;
 [[vk::binding(14, 0)]] Texture2DArray<u32> pointspot_page_table;
 [[vk::binding(15, 0)]] Texture2D<f32> vsm_physical_pages;
+[[vk::binding(16, 0)]] RWStructuredBuffer<u32> probe_requests;
 
 static const f32 HIT_TEXTURE_LOD = 3.0;
 
@@ -84,7 +85,8 @@ func shade_probe_hit(
     f32x2 barycentrics,
     f32 hit_distance,
     f32x3 direction,
-    bool is_front_face
+    bool is_front_face,
+    u32 request_mode
 ) -> void {
     let geometry = SceneGeometry(mesh_instances, meshes, transforms, materials);
     let hit = resolve_ray_hit(
@@ -111,6 +113,7 @@ func shade_probe_hit(
         constants.view_bias,
         constants.light_count,
         constants.bounce_valid,
-        constants.atmosphere
+        constants.atmosphere,
+        request_mode
     );
 }

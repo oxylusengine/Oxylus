@@ -12,9 +12,9 @@ import rtgi_common;
 [[vk::binding(5, 0)]] Texture2D<f32> firefly_factor_image;
 [[vk::binding(6, 0)]] Texture2D<f32> perceptual_radiance_image;
 [[vk::binding(7, 0)]] Texture2D<f32> ao_guide_image;
-[[vk::binding(8, 0)]] Texture2D<u32> ray_count_image;
-[[vk::binding(9, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> diffuse_blurred_image;
-[[vk::binding(10, 0)]] StorageImage2D<f32x2, ImageFormat::RG16F> diffuse2_blurred_image;
+[[vk::binding(8, 0)]] [[format("r8ui")]] Texture2D<u32> ray_count_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32x4> diffuse_blurred_image;
+[[vk::binding(10, 0)]] RWTexture2D<f32x2> diffuse2_blurred_image;
 
 static const u32 SAMPLE_COUNT = 8u;
 static const f32 AO_GUIDE_FLOOR = 0.2;

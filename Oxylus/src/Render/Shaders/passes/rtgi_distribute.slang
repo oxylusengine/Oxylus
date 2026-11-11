@@ -3,10 +3,10 @@ import gpu;
 import scene;
 import rtgi_common;
 
-[[vk::binding(0, 0)]] Texture2D<u32> sample_count_image;
+[[vk::binding(0, 0)]] [[format("r16ui")]] Texture2D<u32> sample_count_image;
 [[vk::binding(1, 0)]] Texture2D<f32x4> ray_impact_image;
-[[vk::binding(2, 0)]] StorageImage2D<u32, ImageFormat::R8UI> ray_count_image;
-[[vk::binding(3, 0)]] StorageImage2D<u32, ImageFormat::R32UI> pixel_ray_alloc_image;
+[[vk::binding(2, 0)]] [[format("r8ui")]] RWTexture2D<u32> ray_count_image;
+[[vk::binding(3, 0)]] RWTexture2D<u32> pixel_ray_alloc_image;
 [[vk::binding(4, 0)]] RWStructuredBuffer<RTGIRayEntry> ray_list;
 [[vk::binding(5, 0)]] RWStructuredBuffer<RTGIRayCounters> counters;
 

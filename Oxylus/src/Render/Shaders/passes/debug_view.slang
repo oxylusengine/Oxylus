@@ -8,14 +8,14 @@ import cull;
 
 struct ShaderParameters {
     Sampler linear_repeat_sampler;
-    Image2D<u32> visbuffer_data;
-    Image2D<f32> depth;
-    Image2D<u32> overdraw;
-    Image2D<f32x4> albedo;
-    Image2D<f32x4> normal;
-    Image2D<f32x3> emissive;
-    Image2D<f32x2> metallic_roughness;
-    Image2D<f32> ambient_occlusion;
+    Texture2D<u32> visbuffer_data;
+    Texture2D<f32> depth;
+    Texture2D<u32> overdraw;
+    Texture2D<f32x4> albedo;
+    Texture2D<f32x4> normal;
+    Texture2D<f32x3> emissive;
+    Texture2D<f32x2> metallic_roughness;
+    Texture2D<f32> ambient_occlusion;
 
     StructuredBuffer<MeshletInstance> meshlet_instances;
     StructuredBuffer<MeshInstance> mesh_instances;

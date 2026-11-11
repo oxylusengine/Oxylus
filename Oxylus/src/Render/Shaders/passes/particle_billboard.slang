@@ -14,7 +14,7 @@ struct PushConstants {
 [[vk::binding(1, 0)]] StructuredBuffer<Particle> particles;
 [[vk::binding(2, 0)]] StructuredBuffer<ParticleEmitter> emitters;
 [[vk::binding(3, 0)]] ConstantBuffer<Camera> camera;
-[[vk::binding(4, 0)]] Image2D<f32> depth_image;
+[[vk::binding(4, 0)]] Texture2D<f32> depth_image;
 
 struct VOutput {
     f32x4 position : SV_Position;

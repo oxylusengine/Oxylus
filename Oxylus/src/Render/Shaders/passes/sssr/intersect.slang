@@ -38,8 +38,8 @@ import ddgi;
 [[vk::binding(5, 0)]] Texture2D<f32x2> blue_noise_image;
 [[vk::binding(6, 0)]] StructuredBuffer<u32> ray_list;
 [[vk::binding(7, 0)]] StructuredBuffer<u32> ray_counters;
-[[vk::binding(8, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> intersection_radiance_image;
-[[vk::binding(9, 0)]] StorageImage2D<f32, ImageFormat::R8> confidence_image;
+[[vk::binding(8, 0)]] RWTexture2D<f32x4> intersection_radiance_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32> confidence_image;
 [[vk::binding(10, 0)]] Texture2D<f32> specular_occlusion_image;
 [[vk::binding(11, 0)]] ConstantBuffer<HistogramLuminance> exposure_buffer;
 

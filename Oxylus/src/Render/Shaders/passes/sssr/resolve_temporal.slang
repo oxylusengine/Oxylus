@@ -34,8 +34,8 @@ import passes.sssr.sssr_lib;
 [[vk::binding(6, 0)]] Texture2D<f32x4> average_radiance_image;
 [[vk::binding(7, 0)]] Sampler linear_sampler;
 [[vk::binding(8, 0)]] StructuredBuffer<u32> tile_list;
-[[vk::binding(9, 0)]] StorageImage2D<f32x4, ImageFormat::RGBA16F> resolved_radiance_image;
-[[vk::binding(10, 0)]] StorageImage2D<f32, ImageFormat::R16F> resolved_variance_image;
+[[vk::binding(9, 0)]] RWTexture2D<f32x4> resolved_radiance_image;
+[[vk::binding(10, 0)]] RWTexture2D<f32> resolved_variance_image;
 
 groupshared f32x4 g_shared[16][16];
 

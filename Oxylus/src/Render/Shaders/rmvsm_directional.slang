@@ -368,7 +368,12 @@ func pcss_soft_shadow(
             let texel = i32x2(floor(uv * f32(VSM_VIRTUAL_EXTENT)));
             is_fast[j] = is_center_valid && all(uv >= 0.0) && all(uv <= 1.0) && all(texel < VSM_VIRTUAL_EXTENT) &&
                          all(texel / VSM_PAGE_SIZE == receiver.center.page_coords);
-            let fetch_coords = center_origin + clamp(texel - center_texel_min, 0, VSM_PAGE_SIZE - 1);
+            // a vector clamp against a spec constant makes slang emit an invalid OpConstantComposite
+            let page_texel = texel - center_texel_min;
+            let fetch_coords = center_origin + i32x2(
+                clamp(page_texel.x, 0, VSM_PAGE_SIZE - 1),
+                clamp(page_texel.y, 0, VSM_PAGE_SIZE - 1)
+            );
             fetched[j] = res.physical_pages.Load(i32x3(fetch_coords, 0));
         }
 
@@ -442,7 +447,10 @@ func pcss_soft_shadow(
             is_fast[j] = is_center_valid && all(base_texel >= 0) && all(base_texel < VSM_VIRTUAL_EXTENT) &&
                          all(base_texel / VSM_PAGE_SIZE == receiver.center.page_coords) &&
                          all(in_page_texel < VSM_PAGE_SIZE - 1);
-            let fetch_texel = center_origin + clamp(in_page_texel, 0, VSM_PAGE_SIZE - 2);
+            let fetch_texel = center_origin + i32x2(
+                clamp(in_page_texel.x, 0, VSM_PAGE_SIZE - 2),
+                clamp(in_page_texel.y, 0, VSM_PAGE_SIZE - 2)
+            );
             gathered[j] = res.physical_pages.Gather(
                 res.sampler, (f32x2(fetch_texel) + 1.0) / f32(VSM_PHYSICAL_PAGE_TABLE_SIZE)
             );

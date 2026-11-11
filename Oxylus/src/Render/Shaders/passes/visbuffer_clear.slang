@@ -5,10 +5,10 @@ import gpu;
 import visbuffer;
 
 [[vk::binding(0, 0)]]
-StorageImage2D<u32, ImageFormat::R32UI> visbuffer_image;
+RWTexture2D<u32> visbuffer_image;
 
 [[vk::binding(1, 0)]]
-StorageImage2D<u32, ImageFormat::R32UI> overdraw_image;
+RWTexture2D<u32> overdraw_image;
 
 [[vk::constant_id(0)]] const bool CLEAR_OVERDRAW = false;
 
