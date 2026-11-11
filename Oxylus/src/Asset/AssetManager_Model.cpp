@@ -1,3 +1,4 @@
+#include <atomic>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <ranges>
@@ -21,7 +22,6 @@ struct UploadedMesh {
   GPU::Mesh gpu_mesh = {};
   std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
   BufferID buffer = BufferID::Invalid;
-  AccelerationStructureID blas = AccelerationStructureID::Invalid;
 };
 
 auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch) -> UploadedMesh {
@@ -116,19 +116,55 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   }
 
   result.buffer = *buffer_id;
-  result.blas = build_mesh_blas(
-    render_context,
-    *buffer_id,
-    MESH_BUFFER_ACCESS,
-    BLASBuildInfo{
-      .vertex_positions = gpu_mesh.vertex_positions,
-      .indices = result.lods[0].indices,
-      .vertex_count = gpu_mesh.vertex_count,
-      .index_count = result.lods[0].indices_count,
-    }
-  );
 
   return result;
+}
+
+auto AssetManager::resolve_mesh_blas(
+  RenderContext& render_context, Model& model, const usize mesh_index, StaticBLASBudget* budget
+) -> u64 {
+  ZoneScoped;
+
+  if (mesh_index >= model.mesh_blases.size()) {
+    return 0;
+  }
+
+  // the slot is written under the models' shared lock, and two scenes rendering from different threads
+  // can both find it empty, so the loser of the exchange below throws its copy away
+  auto blas = std::atomic_ref(model.mesh_blases[mesh_index]);
+  const auto is_unbuilt = blas.load(std::memory_order_acquire) == AccelerationStructureID::Invalid;
+  // published models may mark a mesh ready without any GPU side at all
+  const auto has_gpu_mesh = mesh_index < model.gpu_mesh_buffers.size() && mesh_index < model.gpu_meshes.size() &&
+                            mesh_index < model.lod0_index_ranges.size() && model.is_mesh_ready(mesh_index) &&
+                            model.gpu_mesh_buffers[mesh_index] != BufferID::Invalid;
+  if (budget && is_unbuilt && has_gpu_mesh) {
+    const auto& gpu_mesh = model.gpu_meshes[mesh_index];
+    const auto& lod0_indices = model.lod0_index_ranges[mesh_index];
+    const auto triangles = lod0_indices.count / 3;
+    if (gpu_mesh.vertex_count != 0 && triangles != 0 && budget->admits(triangles)) {
+      budget->spent += triangles;
+      const auto built = build_mesh_blas(
+        render_context,
+        model.gpu_mesh_buffers[mesh_index],
+        MESH_BUFFER_ACCESS,
+        BLASBuildInfo{
+          .vertex_positions = gpu_mesh.vertex_positions,
+          .indices = lod0_indices.device_address,
+          .vertex_count = gpu_mesh.vertex_count,
+          .index_count = lod0_indices.count,
+        }
+      );
+      auto expected = AccelerationStructureID::Invalid;
+      if (
+        built != AccelerationStructureID::Invalid &&
+        !blas.compare_exchange_strong(expected, built, std::memory_order_acq_rel)
+      ) {
+        render_context.destroy_acceleration_structure(built);
+      }
+    }
+  }
+
+  return render_context.acceleration_structure(blas.load(std::memory_order_acquire)).device_address;
 }
 
 auto to_collision_mesh(const ModelData::Mesh& mesh) -> Model::CollisionMesh {
@@ -298,7 +334,6 @@ auto AssetManager::load_model(
 
       if (uploaded.buffer != BufferID::Invalid) {
         loaded_model->gpu_mesh_buffers[mesh_index] = uploaded.buffer;
-        loaded_model->mesh_blases[mesh_index] = uploaded.blas;
         loaded_model->gpu_meshes[mesh_index] = uploaded.gpu_mesh;
         loaded_model->collision_meshes[mesh_index] = to_collision_mesh(mesh_data);
         loaded_model->lod0_meshlet_counts[mesh_index] = uploaded.lods[0].meshlet_count;

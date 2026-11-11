@@ -36,6 +36,7 @@ static_assert(sizeof(OxNetClientState) == 32 && offsetof(OxNetClientState, rtt) 
 static_assert(sizeof(OxVec4) == 16 && sizeof(OxCinematicState) == 8 && sizeof(OxWindowSize) == 16);
 static_assert(sizeof(OxMaterialData) == 160 && offsetof(OxMaterialData, alpha_mode) == 60);
 static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, albedo_texture) == 80);
+static_assert(sizeof(OxMeshSource) == 48 && offsetof(OxMeshSource, material) == 32);
 
 static auto component_dbs = ankerl::unordered_dense::map<ecs_world_t*, ComponentDB*>{};
 static auto frame_time = OxTime{};

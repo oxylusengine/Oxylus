@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 17;
+    public const uint Version = 18;
 }
 
 public enum OxStatus : int
@@ -298,6 +298,17 @@ public struct WheelState
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public unsafe struct MeshSourceData
+{
+    public Vector3* Positions;
+    public Vector3* Normals;
+    public uint* Indices;
+    public uint VertexCount;
+    public uint IndexCount;
+    public AssetId Material;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct AssetInfo
 {
     public uint Type;
@@ -531,6 +542,9 @@ public unsafe struct NativeApi
     public delegate* unmanaged<AssetId*, AssetId*, int, int*, OxStatus> AssetMaterials;
     public delegate* unmanaged<AssetId*, MaterialData*, OxStatus> AssetMaterialGet;
     public delegate* unmanaged<AssetId*, MaterialData*, OxStatus> AssetMaterialSet;
+    public delegate* unmanaged<MaterialData*, AssetId*, OxStatus> AssetCreateMaterial;
+    public delegate* unmanaged<MeshSourceData*, int, AssetId*, OxStatus> AssetCreateModel;
+    public delegate* unmanaged<AssetId*, OxStatus> AssetDestroyModel;
 
     public delegate* unmanaged<nint, ulong, AudioCommand, OxStatus> AudioCommand;
     public delegate* unmanaged<nint, ulong, AudioState*, OxStatus> AudioState;

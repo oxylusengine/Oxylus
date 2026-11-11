@@ -16,6 +16,11 @@ the G-buffer and checks hit positions, misses, ray counts and the quad copies ag
 `OX_SSSR_GPU_VALIDATION=1` to enable Vulkan validation and synchronization validation. It skips when a suitable
 Vulkan device is unavailable.
 
+`TestStaticBLASGPU` builds mesh acceleration structures on a headless device through
+`AssetManager::resolve_mesh_blas`, the scene's per-frame address pass, and checks that nothing is built without a
+budget, that a budget defers builds to later frames, and that a mesh larger than the budget still gets one. It skips
+when no Vulkan device supports acceleration structures.
+
 Nothing here parses SPIR-V. ResourceCompiler reads each entry point's layout off
 Slang's reflection and stores it in the shader pack. `tests/ResourceCompiler/TestShaderLayout.cpp` checks
 that reflection on small sources, and `TestEngineShaders` runs every built engine and editor pipeline

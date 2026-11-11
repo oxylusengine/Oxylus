@@ -416,7 +416,8 @@ struct CylinderColliderComponent {
   f32 restitution = 0.0f;
 };
 
-// Collides against the triangles of the entity's MeshComponent. Jolt's triangle mesh shape has no
+// Collides against the triangles of the entity's MeshComponent, or on an entity without one (a spawned
+// model's root), of the MeshComponents of its children. Jolt's triangle mesh shape has no
 // inertia, so it only works on a Static or Kinematic body: set `convex` for a Dynamic one and the
 // mesh is replaced by its convex hull.
 struct MeshColliderComponent {

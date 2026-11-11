@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 17u
+#define OX_DOTNET_ABI_VERSION 18u
 
 struct ecs_world_t;
 
@@ -290,6 +290,17 @@ struct OxMaterialData {
   OxAssetId occlusion_texture = {};
 };
 
+// one mesh of a model made at runtime: a triangle list, `normals` null or one per position, `material` a loaded
+// material asset or zero. Nothing is kept past the call
+struct OxMeshSource {
+  const OxVec3* positions = nullptr;
+  const OxVec3* normals = nullptr;
+  const u32* indices = nullptr;
+  u32 vertex_count = 0;
+  u32 index_count = 0;
+  OxAssetId material = {};
+};
+
 enum class OxParticleCommand : i32 {
   Play = 0,
   Stop = 1,
@@ -561,6 +572,15 @@ struct OxNativeApi {
   // material is held, and the one it no longer names is given those references back. InvalidArgument for an enum value
   // out of range or a texture slot that names something else
   auto (*asset_material_set)(const OxAssetId* material, const OxMaterialData* data) -> OxStatus = nullptr;
+  // a material asset with no file of its own, loaded and held once. InvalidArgument as for asset_material_set
+  auto (*asset_create_material)(const OxMaterialData* data, OxAssetId* material) -> OxStatus = nullptr;
+  // a model with no file of its own, one single LOD mesh per source with triangles, loaded before this returns and held
+  // once. NotFound without a renderer, InvalidArgument for an index out of range, a count that isn't whole triangles,
+  // no triangles at all, or a material that isn't a loaded material
+  auto (*asset_create_model)(const OxMeshSource* meshes, i32 mesh_count, OxAssetId* model) -> OxStatus = nullptr;
+  // gives back the reference asset_create_model took, the model goes once the entities using it are gone. NotFound for
+  // anything that isn't a model made that way
+  auto (*asset_destroy_model)(const OxAssetId* model) -> OxStatus = nullptr;
 
   // the entity's AudioSourceComponent. A sound belongs to its asset, so entities sharing one share its playback
   auto (*audio_command)(ecs_world_t* world, u64 entity, OxAudioCommand command) -> OxStatus = nullptr;

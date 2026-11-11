@@ -61,6 +61,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "refits a skinned acceleration structure takes before its tree is rebuilt, subject to the budget",
     8
   );
+  self.cvar_rt_static_build_budget.init(
+    self.system,
+    "rr.rt_static_build_budget",
+    "triangles a frame may spend building static mesh acceleration structures, 0 for no cap. One build always runs",
+    100000
+  );
 
   self.cvar_rtao_enable
     .init(self.system, "pp.rtao", "trace ambient occlusion against the scene TLAS instead of screen space", 0);
@@ -210,6 +216,7 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["raytracing"].begin_obj();
   writer["skinned_rebuild_budget"] = self.cvar_rt_skinned_rebuild_budget.get();
   writer["skinned_max_refits"] = self.cvar_rt_skinned_max_refits.get();
+  writer["static_build_budget"] = self.cvar_rt_static_build_budget.get();
   writer.end_obj();
 
   writer["rtao"].begin_obj();
@@ -320,6 +327,10 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     }
     if (auto max_refits = raytracing_obj["skinned_max_refits"]; !max_refits.error()) {
       self.cvar_rt_skinned_max_refits.set(static_cast<i32>(max_refits.get_int64()));
+    }
+
+    if (auto budget = raytracing_obj["static_build_budget"]; !budget.error()) {
+      self.cvar_rt_static_build_budget.set(static_cast<i32>(budget.get_int64()));
     }
   }
 

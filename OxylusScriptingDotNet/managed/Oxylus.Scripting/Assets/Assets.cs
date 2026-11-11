@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -92,6 +93,16 @@ public sealed unsafe class AssetHandle : IDisposable
 
         return count;
     }
+}
+
+// one mesh of a model made with Assets.CreateModel, a triangle list. Normals are empty or one per position, and the
+// spans are only read during the call
+public readonly ref struct MeshSource
+{
+    public ReadOnlySpan<Vector3> Positions { get; init; }
+    public ReadOnlySpan<Vector3> Normals { get; init; }
+    public ReadOnlySpan<uint> Indices { get; init; }
+    public AssetId Material { get; init; }
 }
 
 public readonly record struct AssetDetails(AssetType Type, bool IsLoaded, ulong RefCount);
@@ -189,6 +200,82 @@ public static unsafe class Assets
                     : $"Couldn't set {material}, is a texture slot not a texture asset or an enum out of range?");
             }
         }
+    }
+
+    // a material asset of its own, loaded and held for as long as the game runs
+    public static AssetId CreateMaterial(in MaterialData data)
+    {
+        AssetId material;
+        fixed (MaterialData* source = &data)
+        {
+            var status = Runtime.Native.AssetCreateMaterial(source, &material);
+            if (status != OxStatus.Ok)
+            {
+                throw new InvalidOperationException(status == OxStatus.NotFound
+                    ? "Couldn't create a material"
+                    : "Couldn't create a material, is a texture slot not a texture asset or an enum out of range?");
+            }
+        }
+
+        return material;
+    }
+
+    // a model of one or two meshes, ready for World.SpawnModel when this returns. A MeshColliderComponent with Convex
+    // set on the entity SpawnModel returns builds one hull from the positions of both meshes. A mesh without indices
+    // is left out. Hand it back with DestroyModel, it goes once the entities spawned from it are gone too
+    public static AssetId CreateModel(MeshSource first, MeshSource second = default)
+    {
+        Span<MeshSourceData> meshes = stackalloc MeshSourceData[2];
+        AssetId model;
+        OxStatus status;
+        fixed (Vector3* firstPositions = first.Positions)
+        fixed (Vector3* firstNormals = first.Normals)
+        fixed (uint* firstIndices = first.Indices)
+        fixed (Vector3* secondPositions = second.Positions)
+        fixed (Vector3* secondNormals = second.Normals)
+        fixed (uint* secondIndices = second.Indices)
+        fixed (MeshSourceData* data = meshes)
+        {
+            meshes[0] = Describe(first, firstPositions, firstNormals, firstIndices);
+            meshes[1] = Describe(second, secondPositions, secondNormals, secondIndices);
+            status = Runtime.Native.AssetCreateModel(data, 2, &model);
+        }
+
+        if (status != OxStatus.Ok)
+        {
+            throw new InvalidOperationException(status == OxStatus.NotFound
+                ? "Couldn't create a model, it takes the renderer"
+                : "Couldn't create a model, are the indices whole triangles within the positions, are the normals one per "
+                  + "position, and is the material a loaded material?");
+        }
+
+        return model;
+    }
+
+    public static void DestroyModel(AssetId model)
+    {
+        if (Runtime.Native.AssetDestroyModel(&model) != OxStatus.Ok)
+        {
+            throw new InvalidOperationException($"{model} isn't a model made by CreateModel, or it was destroyed already");
+        }
+    }
+
+    static MeshSourceData Describe(in MeshSource source, Vector3* positions, Vector3* normals, uint* indices)
+    {
+        if (source.Normals.Length != 0 && source.Normals.Length != source.Positions.Length)
+        {
+            throw new ArgumentException("a mesh needs no normals or one per position");
+        }
+
+        return new MeshSourceData
+        {
+            Positions = positions,
+            Normals = source.Normals.Length != 0 ? normals : null,
+            Indices = indices,
+            VertexCount = (uint)source.Positions.Length,
+            IndexCount = (uint)source.Indices.Length,
+            Material = source.Material,
+        };
     }
 
     internal static void ReleaseScripts()

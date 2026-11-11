@@ -761,6 +761,52 @@ TEST_F(DotNetSceneTest, DrivesABodyFromCSharp) {
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0);
 }
 
+TEST_F(DotNetSceneTest, HullsEveryMeshOfAModelRoot) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root_dir = std::filesystem::temp_directory_path() / "ox_dotnet_content_test";
+  const auto model_uuid = ox::UUID::generate_random();
+  assets.register_asset(model_uuid, ox::AssetType::Model, root_dir / "Models/slab.glb", root_dir / "Models/slab.glb");
+
+  // the bottom and the top face of a 0.5 cube, each flat on its own, so only the two together make a hull
+  const auto face = [](f32 y) {
+    return ox::Model::CollisionMesh{
+      .positions = {{-0.25f, y, -0.25f}, {0.25f, y, -0.25f}, {0.25f, y, 0.25f}, {-0.25f, y, 0.25f}},
+      .indices = {0, 1, 2, 0, 2, 3},
+    };
+  };
+  auto model = ox::Model{};
+  model.collision_meshes = {face(-0.25f), face(0.25f)};
+  model.mesh_ready = std::vector<std::atomic_flag>(2);
+  model.mesh_ready[0].test_and_set();
+  model.mesh_ready[1].test_and_set();
+  ASSERT_TRUE(assets.publish_model(model_uuid, std::move(model)));
+
+  scene->create_entity("Floor")
+    .set(ox::RigidBodyComponent{.type = ox::RigidBodyComponent::Static})
+    .set(ox::BoxColliderComponent{.size = {50.0f, 0.5f, 50.0f}});
+  auto slab = scene->create_entity("Slab").set(ox::TransformComponent{.position = {0.0f, 2.0f, 0.0f}});
+  for (const auto mesh_index : {0_u32, 1_u32}) {
+    // the MeshComponent gives its reference back when it goes, as a spawned mesh entity does
+    assets.load_asset(model_uuid);
+    scene->create_entity(mesh_index == 0 ? "Bottom" : "Top")
+      .child_of(slab)
+      .set(ox::TransformComponent{})
+      .set(ox::MeshComponent{.model_uuid = model_uuid, .mesh_index = mesh_index});
+  }
+
+  slab.set(ox::MeshColliderComponent{.convex = true})
+    .set(ox::RigidBodyComponent{.type = ox::RigidBodyComponent::Dynamic});
+  scene->runtime_start();
+
+  for (auto i = 0; i < 120; i++) {
+    step();
+  }
+
+  // the floor's top is at 0.5, and the slab rests on its bottom face 0.25 below its centre
+  EXPECT_NEAR(slab.get<ox::RigidBodyComponent>().translation.y, 0.75f, 0.02f);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
 TEST_F(DotNetSceneTest, RaycastsAgainstShapes) {
   ASSERT_TRUE(scene->add_script_type("SmokeGame.RaycastProbe").has_value());
   scene->create_entity("Floor")
@@ -940,6 +986,33 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   }
 
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, CreatesMaterialsAndRefusesModelsWithoutARenderer) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_runtime_asset_test";
+  ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
+  const auto texture = ox::UUID::generate_random();
+  assets.register_asset(texture, ox::AssetType::Texture, root / "Textures/runtime.png", root / "Textures/runtime.png");
+  assets.publish_texture(texture, ox::Texture{});
+  const auto assets_before = assets.get_registry_snapshot().size();
+
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.RuntimeAssetProbe").has_value());
+  scene->runtime_start();
+
+  const auto expect_log = [](std::string_view message) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, message), 1) << message << "\n" << logs_text();
+  };
+  expect_log("runtime material Material loaded True refs 1 read True color 0.75 0.50 0.25 roughness 0.50");
+  expect_log("runtime material refused mode True");
+  expect_log("runtime model refused range True partial True empty True material True normals True");
+  expect_log("runtime model without renderer: Couldn't create a model, it takes the renderer");
+  expect_log("runtime model destroy refused material True unknown True");
+
+  // the one material that was made, and nothing for what was refused
+  EXPECT_EQ(assets.get_registry_snapshot().size(), assets_before + 1);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+  scene->runtime_stop();
 }
 
 TEST_F(DotNetSceneTest, ControlsAnEmitterFromCSharp) {

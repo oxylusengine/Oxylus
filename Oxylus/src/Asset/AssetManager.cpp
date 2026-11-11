@@ -1417,6 +1417,27 @@ auto AssetManager::publish_model(this AssetManager& self, const UUID& uuid, Mode
   return true;
 }
 
+auto AssetManager::create_model(this AssetManager& self, ModelData&& model_data) -> UUID {
+  ZoneScoped;
+
+  if (!App::get() || !App::has_window()) {
+    OX_LOG_ERROR("Can't create a model without a renderer.");
+    return UUID(nullptr);
+  }
+
+  const auto uuid = self.create_asset(AssetType::Model);
+  if (!uuid) {
+    return UUID(nullptr);
+  }
+
+  if (!self.load_asset(uuid, std::move(model_data))) {
+    self.delete_asset(uuid);
+    return UUID(nullptr);
+  }
+
+  return uuid;
+}
+
 auto AssetManager::publish_animation(this AssetManager& self, const UUID& uuid, AnimationClip&& clip) -> bool {
   ZoneScoped;
 

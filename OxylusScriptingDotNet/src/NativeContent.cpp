@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <ankerl/svector.h>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <utility>
 
 #include "Asset/AssetManager.hpp"
+#include "Asset/MeshBuilder.hpp"
 #include "Asset/Model.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
@@ -220,6 +222,30 @@ static auto asset_material_get(const OxAssetId* material, OxMaterialData* data) 
   return OxStatus::Ok;
 }
 
+// what asset_material_set refuses: an enum out of range or a texture slot naming something that isn't a texture
+static auto is_valid_material(AssetManager& assets, const OxMaterialData& data) -> bool {
+  if (
+    data.alpha_mode > static_cast<u32>(AlphaMode::Blend) ||
+    data.sampling_mode > static_cast<u32>(SamplingMode::LinearRepeatedAnisotropy)
+  ) {
+    return false;
+  }
+
+  const auto material = to_material(data);
+  for (const auto texture : MATERIAL_TEXTURES) {
+    if (!(material.*texture)) {
+      continue;
+    }
+
+    const auto asset = assets.get_asset(material.*texture);
+    if (!asset || asset->type != AssetType::Texture) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 static auto asset_material_set(const OxAssetId* material, const OxMaterialData* data) -> OxStatus {
   ZoneScoped;
 
@@ -229,26 +255,126 @@ static auto asset_material_set(const OxAssetId* material, const OxMaterialData* 
     return OxStatus::NotFound;
   }
 
-  if (
-    data->alpha_mode > static_cast<u32>(AlphaMode::Blend) ||
-    data->sampling_mode > static_cast<u32>(SamplingMode::LinearRepeatedAnisotropy)
-  ) {
+  if (!is_valid_material(*assets, *data)) {
     return OxStatus::InvalidArgument;
   }
 
-  const auto incoming = to_material(*data);
-  for (const auto texture : MATERIAL_TEXTURES) {
-    if (!(incoming.*texture)) {
-      continue;
+  return assets->set_material(uuid, to_material(*data)) ? OxStatus::Ok : OxStatus::NotFound;
+}
+
+static auto asset_create_material(const OxMaterialData* data, OxAssetId* material) -> OxStatus {
+  ZoneScoped;
+
+  *material = {};
+  auto* assets = asset_manager();
+  if (!assets) {
+    return OxStatus::NotFound;
+  }
+
+  if (!is_valid_material(*assets, *data)) {
+    return OxStatus::InvalidArgument;
+  }
+
+  const auto uuid = assets->create_asset(AssetType::Material);
+  if (!uuid) {
+    return OxStatus::NotFound;
+  }
+
+  if (!assets->load_asset(uuid, to_material(*data))) {
+    assets->delete_asset(uuid);
+    return OxStatus::NotFound;
+  }
+
+  *material = to_asset_id(uuid);
+  return OxStatus::Ok;
+}
+
+static auto asset_create_model(const OxMeshSource* meshes, i32 mesh_count, OxAssetId* model) -> OxStatus {
+  ZoneScoped;
+
+  *model = {};
+  auto* assets = asset_manager();
+  if (!assets) {
+    return OxStatus::NotFound;
+  }
+
+  if (mesh_count <= 0) {
+    return OxStatus::InvalidArgument;
+  }
+
+  static_assert(sizeof(OxVec3) == sizeof(glm::vec3));
+  auto sources = ankerl::svector<RuntimeMeshSource, 2>();
+  auto triangle_count = 0_sz;
+  for (const auto& mesh : std::span(meshes, static_cast<usize>(mesh_count))) {
+    if (mesh.index_count % 3 != 0 || (mesh.index_count > 0 && (!mesh.positions || !mesh.indices))) {
+      return OxStatus::InvalidArgument;
     }
 
-    const auto asset = assets->get_asset(incoming.*texture);
-    if (!asset || asset->type != AssetType::Texture) {
+    const auto indices = std::span(mesh.indices, mesh.index_count);
+    if (std::ranges::any_of(indices, [&mesh](u32 index) { return index >= mesh.vertex_count; })) {
       return OxStatus::InvalidArgument;
+    }
+
+    const auto material = to_uuid(mesh.material);
+    if (material) {
+      const auto asset = assets->get_asset(material);
+      if (!asset || asset->type != AssetType::Material || !asset->is_loaded()) {
+        return OxStatus::InvalidArgument;
+      }
+    }
+
+    const auto* positions = reinterpret_cast<const glm::vec3*>(mesh.positions);
+    const auto* normals = reinterpret_cast<const glm::vec3*>(mesh.normals);
+    sources.push_back(RuntimeMeshSource{
+      .positions = std::span(positions, positions ? mesh.vertex_count : 0),
+      .normals = std::span(normals, normals ? mesh.vertex_count : 0),
+      .indices = indices,
+      .material = material,
+    });
+    triangle_count += mesh.index_count / 3;
+  }
+
+  if (triangle_count == 0) {
+    return OxStatus::InvalidArgument;
+  }
+
+  auto model_data = build_runtime_model(sources);
+  if (!model_data) {
+    return OxStatus::InvalidArgument;
+  }
+
+  // the meshes upload as they load, which takes the renderer's context
+  if (!App::has_window()) {
+    return OxStatus::NotFound;
+  }
+
+  const auto uuid = assets->create_model(std::move(*model_data));
+  if (!uuid) {
+    return OxStatus::NotFound;
+  }
+
+  *model = to_asset_id(uuid);
+  return OxStatus::Ok;
+}
+
+static auto asset_destroy_model(const OxAssetId* model) -> OxStatus {
+  ZoneScoped;
+
+  auto* assets = asset_manager();
+  const auto uuid = to_uuid(*model);
+  if (!assets || !uuid) {
+    return OxStatus::NotFound;
+  }
+
+  {
+    const auto asset = assets->get_asset(uuid);
+    if (!asset || asset->type != AssetType::Model || !asset->path.empty() || !asset->is_loaded()) {
+      return OxStatus::NotFound;
     }
   }
 
-  return assets->set_material(uuid, incoming) ? OxStatus::Ok : OxStatus::NotFound;
+  assets->unload_asset(uuid);
+  return OxStatus::Ok;
 }
 
 static auto audio_source_of(ecs_world_t* world, u64 entity) -> const AudioSourceComponent* {
@@ -682,6 +808,9 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.asset_materials = asset_materials;
   api.asset_material_get = asset_material_get;
   api.asset_material_set = asset_material_set;
+  api.asset_create_material = asset_create_material;
+  api.asset_create_model = asset_create_model;
+  api.asset_destroy_model = asset_destroy_model;
   api.audio_command = audio_command;
   api.audio_state = audio_state;
   api.audio_set_sound = audio_set_sound;

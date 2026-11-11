@@ -311,6 +311,84 @@ public sealed class MaterialProbe : SceneBehaviour
     }
 }
 
+// a scene without a renderer: materials are made, models are refused for what they are given and then for the renderer
+public sealed class RuntimeAssetProbe : SceneBehaviour
+{
+    public override void OnStart()
+    {
+        var made = new MaterialData
+        {
+            AlbedoColor = new Vector4(0.75f, 0.5f, 0.25f, 1.0f),
+            UvSize = Vector2.One,
+            RoughnessFactor = 0.5f,
+            NormalScale = 1.0f,
+            OcclusionStrength = 1.0f,
+        };
+        var material = Assets.CreateMaterial(made);
+        var info = Assets.Info(material);
+        var isRead = Assets.GetMaterial(material, out var back);
+        Log.Info($"runtime material {info.Type} loaded {info.IsLoaded} refs {info.RefCount} read {isRead} " +
+                 $"color {back.AlbedoColor.X:F2} {back.AlbedoColor.Y:F2} {back.AlbedoColor.Z:F2} roughness {back.RoughnessFactor:F2}");
+
+        var wrongMode = made;
+        wrongMode.AlphaMode = (AlphaMode)9;
+        Log.Info($"runtime material refused mode {Throws(() => Assets.CreateMaterial(wrongMode))}");
+
+        var positions = new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY };
+        var normals = new[] { Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ };
+        var triangle = new uint[] { 0, 1, 2 };
+        var outOfRange = new uint[] { 0, 1, 3 };
+        var partial = new uint[] { 0, 1 };
+        var texture = Assets.Find("Textures/runtime.png");
+        Log.Info($"runtime model refused range {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = outOfRange }))} " +
+                 $"partial {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = partial }))} " +
+                 $"empty {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions }))} " +
+                 $"material {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = triangle, Material = texture }))} " +
+                 $"normals {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals.AsSpan(0, 2), Indices = triangle }))}");
+        Log.Info($"runtime model without renderer: {Refusal(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals, Indices = triangle, Material = material }))}");
+        Log.Info($"runtime model destroy refused material {Throws(() => Assets.DestroyModel(material))} unknown {Throws(() => Assets.DestroyModel(default))}");
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    static string Refusal(Action action)
+    {
+        try
+        {
+            action();
+            return "none";
+        }
+        catch (InvalidOperationException e)
+        {
+            return e.Message;
+        }
+    }
+
+    static bool ThrowsArgument(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+}
+
 // keeps a handle it never disposes, the runtime gives the reference back when the scripts unload
 public sealed class LeakyProbe : SceneBehaviour
 {

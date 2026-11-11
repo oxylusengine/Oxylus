@@ -22,6 +22,7 @@
 
 namespace ox {
 class AudioEngine;
+struct StaticBLASBudget;
 
 struct Asset {
   UUID uuid = {};
@@ -119,6 +120,11 @@ public:
 
   auto get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model>;
   auto get_model(this AssetManager& self, ModelID model_id) -> ReadGuard<Model>;
+  // the device address of a mesh's ray tracing structure, 0 while it has none. Static structures are built here and
+  // nowhere else: a ready mesh without one gets it first when `budget` admits it, blocking until it is done. A null
+  // `budget` builds nothing
+  static auto resolve_mesh_blas(RenderContext& render_context, Model& model, usize mesh_index, StaticBLASBudget* budget)
+    -> u64;
 
   auto get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture>;
   auto get_texture(this AssetManager& self, TextureID texture_id) -> ReadGuard<Texture>;
@@ -152,6 +158,10 @@ public:
   // for payloads built in code instead of read from the asset's file
   auto publish_texture(this AssetManager& self, const UUID& uuid, Texture&& texture) -> bool;
   auto publish_model(this AssetManager& self, const UUID& uuid, Model&& model) -> bool;
+  // a model with no file of its own, built from `model_data` (see build_runtime_model) and loaded before this returns.
+  // The caller holds one reference and gives it back with unload_asset, the asset is erased once nothing holds it.
+  // Needs the renderer, a null UUID without one
+  auto create_model(this AssetManager& self, ModelData&& model_data) -> UUID;
 
   auto get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton>;
   auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> ReadGuard<Skeleton>;
