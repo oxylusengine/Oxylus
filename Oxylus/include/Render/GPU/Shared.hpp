@@ -531,7 +531,7 @@ struct SSSRSettings {
   u32 ddgi_volume_count = 0;
   f32 ddgi_normal_bias = 0.0f;
   f32 ddgi_view_bias = 0.0f;
-  f32 ddgi_intensity = 1.0f;
+  f32 gi_intensity = 1.0f;
   f32 horizon_darkening = 1.0f;
   f32x3 sky_ambient_color = {};
   f32x3 base_ambient_color = {};

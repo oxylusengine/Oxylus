@@ -2407,6 +2407,7 @@ auto RendererInstance::record_frame(
     sssr_context.distance_attachment = ddgi_distance_attachment;
     sssr_context.sky_cubemap_attachment = sky_cubemap_attachment;
     sssr_context.sky_view_lut_attachment = sky_view_lut_attachment;
+    sssr_context.rtgi_resolved_diffuse_attachment = rtgi_context.resolved_diffuse;
     record_sssr(module, render_context, recording, sssr_context);
     final_attachment = sssr_context.final_attachment;
     depth_attachment = sssr_context.depth_attachment;
@@ -2422,6 +2423,9 @@ auto RendererInstance::record_frame(
     ddgi_distance_attachment = sssr_context.distance_attachment;
     sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
     sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
+    if (shape.has_rtgi) {
+      rtgi_context.resolved_diffuse = sssr_context.rtgi_resolved_diffuse_attachment;
+    }
   }
 
   // --- 2D ---

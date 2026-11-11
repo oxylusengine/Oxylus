@@ -16,6 +16,52 @@
 [[vk::binding(23, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(24, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(26, 0)]] RWStructuredBuffer<u32> probe_requests;
+[[vk::binding(27, 0)]] Texture2D<f32x4> rtgi_resolved_diffuse;
+
+// probes traced for the RTGI bounce are too noisy to show directly, so a resolved pixel reads RTGI like ddgi_apply
+func sssr_gi_environment(
+    in SSSRSettings settings,
+    f32x3 world_position,
+    f32x3 N,
+    f32x3 geometric_N,
+    f32x3 V,
+    f32 view_distance,
+    f32x3 specular_direction,
+    i32x2 texel
+) -> f32x3 {
+    // without RTGI the binding is a 1x1 dummy
+    u32 width, height;
+    rtgi_resolved_diffuse.GetDimensions(width, height);
+    let rtgi = rtgi_resolved_diffuse.Load(i32x3(min(texel, i32x2(width, height) - 1), 0));
+    if (rtgi.a > 0.0) {
+        return rtgi.rgb / RTGI_RADIANCE_SCALE * settings.gi_intensity;
+    }
+
+    ProbeSampleParams params;
+    params.world_position = world_position;
+    params.normal = N;
+    params.geometric_normal = geometric_N;
+    params.view_direction = V;
+    params.view_distance = view_distance;
+    params.specular_direction = specular_direction;
+    params.want_specular = true;
+    params.normal_bias = settings.ddgi_normal_bias;
+    params.view_bias = settings.ddgi_view_bias;
+
+    let sample = sample_ddgi_irradiance(
+        probe_volumes,
+        probe_states,
+        settings.ddgi_volume_count,
+        irradiance_atlas,
+        distance_atlas,
+        environment_sampler,
+        params,
+        probe_requests,
+        PROBE_REQUEST_DIRECT
+    );
+
+    return lerp(settings.sky_ambient_color, sample.specular * settings.gi_intensity, sample.coverage);
+}
 #endif
 
 #if defined(SSSR_CLASSIFY)
@@ -31,33 +77,20 @@ func sssr_rough_environment(
     f32x3 V,
     f32 view_distance,
     f32x3 R,
-    f32 perceptual_roughness
+    f32 perceptual_roughness,
+    i32x2 texel
 ) -> f32x3 {
     #if defined(SSSR_ENV_DDGI)
-    ProbeSampleParams params;
-    params.world_position = world_position;
-    params.normal = N;
-    params.geometric_normal = geometric_N;
-    params.view_direction = V;
-    params.view_distance = view_distance;
-    params.specular_direction = normalize(lerp(N, R, 1.0 - perceptual_roughness));
-    params.want_specular = true;
-    params.normal_bias = settings.ddgi_normal_bias;
-    params.view_bias = settings.ddgi_view_bias;
-
-    let sample = sample_ddgi_irradiance(
-        probe_volumes,
-        probe_states,
-        settings.ddgi_volume_count,
-        irradiance_atlas,
-        distance_atlas,
-        environment_sampler,
-        params,
-        probe_requests,
-        PROBE_REQUEST_NONE
+    return sssr_gi_environment(
+        settings,
+        world_position,
+        N,
+        geometric_N,
+        V,
+        view_distance,
+        normalize(lerp(N, R, 1.0 - perceptual_roughness)),
+        texel
     );
-
-    return lerp(settings.sky_ambient_color, sample.specular * settings.ddgi_intensity, sample.coverage);
     #elif defined(SSSR_ENV_SKY)
     return sky_cubemap_specular(sky_cubemap, environment_sampler, N, R, perceptual_roughness, settings.horizon_darkening);
     #else
@@ -101,30 +134,16 @@ func sssr_ray_environment(
     } else
         #endif
     {
-        ProbeSampleParams params;
-        params.world_position = world_position;
-        params.normal = N;
-        params.geometric_normal = geometric_N;
-        params.view_direction = V;
-        params.view_distance = view_distance;
-        params.specular_direction = direction;
-        params.want_specular = true;
-        params.normal_bias = settings.ddgi_normal_bias;
-        params.view_bias = settings.ddgi_view_bias;
-
-        let sample = sample_ddgi_irradiance(
-            probe_volumes,
-            probe_states,
-            settings.ddgi_volume_count,
-            irradiance_atlas,
-            distance_atlas,
-            environment_sampler,
-            params,
-            probe_requests,
-            PROBE_REQUEST_NONE
+        radiance = sssr_gi_environment(
+            settings,
+            world_position,
+            N,
+            geometric_N,
+            V,
+            view_distance,
+            direction,
+            texel
         );
-
-        radiance = lerp(settings.sky_ambient_color, sample.specular * settings.ddgi_intensity, sample.coverage);
     }
     #elif defined(SSSR_ENV_SKY)
     radiance = get_atmosphere_illuminance_along_ray(

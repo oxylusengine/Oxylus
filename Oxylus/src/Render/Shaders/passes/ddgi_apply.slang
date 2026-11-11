@@ -62,32 +62,6 @@ func fs_main(
 
     let is_sssr = (scene_flags & SceneFlags::HasSSSR) != 0;
 
-    ProbeSampleParams params;
-    params.world_position = world_position;
-    params.normal = N;
-    params.geometric_normal = geometric_N;
-    params.view_direction = V;
-    params.view_distance = view_distance;
-    params.specular_direction = reflection_direction;
-    params.want_specular = !is_sssr;
-    params.normal_bias = normal_bias;
-    params.view_bias = view_bias;
-
-    let sample = sample_ddgi_irradiance(
-        probe_volumes,
-        probe_states,
-        volume_count,
-        irradiance_atlas,
-        distance_atlas,
-        linear_clamp_sampler,
-        params,
-        probe_requests,
-        PROBE_REQUEST_NONE
-    );
-
-    let ddgi_diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);
-    let ddgi_specular = lerp(ambient_color * ambient_fill, sample.specular * intensity, sample.coverage);
-
     // without RTGI the binding is a 1x1 dummy
     var rtgi = f32x4(0.0);
     if ((scene_flags & SceneFlags::HasRTGI) != 0) {
@@ -95,6 +69,37 @@ func fs_main(
     }
 
     let is_rtgi_resolved = rtgi.a > 0.0;
+
+    var ddgi_diffuse = f32x3(0.0);
+    var ddgi_specular = f32x3(0.0);
+    if (!is_rtgi_resolved) {
+        ProbeSampleParams params;
+        params.world_position = world_position;
+        params.normal = N;
+        params.geometric_normal = geometric_N;
+        params.view_direction = V;
+        params.view_distance = view_distance;
+        params.specular_direction = reflection_direction;
+        params.want_specular = !is_sssr;
+        params.normal_bias = normal_bias;
+        params.view_bias = view_bias;
+
+        let sample = sample_ddgi_irradiance(
+            probe_volumes,
+            probe_states,
+            volume_count,
+            irradiance_atlas,
+            distance_atlas,
+            linear_clamp_sampler,
+            params,
+            probe_requests,
+            PROBE_REQUEST_DIRECT
+        );
+
+        ddgi_diffuse = lerp(ambient_color * ambient_fill, sample.irradiance * intensity, sample.coverage);
+        ddgi_specular = lerp(ambient_color * ambient_fill, sample.specular * intensity, sample.coverage);
+    }
+
     let diffuse = select(is_rtgi_resolved, rtgi.rgb / RTGI_RADIANCE_SCALE * intensity, ddgi_diffuse);
     let specular = select(is_rtgi_resolved, diffuse, ddgi_specular);
 

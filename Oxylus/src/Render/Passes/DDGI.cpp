@@ -11,7 +11,7 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-using DDGISelectPush = PushConstants<u32, u32, u32, f32, u32, u32, u32, glm::ivec3>;
+using DDGISelectPush = PushConstants<u32, u32, u32, f32, u32, u32, u32, u32, glm::ivec3>;
 using DDGITracePush = PushConstants<u32, u32, u32, u32, u32, u32, f32, f32, f32, f32, glm::vec3, f32, glm::vec3, f32>;
 using DDGITraceTailPush = PushConstants<u32, u32, glm::vec3>;
 using DDGIRelocatePush = PushConstants<u32, u32, f32, u32, u32>;
@@ -221,7 +221,7 @@ auto RendererInstance::bind_ddgi_variables(
         static_cast<u32>(self.probe_volumes.size()),
         cvar.cvar_ddgi_normal_bias.get(),
         cvar.cvar_ddgi_view_bias.get(),
-        cvar.cvar_ddgi_intensity.get(),
+        cvar.cvar_gi_intensity.get(),
         self.sky_data.ambient_color,
         std::clamp(cvar.cvar_ddgi_ambient_fill.get(), 0.0f, 1.0f),
         static_cast<u32>(std::clamp(cvar.cvar_ddgi_apply_terms.get(), 0, 3))
@@ -245,6 +245,7 @@ auto RendererInstance::bind_ddgi_variables(
           static_cast<u32>(!params.ddgi_history_valid),
           static_cast<u32>(params.ddgi_distance_culling_changed),
           static_cast<u32>(params.ddgi_distance_culling_enabled),
+          static_cast<u32>(cvar.cvar_ddgi_probe_requests.get() != 0),
           volume_index < params.ddgi_scroll_deltas.size() ? params.ddgi_scroll_deltas[volume_index] : glm::ivec3(0)
         )
       );

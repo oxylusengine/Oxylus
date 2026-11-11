@@ -58,6 +58,8 @@ struct RendererCVar {
   AutoCVar_Float cvar_sssr_variance_threshold;
   AutoCVar_Float cvar_sssr_temporal_stability;
 
+  AutoCVar_Float cvar_gi_intensity;
+
   AutoCVar_Int cvar_rtgi_enable;
   AutoCVar_Float cvar_rtgi_max_distance;
   AutoCVar_Int cvar_rtgi_max_temporal_samples;
@@ -84,6 +86,7 @@ struct RendererCVar {
   AutoCVar_Int cvar_ddgi_update_max_interval;
   AutoCVar_Float cvar_ddgi_update_full_rate_distance;
   AutoCVar_Int cvar_ddgi_distance_culling;
+  AutoCVar_Int cvar_ddgi_probe_requests;
   AutoCVar_Int cvar_ddgi_probe_relocation;
   AutoCVar_Float cvar_ddgi_min_frontface_distance;
   AutoCVar_Float cvar_ddgi_shadow_ray_offset;
@@ -93,7 +96,6 @@ struct RendererCVar {
   AutoCVar_Float cvar_ddgi_max_brightness_step;
   AutoCVar_Float cvar_ddgi_firefly_ratio;
   AutoCVar_Float cvar_ddgi_hysteresis_dark_bias;
-  AutoCVar_Float cvar_ddgi_intensity;
   AutoCVar_Float cvar_ddgi_probe_debug_radius;
   AutoCVar_Float cvar_ddgi_visibility_floor;
   AutoCVar_Float cvar_ddgi_visibility_power;

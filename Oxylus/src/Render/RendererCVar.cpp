@@ -89,6 +89,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "sssr.variance_threshold", "variance above which a pixel gets an extra ray", 0.0f);
   self.cvar_sssr_temporal_stability
     .init(self.system, "sssr.temporal_stability", "how strongly the temporal pass favours history", 0.7f);
+  self.cvar_gi_intensity.init(self.system, "rr.gi_intensity", "scales the indirect light from DDGI and RTGI", 1.0f);
+
   self.cvar_rtgi_enable.init(self.system, "rr.rtgi", "ray traced diffuse global illumination", 0);
   self.cvar_rtgi_max_distance.init(self.system, "rr.rtgi_max_distance", "world space length of the rtgi rays", 500.0f);
   self.cvar_rtgi_max_temporal_samples
@@ -164,6 +166,8 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "deactivate probes far from meshes and reuse cached probe radiance for far ray hits",
     1
   );
+  self.cvar_ddgi_probe_requests
+    .init(self.system, "rr.ddgi_probe_requests", "update probes only while something samples them", 1);
   self.cvar_ddgi_probe_relocation
     .init(self.system, "rr.ddgi_probe_relocation", "move probes out of the geometry they are buried in", 1);
   self.cvar_ddgi_min_frontface_distance
@@ -174,7 +178,6 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "rr.ddgi_normal_bias", "probe lookup offset along the normal, in probe spacings", 0.25f);
   self.cvar_ddgi_view_bias
     .init(self.system, "rr.ddgi_view_bias", "probe lookup offset toward the camera, in probe spacings", 0.1f);
-  self.cvar_ddgi_intensity.init(self.system, "rr.ddgi_intensity", "scales the probe indirect diffuse", 1.0f);
   self.cvar_ddgi_hysteresis
     .init(self.system, "rr.ddgi_hysteresis", "how much of a probe's history survives each update", 0.97f);
   self.cvar_ddgi_max_brightness_step.init(
@@ -299,6 +302,10 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["temporal_stability"] = self.cvar_sssr_temporal_stability.get();
   writer.end_obj();
 
+  writer["gi"].begin_obj();
+  writer["intensity"] = self.cvar_gi_intensity.get();
+  writer.end_obj();
+
   writer["rtgi"].begin_obj();
   writer["enabled"] = self.cvar_rtgi_enable.as_bool();
   writer["max_distance"] = self.cvar_rtgi_max_distance.get();
@@ -336,9 +343,9 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["max_brightness_step"] = self.cvar_ddgi_max_brightness_step.get();
   writer["firefly_ratio"] = self.cvar_ddgi_firefly_ratio.get();
   writer["hysteresis_dark_bias"] = self.cvar_ddgi_hysteresis_dark_bias.get();
-  writer["intensity"] = self.cvar_ddgi_intensity.get();
   writer["probe_debug_radius"] = self.cvar_ddgi_probe_debug_radius.get();
   writer["distance_culling"] = self.cvar_ddgi_distance_culling.as_bool();
+  writer["probe_requests"] = self.cvar_ddgi_probe_requests.as_bool();
   writer["visibility_floor"] = self.cvar_ddgi_visibility_floor.get();
   writer["visibility_power"] = self.cvar_ddgi_visibility_power.get();
   writer["facing_bias"] = self.cvar_ddgi_facing_bias.get();
@@ -441,6 +448,13 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_sssr_temporal_stability.set(static_cast<f32>(sssr_obj["temporal_stability"].get_double()));
   }
 
+  auto gi_obj = json["gi"];
+  if (!gi_obj.error()) {
+    if (auto intensity = gi_obj["intensity"]; !intensity.error()) {
+      self.cvar_gi_intensity.set(static_cast<f32>(intensity.get_double()));
+    }
+  }
+
   auto rtgi_obj = json["rtgi"];
   if (!rtgi_obj.error()) {
     self.cvar_rtgi_enable.set(rtgi_obj["enabled"].get_bool());
@@ -515,11 +529,18 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     self.cvar_ddgi_max_brightness_step.set(static_cast<f32>(ddgi_obj["max_brightness_step"].get_double()));
     self.cvar_ddgi_firefly_ratio.set(static_cast<f32>(ddgi_obj["firefly_ratio"].get_double()));
     self.cvar_ddgi_hysteresis_dark_bias.set(static_cast<f32>(ddgi_obj["hysteresis_dark_bias"].get_double()));
-    self.cvar_ddgi_intensity.set(static_cast<f32>(ddgi_obj["intensity"].get_double()));
+    // scenes saved before the intensity moved out of ddgi
+    if (auto intensity = ddgi_obj["intensity"]; !intensity.error()) {
+      self.cvar_gi_intensity.set(static_cast<f32>(intensity.get_double()));
+    }
+
     self.cvar_ddgi_probe_debug_radius.set(static_cast<f32>(ddgi_obj["probe_debug_radius"].get_double()));
     auto distance_culling_obj = ddgi_obj["distance_culling"];
     if (!distance_culling_obj.error())
       self.cvar_ddgi_distance_culling.set(distance_culling_obj.get_bool());
+    auto probe_requests_obj = ddgi_obj["probe_requests"];
+    if (!probe_requests_obj.error())
+      self.cvar_ddgi_probe_requests.set(probe_requests_obj.get_bool());
     if (auto floor = ddgi_obj["visibility_floor"]; !floor.error()) {
       self.cvar_ddgi_visibility_floor.set(static_cast<f32>(floor.get_double()));
     }

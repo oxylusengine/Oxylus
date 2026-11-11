@@ -99,6 +99,8 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
 
     let volume = probe_volumes[constants.volume_index];
     let direction = WorldRayDirection();
+    let probe_flags = probe_states[volume.probe_offset + DispatchRaysIndex().y].flags;
+    let request_mode = select(probe_is_requested_directly(probe_flags), PROBE_REQUEST_INDIRECT, PROBE_REQUEST_NONE);
 
     let use_radiance_cache = constants.distance_culling_enabled != 0 &&
                              constants.bounce_valid != 0 &&
@@ -134,7 +136,7 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
             constants.radiance_atlas_y_offset,
             params,
             probe_requests,
-            PROBE_REQUEST_NONE
+            request_mode
         );
         payload.radiance = sample.radiance * sample.coverage;
         return;
@@ -148,6 +150,6 @@ func closesthit_main(inout ProbeRayPayload payload, in BuiltInTriangleIntersecti
         hit_distance,
         direction,
         is_front_face,
-        PROBE_REQUEST_NONE
+        request_mode
     );
 }

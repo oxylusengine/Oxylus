@@ -176,7 +176,8 @@ func cs_main(u32x3 group_id : SV_GroupID, uniform SSSRSettings settings) -> void
                 view_direction,
                 length(view_space_ray),
                 world_space_reflected_direction,
-                clamped_roughness
+                clamped_roughness,
+                texel
             );
         }
     }

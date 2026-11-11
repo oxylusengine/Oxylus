@@ -1357,6 +1357,10 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
     }
   );
 
+  ui.section({.name = "Global Illumination"}, [&] {
+    ui.drag("Intensity", cvar_sys.cvar_gi_intensity, 0.0f, 10.0f, "Scales the indirect light from DDGI and RTGI");
+  });
+
   ui.section(
     {.name = "RT GI",
      .toggle = &cvar_sys.cvar_rtgi_enable,
@@ -1445,7 +1449,6 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         0.99f,
         "How much of a probe's history survives each update"
       );
-      ui.drag("Intensity", cvar_sys.cvar_ddgi_intensity, 0.0f, 10.0f);
 
       ui.begin_advanced();
       ui.drag(
@@ -1473,6 +1476,12 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "Distance Culling",
         cvar_sys.cvar_ddgi_distance_culling,
         "Trace mesh-distant probes only for staggered rechecks and reuse cached probe radiance for far ray hits"
+      );
+      ui.checkbox(
+        "Probe Requests",
+        cvar_sys.cvar_ddgi_probe_requests,
+        "Update a probe only while the screen, reflections, RTGI rays or other probes sample it. Unsampled probes keep "
+        "their data"
       );
       ui.checkbox(
         "Probe Relocation",

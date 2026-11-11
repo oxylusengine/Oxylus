@@ -136,7 +136,7 @@ func shade_ray_hit(in RTGIPayload payload, f32x3 origin, f32x3 direction) -> f32
             constants.radiance_atlas_y_offset,
             params,
             probe_requests,
-            PROBE_REQUEST_NONE
+            PROBE_REQUEST_INDIRECT
         );
 
         return sample.radiance * sample.coverage * rtgi_bounce_scale(t);
@@ -167,7 +167,7 @@ func shade_ray_hit(in RTGIPayload payload, f32x3 origin, f32x3 direction) -> f32
         constants.light_count,
         constants.bounce_valid,
         constants.atmosphere,
-        PROBE_REQUEST_NONE,
+        PROBE_REQUEST_INDIRECT,
         rtgi_bounce_scale(t)
     );
 }

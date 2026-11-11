@@ -113,7 +113,7 @@ auto RendererInstance::bind_sssr_variables(
       .ddgi_volume_count = static_cast<u32>(self.probe_volumes.size()),
       .ddgi_normal_bias = cvar.cvar_ddgi_normal_bias.get(),
       .ddgi_view_bias = cvar.cvar_ddgi_view_bias.get(),
-      .ddgi_intensity = cvar.cvar_ddgi_intensity.get(),
+      .gi_intensity = cvar.cvar_gi_intensity.get(),
       .horizon_darkening = glm::smoothstep(-0.1f, 0.3f, self.directional_light.direction.y),
       .sky_ambient_color = self.sky_data.ambient_color,
       .base_ambient_color = BASE_AMBIENT_COLOR,
@@ -341,7 +341,7 @@ auto RendererInstance::record_sssr(
   const auto& shape = recording.shape;
   const auto render_extent = vir::Extent3D{shape.render_size.x, shape.render_size.y, 1};
   const auto tile_extent = (shape.render_size + 7_u32) / 8_u32;
-  const auto is_ddgi = shape.has_ddgi;
+  const auto is_ddgi = shape.has_ddgi || shape.has_rtgi;
   const auto is_sky = static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere);
   const auto is_ambient = !is_ddgi && !is_sky;
   const auto scene_flags = std::to_underlying(shape.scene_flags);
@@ -393,7 +393,17 @@ auto RendererInstance::record_sssr(
   auto probe_requests_buffer = context.probe_requests_buffer;
   auto irradiance_attachment = context.irradiance_attachment;
   auto distance_attachment = context.distance_attachment;
+  auto rtgi_resolved_diffuse = context.rtgi_resolved_diffuse_attachment;
   auto atmosphere = values.atmosphere;
+  if (!shape.has_rtgi) {
+    rtgi_resolved_diffuse = module.clear(
+      module.transient_image(
+        {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused rtgi resolved diffuse"}
+      ),
+      vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
+    );
+  }
+
   if (!is_ddgi) {
     probe_volumes_buffer = module.transient_buffer({
       .size = sizeof(u32),
@@ -458,6 +468,7 @@ auto RendererInstance::record_sssr(
                     {distance_attachment, vir::Access::ComputeSampled},
                     {context.sky_cubemap_attachment, vir::Access::ComputeSampled},
                     {probe_requests_buffer, vir::Access::ComputeRW},
+                    {rtgi_resolved_diffuse, vir::Access::ComputeSampled},
                   })
                   .with_name("sssr classify");
     const auto* environment = is_ddgi ? "ddgi" : (is_sky ? "sky" : "ambient");
@@ -491,7 +502,8 @@ auto RendererInstance::record_sssr(
         .bind_buffer(0, 22, probe_states_buffer)
         .bind_image(0, 23, irradiance_attachment)
         .bind_image(0, 24, distance_attachment)
-        .bind_buffer(0, 26, probe_requests_buffer);
+        .bind_buffer(0, 26, probe_requests_buffer)
+        .bind_image(0, 27, rtgi_resolved_diffuse);
     } else if (is_sky) {
       module.bind_sampler(0, 20, linear_sampler).bind_image(0, 21, context.sky_cubemap_attachment);
     }
@@ -522,7 +534,8 @@ auto RendererInstance::record_sssr(
       irradiance_attachment,
       distance_attachment,
       context.sky_cubemap_attachment,
-      probe_requests_buffer
+      probe_requests_buffer,
+      rtgi_resolved_diffuse
     ) = std::tuple_cat(pass.end_compute());
   }
 
@@ -563,6 +576,7 @@ auto RendererInstance::record_sssr(
           {atmosphere, vir::Access::ComputeRead},
           {context.sky_view_lut_attachment, vir::Access::ComputeSampled},
           {probe_requests_buffer, vir::Access::ComputeRW},
+          {rtgi_resolved_diffuse, vir::Access::ComputeSampled},
         })
         .with_name("sssr intersect");
     const auto* environment = is_ddgi ? (is_sky ? "ddgi_sky" : "ddgi") : (is_sky ? "sky" : "ambient");
@@ -593,7 +607,8 @@ auto RendererInstance::record_sssr(
         .bind_buffer(0, 22, probe_states_buffer)
         .bind_image(0, 23, irradiance_attachment)
         .bind_image(0, 24, distance_attachment)
-        .bind_buffer(0, 26, probe_requests_buffer);
+        .bind_buffer(0, 26, probe_requests_buffer)
+        .bind_image(0, 27, rtgi_resolved_diffuse);
     }
 
     if (is_sky) {
@@ -625,8 +640,13 @@ auto RendererInstance::record_sssr(
       distance_attachment,
       atmosphere,
       context.sky_view_lut_attachment,
-      probe_requests_buffer
+      probe_requests_buffer,
+      rtgi_resolved_diffuse
     ) = std::tuple_cat(pass.end_compute());
+  }
+
+  if (shape.has_rtgi) {
+    context.rtgi_resolved_diffuse_attachment = rtgi_resolved_diffuse;
   }
 
   if (is_ddgi) {

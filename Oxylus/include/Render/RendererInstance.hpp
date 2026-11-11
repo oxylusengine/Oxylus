@@ -712,6 +712,7 @@ struct SSSRContext {
   vir::ValueID distance_attachment = vir::ValueID::Invalid;
   vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
   vir::ValueID sky_view_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID rtgi_resolved_diffuse_attachment = vir::ValueID::Invalid;
 
   vir::ValueID depth_hierarchy = vir::ValueID::Invalid;
   vir::ValueID previous_depth_hierarchy = vir::ValueID::Invalid;

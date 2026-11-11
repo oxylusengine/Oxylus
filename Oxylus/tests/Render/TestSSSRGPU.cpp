@@ -405,6 +405,7 @@ enum class TestEnvironment { Ambient, Sky, DDGI, DDGISky };
 constexpr static auto SKY_VIEW_COLOR = glm::vec3(0.2f, 0.4f, 0.9f);
 constexpr static auto SKY_CUBEMAP_COLOR = glm::vec3(0.1f, 0.7f, 0.3f);
 constexpr static auto DDGI_AMBIENT_COLOR = glm::vec3(0.9f, 0.1f, 0.1f);
+constexpr static auto RTGI_RESOLVED_COLOR = glm::vec3(0.1f, 0.2f, 0.8f);
 
 struct CaseConfig {
   const TestScene* scene = nullptr;
@@ -414,6 +415,7 @@ struct CaseConfig {
   f32 depth_thickness = 0.015f;
   RoughnessOverride roughness = {};
   TestEnvironment environment = TestEnvironment::Ambient;
+  bool is_rtgi_resolved = false;
   LitFunction lit = {};
   f32 radiance_scale = 1.0f;
   f32 fixed_exposure = 1.0f;
@@ -662,6 +664,7 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
     .scene_flags = is_sky ? GPU::SceneFlags::HasAtmosphere : GPU::SceneFlags::None,
     .has_ddgi = is_ddgi,
     .has_sssr = true,
+    .has_rtgi = config.is_rtgi_resolved,
   };
   auto recording = FrameRecording{.shape = shape, .prepared = prepared};
 
@@ -804,6 +807,16 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
     context.distance_attachment = *distance;
   }
 
+  if (config.is_rtgi_resolved) {
+    const auto resolved_color = RTGI_RESOLVED_COLOR * config.radiance_scale;
+    context.rtgi_resolved_diffuse_attachment = module.clear(
+      module.transient_image(
+        {.extent = {TEST_SIZE, TEST_SIZE, 1}, .format = vir::Format::RGBA16Sfloat, .name = "rtgi resolved diffuse"}
+      ),
+      vir::ClearValue::rgba_f32(resolved_color.r, resolved_color.g, resolved_color.b, 1.0f)
+    );
+  }
+
   const auto sobol = blue_noise_sobol();
   const auto scrambling = blue_noise_scrambling();
   const auto tables = allocations.buffer(
@@ -902,7 +915,7 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
       .ddgi_volume_count = 0,
       .ddgi_normal_bias = 0.0f,
       .ddgi_view_bias = 0.0f,
-      .ddgi_intensity = 1.0f,
+      .gi_intensity = 1.0f,
       .horizon_darkening = 1.0f,
       .sky_ambient_color = DDGI_AMBIENT_COLOR * config.radiance_scale,
       .base_ambient_color = SENTINEL_AMBIENT * config.radiance_scale,
@@ -1174,13 +1187,21 @@ TEST_F(SSSRGPU, EachEnvironmentVariantFallsBackToItsOwnEnvironment) {
   struct Variant {
     const char* name;
     TestEnvironment environment;
+    bool is_rtgi_resolved;
     glm::vec3 rough_color;
     std::array<glm::vec3, 2> miss_colors;
   };
   const auto variants = std::array{
-    Variant{"sky", TestEnvironment::Sky, SKY_CUBEMAP_COLOR, {SKY_VIEW_COLOR, SKY_VIEW_COLOR}},
-    Variant{"ddgi", TestEnvironment::DDGI, DDGI_AMBIENT_COLOR, {DDGI_AMBIENT_COLOR, DDGI_AMBIENT_COLOR}},
-    Variant{"ddgi and sky", TestEnvironment::DDGISky, DDGI_AMBIENT_COLOR, {SKY_VIEW_COLOR, DDGI_AMBIENT_COLOR}},
+    Variant{"sky", TestEnvironment::Sky, false, SKY_CUBEMAP_COLOR, {SKY_VIEW_COLOR, SKY_VIEW_COLOR}},
+    Variant{"ddgi", TestEnvironment::DDGI, false, DDGI_AMBIENT_COLOR, {DDGI_AMBIENT_COLOR, DDGI_AMBIENT_COLOR}},
+    Variant{"ddgi and sky", TestEnvironment::DDGISky, false, DDGI_AMBIENT_COLOR, {SKY_VIEW_COLOR, DDGI_AMBIENT_COLOR}},
+    Variant{
+      "ddgi and rtgi",
+      TestEnvironment::DDGI,
+      true,
+      RTGI_RESOLVED_COLOR,
+      {RTGI_RESOLVED_COLOR, RTGI_RESOLVED_COLOR}
+    },
   };
   const auto scene = mirror_scene();
   const auto camera = floor_camera();
@@ -1192,7 +1213,8 @@ TEST_F(SSSRGPU, EachEnvironmentVariantFallsBackToItsOwnEnvironment) {
        .camera = camera,
        .samples_per_quad = 4,
        .depth_thickness = 0.25f,
-       .environment = variant.environment}
+       .environment = variant.environment,
+       .is_rtgi_resolved = variant.is_rtgi_resolved}
     );
     ASSERT_TRUE(result.is_valid);
 

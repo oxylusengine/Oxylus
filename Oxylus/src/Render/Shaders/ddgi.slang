@@ -13,6 +13,9 @@ public static const u32 PROBE_UPDATE_BIT = 2u;
 public static const u32 PROBE_RESET_BIT = 4u;
 public static const u32 PROBE_INSIDE_GEOMETRY_BIT = 8u;
 public static const u32 PROBE_MESH_DISTANCE_BIT = 16u;
+public static const u32 PROBE_UNTRACED_BIT = 32u;
+public static const u32 PROBE_REQUESTED_BIT = 64u;
+public static const u32 PROBE_REQUESTED_DIRECT_BIT = 128u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_SHIFT = 8u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_MASK = 0x0f00u;
 public static const u32 PROBE_MESH_DISTANCE_GRACE_UPDATES = 8u;
@@ -59,6 +62,18 @@ public func probe_is_mesh_distant(u32 flags) -> bool {
     return (flags & PROBE_MESH_DISTANCE_BIT) != 0;
 }
 
+public func probe_is_untraced(u32 flags) -> bool {
+    return (flags & PROBE_UNTRACED_BIT) != 0;
+}
+
+public func probe_is_requested(u32 flags) -> bool {
+    return (flags & PROBE_REQUESTED_BIT) != 0;
+}
+
+public func probe_is_requested_directly(u32 flags) -> bool {
+    return (flags & PROBE_REQUESTED_DIRECT_BIT) != 0;
+}
+
 public func probe_mesh_distance_grace(u32 flags) -> u32 {
     return (flags & PROBE_MESH_DISTANCE_GRACE_MASK) >> PROBE_MESH_DISTANCE_GRACE_SHIFT;
 }
@@ -82,16 +97,22 @@ public func probe_pack_flags(
     bool mesh_distant,
     bool update,
     bool reset,
+    bool untraced,
+    bool requested,
+    bool requested_directly,
     u32 mesh_distance_grace,
     u32 inside_votes,
     u32 interval
 ) -> u32 {
-    let inactive = inside_geometry || mesh_distant;
-    return (inactive ? PROBE_INACTIVE_BIT : 0u) |
+    let inactive = or(or(inside_geometry, mesh_distant), untraced);
+    return select(inactive, PROBE_INACTIVE_BIT, 0u) |
            (update ? PROBE_UPDATE_BIT : 0u) |
            (reset ? PROBE_RESET_BIT : 0u) |
            (inside_geometry ? PROBE_INSIDE_GEOMETRY_BIT : 0u) |
            (mesh_distant ? PROBE_MESH_DISTANCE_BIT : 0u) |
+           select(untraced, PROBE_UNTRACED_BIT, 0u) |
+           select(requested, PROBE_REQUESTED_BIT, 0u) |
+           select(requested_directly, PROBE_REQUESTED_DIRECT_BIT, 0u) |
            ((mesh_distance_grace << PROBE_MESH_DISTANCE_GRACE_SHIFT) & PROBE_MESH_DISTANCE_GRACE_MASK) |
            ((inside_votes << PROBE_INSIDE_VOTES_SHIFT) & PROBE_INSIDE_VOTES_MASK) |
            ((interval << PROBE_INTERVAL_SHIFT) & PROBE_INTERVAL_MASK);

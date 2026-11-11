@@ -151,6 +151,9 @@ func cs_main(
         mesh_distant,
         probe_updates_this_frame(flags),
         probe_is_reset(flags) || is_reactivated,
+        false,
+        probe_is_requested(flags),
+        probe_is_requested_directly(flags),
         mesh_distance_grace,
         inside_votes,
         probe_update_interval(flags)
