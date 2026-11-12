@@ -24,7 +24,12 @@ struct UploadedMesh {
   BufferID buffer = BufferID::Invalid;
 };
 
-auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch) -> UploadedMesh {
+// `is_host_visible` puts the mesh in memory the CPU writes straight into: nothing is staged, copied or
+// submitted, which is what a small mesh made at runtime wants. The GPU may read it slower than device
+// memory, so it is not for meshes of any size
+auto upload_mesh(
+  RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch, bool is_host_visible = false
+) -> UploadedMesh {
   ZoneScoped;
 
   auto result = UploadedMesh();
@@ -43,7 +48,7 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   const auto buffer_id = render_context.allocate_buffer({
     .size = mesh.blob.size(),
     .usage = usage,
-    .location = vir::MemoryLocation::GpuOnly,
+    .location = is_host_visible ? vir::MemoryLocation::CpuToGpu : vir::MemoryLocation::GpuOnly,
     .alignment = 16,
     .name = "mesh",
   });
@@ -81,6 +86,27 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     lod.indirect_vertex_indices += gpu_mesh_bda;
   }
 
+  // the compiler reserves the LOD table at the blob tail but leaves it zeroed: every offset in it
+  // only becomes an address once there is a buffer to add
+  const auto lod_table = std::span{
+    reinterpret_cast<const u8*>(result.lods.data()),
+    gpu_mesh.lod_count * sizeof(GPU::MeshLOD)
+  };
+
+  if (is_host_visible) {
+    const auto is_written = gpu_buffer.write_bytes(0, mesh.blob) &&
+                            gpu_buffer.write_bytes(mesh.lod_metadata_offset, lod_table) &&
+                            render_context.persistent->flush_buffer(gpu_buffer);
+    if (!is_written) {
+      OX_LOG_ERROR("Failed to write a host visible mesh buffer.");
+      render_context.destroy_buffer(*buffer_id);
+      return result;
+    }
+
+    result.buffer = *buffer_id;
+    return result;
+  }
+
   auto staging = render_context.allocate_staging(mesh.blob);
   if (!staging) {
     OX_LOG_ERROR("Failed to allocate mesh staging ({}).", std::to_underlying(staging.error()));
@@ -88,12 +114,6 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     return result;
   }
 
-  // the compiler reserves the LOD table at the blob tail but leaves it zeroed: every offset in it
-  // only becomes an address once there is a buffer to add
-  const auto lod_table = std::span{
-    reinterpret_cast<const u8*>(result.lods.data()),
-    gpu_mesh.lod_count * sizeof(GPU::MeshLOD)
-  };
   const auto is_patched = staging->write_bytes(mesh.lod_metadata_offset, lod_table) &&
                           render_context.persistent->flush_buffer(*staging, mesh.lod_metadata_offset, lod_table.size());
   if (!is_patched) {
@@ -192,7 +212,16 @@ auto AssetManager::load_model(
   // the mesh jobs outlive this call when `async`, so the source has to be owned by them
   auto data = std::make_shared<const ModelData>(std::move(model_data));
 
-  const auto use_jobs = job_man.get_thread_count() > 1;
+  // a model this small is written faster than a job wakes up or a copy is submitted, so a blocking load
+  // of one runs here and its meshes go to host visible memory
+  constexpr static auto INLINE_UPLOAD_BYTES = 256_sz * 1024_sz;
+  auto blob_bytes = 0_sz;
+  for (const auto& mesh : data->meshes) {
+    blob_bytes += mesh.blob.size();
+  }
+  const auto is_inline = !async && data->textures.empty() && blob_bytes <= INLINE_UPLOAD_BYTES;
+
+  const auto use_jobs = job_man.get_thread_count() > 1 && !is_inline;
   auto dispatch = [&job_man, use_jobs](const Arc<Barrier>& barrier, auto&& work) {
     if (!use_jobs) {
       work();
@@ -318,11 +347,11 @@ auto AssetManager::load_model(
   auto mesh_barrier = Barrier::create();
   auto mesh_batch = UploadBatch::create();
   for (auto mesh_index = 0_sz; mesh_index < mesh_count; mesh_index++) {
-    dispatch(mesh_barrier, [&asset_man = self, model_id, data, &render_context, mesh_index, mesh_batch]() {
+    dispatch(mesh_barrier, [&asset_man = self, model_id, data, &render_context, mesh_index, mesh_batch, is_inline]() {
       ZoneScopedN("Mesh Upload");
 
       const auto& mesh_data = data->meshes[mesh_index];
-      auto uploaded = upload_mesh(render_context, mesh_data, mesh_batch.get());
+      auto uploaded = upload_mesh(render_context, mesh_data, mesh_batch.get(), is_inline);
 
       auto loaded_model = asset_man.get_model(model_id);
       if (!loaded_model) {
