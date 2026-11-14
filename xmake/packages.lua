@@ -80,6 +80,7 @@ packages = {
   ["svector " .. svector_version] = {},
   ["plf_colony v7.41"] = {},
   ["simdutf v8.2.0"] = {},
+  ["cpp-httplib v0.63.0"] = {},
   ["rmlui f7b297e2c8fc44c5e85df498dbae91762c0769a5"] = {
     configs = {
       shared = false,

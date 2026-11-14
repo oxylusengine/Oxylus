@@ -47,6 +47,7 @@ if has_config("csharp") then
 end
 if has_config("editor") then
   includes("OxylusEditor")
+  includes("OxylusMcpBridge")
 end
 if has_config("tests") then
   includes("Oxylus/tests")

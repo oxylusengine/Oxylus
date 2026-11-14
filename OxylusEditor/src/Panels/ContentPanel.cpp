@@ -16,6 +16,7 @@
 #include <mutex>
 #include <vir/Types.hpp>
 
+#include "Actions/FileActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -323,221 +324,17 @@ auto classify_file_type(const std::filesystem::path& path) -> FileType {
   return file_type;
 }
 
-static auto update_selected_path(const std::filesystem::path& old_path, const std::filesystem::path& new_path) -> void {
-  auto& editor_context = App::mod<Editor>().get_context();
-  if (editor_context.type != EditorContext::Type::File || !editor_context.str.has_value()) {
-    return;
-  }
-
-  if (const auto relocated_path = remap_path(std::filesystem::path(*editor_context.str), old_path, new_path)) {
-    editor_context.reset(EditorContext::Type::File, relocated_path->string());
-  }
-}
-
-static auto entry_name_error(std::string_view name) -> std::string_view {
-  if (name.empty())
-    return "Enter a name.";
-  if (name == "." || name == ".." || name.find_first_of("/\\") != std::string_view::npos)
-    return "Names cannot contain path separators.";
-  return {};
-}
-
-// a visible sidecar describes its sibling, so moving or renaming it has to carry that sibling along,
-// otherwise the asset would lose its stable UUID on the next import
-static auto content_entry_source(const std::filesystem::path& path, std::error_code& error) -> std::filesystem::path {
-  if (std::filesystem::is_directory(path, error) || error || path.extension() != ".oxasset")
-    return path;
-
-  auto companion_path = path;
-  companion_path.replace_extension();
-  if (std::filesystem::exists(companion_path, error) && !error)
-    return companion_path;
-
-  return path;
-}
-
-// on case-insensitive filesystems a case-only rename finds its own source at the destination
-static auto destination_taken(
-  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, std::error_code& error
-) -> bool {
-  return std::filesystem::exists(destination_path, error) &&
-         !std::filesystem::equivalent(source_path, destination_path, error);
-}
-
-static auto relocate_content_entry(
-  const std::filesystem::path& source_path, const std::filesystem::path& destination_path, bool is_directory
-) -> std::expected<void, std::string> {
-  std::error_code error;
-  if (destination_taken(source_path, destination_path, error) || error) {
-    return std::unexpected(fmt::format("{} already exists or can't be inspected.", destination_path.filename()));
-  }
-
-  const auto source_meta_path = is_directory ? std::filesystem::path{} : meta_file_path(source_path);
-  const bool has_meta_file = !source_meta_path.empty() && source_meta_path != source_path &&
-                             std::filesystem::exists(source_meta_path, error) && !error;
-  if (error) {
-    return std::unexpected(fmt::format("Couldn't inspect sidecar for {}: {}", source_path, error.message()));
-  }
-
-  const auto destination_meta_path = has_meta_file ? meta_file_path(destination_path) : std::filesystem::path{};
-  if (has_meta_file && (destination_taken(source_meta_path, destination_meta_path, error) || error)) {
-    return std::unexpected(
-      fmt::format("Sidecar {} already exists or can't be inspected.", destination_meta_path.filename())
-    );
-  }
-
-  std::filesystem::rename(source_path, destination_path, error);
-  if (error) {
-    return std::unexpected(error.message());
-  }
-
-  if (has_meta_file) {
-    std::filesystem::rename(source_meta_path, destination_meta_path, error);
-    if (error) {
-      const auto sidecar_error = error;
-      std::error_code rollback_error;
-      std::filesystem::rename(destination_path, source_path, rollback_error);
-      return std::unexpected(
-        fmt::format(
-          "Couldn't move sidecar {} to {}: {}{}",
-          source_meta_path,
-          destination_meta_path,
-          sidecar_error.message(),
-          rollback_error ? fmt::format(" (and couldn't restore {}: {})", source_path, rollback_error.message()) : ""
-        )
-      );
-    }
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  relocate_asset_paths(asset_man, source_path, destination_path);
-
-  // Standalone assets consist only of an `.oxasset`; their registered path omits that extension.
-  if (!is_directory && source_path.extension() == ".oxasset" && source_meta_path == source_path) {
-    auto source_asset_path = source_path;
-    source_asset_path.replace_extension();
-    auto destination_asset_path = destination_path;
-    destination_asset_path.replace_extension();
-    relocate_asset_paths(asset_man, source_asset_path, destination_asset_path);
-  }
-
-  update_selected_path(source_path, destination_path);
-  if (has_meta_file) {
-    update_selected_path(source_meta_path, destination_meta_path);
-  }
-
-  return {};
-}
-
-static auto move_content_entry(
-  const std::filesystem::path& requested_path,
-  const std::filesystem::path& drop_path,
-  const std::filesystem::path& assets_directory
-) -> bool {
-  const auto normalized_root = assets_directory.lexically_normal();
-  const auto normalized_requested_path = requested_path.lexically_normal();
-  const auto normalized_drop_path = drop_path.lexically_normal();
-
-  const auto is_in_assets_directory = [&normalized_root](const std::filesystem::path& path) {
-    const auto normalized_path = path.lexically_normal();
-    if (normalized_path == normalized_root) {
-      return true;
-    }
-
-    const auto relative_path = normalized_path.lexically_relative(normalized_root);
-    if (relative_path.empty() || relative_path.is_absolute()) {
-      return false;
-    }
-
-    return std::ranges::none_of(relative_path, [](const auto& component) { return component == ".."; });
-  };
-
-  std::error_code error;
-  if (
-    !is_in_assets_directory(normalized_requested_path) || !is_in_assets_directory(normalized_drop_path) ||
-    !std::filesystem::exists(normalized_requested_path, error) || error ||
-    !std::filesystem::is_directory(normalized_drop_path, error) || error
-  ) {
-    OX_LOG_ERROR(
-      "Couldn't move {} into {}: source or target is outside the asset directory or unavailable.",
-      requested_path,
-      drop_path
-    );
-    return false;
-  }
-
-  const auto source_path = content_entry_source(normalized_requested_path, error);
-  if (error) {
-    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", requested_path, error.message());
-    return false;
-  }
-
-  const bool is_directory = std::filesystem::is_directory(source_path, error);
-  if (error) {
-    OX_LOG_ERROR("Couldn't inspect {} before moving it: {}", source_path, error.message());
-    return false;
-  }
-
-  if (source_path.parent_path().lexically_normal() == normalized_drop_path) {
-    return false;
-  }
-
-  // Moving a directory into itself (or any child) would create an invalid recursive move.
-  if (is_directory && remap_path(normalized_drop_path, source_path, source_path)) {
-    OX_LOG_ERROR("Can't move directory {} into itself.", source_path);
-    return false;
-  }
-
-  if (
-    const auto moved = relocate_content_entry(source_path, normalized_drop_path / source_path.filename(), is_directory);
-    !moved
-  ) {
-    OX_LOG_ERROR("Couldn't move {} into {}: {}", source_path, normalized_drop_path, moved.error());
-    return false;
-  }
-
-  return true;
-}
-
-static auto rename_content_entry(const std::filesystem::path& requested_path, std::string_view new_name)
-  -> std::expected<void, std::string> {
-  const auto normalized_requested_path = requested_path.lexically_normal();
-  const bool requested_meta_file = normalized_requested_path.extension() == ".oxasset";
-
-  // whatever sits behind an `.oxasset` stays one, whether or not the typed name keeps the extension
-  auto base_name = new_name;
-  if (requested_meta_file && base_name.ends_with(".oxasset"))
-    base_name.remove_suffix(std::string_view(".oxasset").size());
-
-  if (const auto name_error = entry_name_error(base_name); !name_error.empty())
-    return std::unexpected(std::string(name_error));
-
-  std::error_code error;
-  const auto source_path = content_entry_source(normalized_requested_path, error);
-  if (error)
-    return std::unexpected(fmt::format("Couldn't inspect {}: {}", requested_path, error.message()));
-
-  const bool is_directory = std::filesystem::is_directory(source_path, error);
-  if (error)
-    return std::unexpected(fmt::format("Couldn't inspect {}: {}", source_path, error.message()));
-
-  auto destination_path = source_path.parent_path() / base_name;
-  if (requested_meta_file && source_path == normalized_requested_path)
-    destination_path += ".oxasset";
-
-  if (destination_path == source_path)
-    return {};
-
-  return relocate_content_entry(source_path, destination_path, is_directory);
-}
-
-static bool drag_drop_target(const std::filesystem::path& drop_path, const std::filesystem::path& assets_directory) {
+static bool drag_drop_target(const std::filesystem::path& drop_path, const std::filesystem::path&) {
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_SOURCE)) {
       const auto* source = PayloadData::from_payload(payload);
-      const bool moved = move_content_entry(source->get_path(), drop_path, assets_directory);
+      const auto moved = move_content_entry(App::mod<Editor>(), source->get_path(), drop_path);
+      if (!moved) {
+        OX_LOG_ERROR("{}", moved.error());
+      }
+
       ImGui::EndDragDropTarget();
-      return moved;
+      return moved.has_value();
     }
 
     const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PayloadData::DRAG_DROP_TARGET);
@@ -577,42 +374,9 @@ static void drag_drop_from(const std::filesystem::path& filepath) {
   }
 }
 
-static void open_file(const std::filesystem::path& path) {
-  const auto ext = path.extension().string();
-  const auto& file_type_it = FILE_TYPES.find(ext);
-  if (file_type_it != FILE_TYPES.end()) {
-    const FileType file_type = file_type_it->second;
-    switch (file_type) {
-      case FileType::Scene: {
-        App::mod<Editor>().open_scene(path);
-        break;
-      }
-      case FileType::Unknown: break;
-      case FileType::Prefab : break;
-      case FileType::Texture: break;
-      case FileType::Shader : [[fallthrough]];
-      case FileType::CSharp : {
-        open_in_external_editor(path);
-        break;
-      }
-      case ox::FileType::Material  : break;
-      case FileType::ParticleSystem: {
-        // `open_asset` loads it and holds the ref for as long as the panel shows it
-        if (const auto uuid = import_asset(App::mod<AssetManager>(), path)) {
-          App::mod<Editor>().editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
-        }
-        break;
-      }
-      case FileType::Cinematic: {
-        if (const auto uuid = import_asset(App::mod<AssetManager>(), path)) {
-          App::mod<Editor>().editor_panel_registry.get<CinematicEditorPanel>().open_asset(uuid);
-        }
-        break;
-      }
-      default: break;
-    }
-  } else {
-    os::open_file_externally(path);
+static auto open_file_action(const std::filesystem::path& path) -> void {
+  if (const auto opened = open_file(App::mod<Editor>(), path); !opened) {
+    OX_LOG_ERROR("{}", opened.error());
   }
 }
 
@@ -1372,7 +1136,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               directory_to_open = path;
               self.filter_.Clear();
             } else {
-              open_file(path);
+              open_file_action(path);
               editor_context.reset();
             }
           }
@@ -1523,7 +1287,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
               directory_to_open = path;
               self.filter_.Clear();
             } else {
-              open_file(path);
+              open_file_action(path);
               editor_context.reset();
             }
           }
@@ -1575,7 +1339,10 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
     );
     ImGui::Separator();
     if (ImGui::Button("OK", UI::scale(ImVec2(120.0f, 0.0f)))) {
-      std::filesystem::remove_all(self.directory_to_delete);
+      if (const auto deleted = delete_content_entry(App::mod<Editor>(), self.directory_to_delete, true); !deleted) {
+        OX_LOG_ERROR("{}", deleted.error());
+      }
+
       self.directory_to_delete.clear();
       self.refresh();
       ImGui::CloseCurrentPopup();
@@ -1613,21 +1380,14 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     ImGui::Separator();
     if (create_requested || ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
-      if (const auto name_error = entry_name_error(self.new_folder_name); !name_error.empty()) {
-        self.new_folder_error = name_error;
+      if (
+        const auto created = create_folder(App::mod<Editor>(), self.new_folder_parent, self.new_folder_name); created
+      ) {
+        self.refresh();
+        reset_new_folder_popup();
+        ImGui::CloseCurrentPopup();
       } else {
-        const auto new_folder_path = self.new_folder_parent / self.new_folder_name;
-        std::error_code error;
-        if (std::filesystem::create_directory(new_folder_path, error)) {
-          editor_context.reset(EditorContext::Type::File, new_folder_path.string());
-          self.refresh();
-          reset_new_folder_popup();
-          ImGui::CloseCurrentPopup();
-        } else if (error) {
-          self.new_folder_error = fmt::format("Couldn't create folder: {}", error.message());
-        } else {
-          self.new_folder_error = "A file or folder with that name already exists.";
-        }
+        self.new_folder_error = created.error();
       }
     }
 
@@ -1668,7 +1428,7 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     ImGui::Separator();
     if (rename_requested || ImGui::Button("Rename", UI::scale(ImVec2(120.0f, 0.0f)))) {
-      if (const auto renamed = rename_content_entry(self.rename_path, self.rename_name); renamed) {
+      if (const auto renamed = rename_content_entry(App::mod<Editor>(), self.rename_path, self.rename_name); renamed) {
         self.refresh();
         reset_rename_popup();
         ImGui::CloseCurrentPopup();
@@ -1696,40 +1456,20 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     if (ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
       if (!self.new_asset_name.empty()) {
-        auto& asset_man = App::mod<AssetManager>();
-        auto asset_path = self.current_directory / self.new_asset_name;
-        if (asset_path.extension() == ".oxasset") {
-          asset_path.replace_extension("");
-        }
-
-        if (self.new_asset_type == AssetType::ParticleSystem) {
-          if (asset_path.extension() != ".oxparticle") {
-            asset_path.replace_extension(".oxparticle");
-          }
-          // loading reads the file, and a new system has nothing on disk yet
-          ParticleSystem::make_default().write(asset_path);
-        }
-
-        if (self.new_asset_type == AssetType::Cinematic && asset_path.extension() != ".oxcine") {
-          asset_path.replace_extension(".oxcine");
-        }
-
-        auto asset = asset_man.create_asset(self.new_asset_type, asset_path);
-        asset_man.load_asset(asset);
-        if (export_asset(asset_man, asset, asset_path)) {
-          OX_LOG_INFO(
-            "Created new {} asset {}",
-            AssetManager::to_asset_type_sv(self.new_asset_type),
+        if (
+          const auto created = create_asset_file(
+            App::mod<Editor>(),
+            self.current_directory,
+            self.new_asset_type,
             self.new_asset_name
           );
+          created
+        ) {
           self.refresh();
         } else {
-          OX_LOG_ERROR(
-            "Couldn't create {} asset {}",
-            AssetManager::to_asset_type_sv(self.new_asset_type),
-            self.new_asset_name
-          );
+          OX_LOG_ERROR("{}", created.error());
         }
+
         self.new_asset_name.clear();
         self.should_open_new_asset_popup = false;
         ImGui::CloseCurrentPopup();
@@ -1761,7 +1501,20 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
 
     if (ImGui::Button("Create", UI::scale(ImVec2(120.0f, 0.0f)))) {
       if (!self.new_script_name.empty()) {
-        self.create_csharp_script();
+        if (
+          const auto created = create_csharp_script(
+            App::mod<Editor>(),
+            self.current_directory,
+            self.new_script_kind,
+            self.new_script_name
+          );
+          created
+        ) {
+          self.refresh();
+        } else {
+          OX_LOG_ERROR("{}", created.error());
+        }
+
         self.new_script_name.clear();
         self.should_open_new_script_popup = false;
         ImGui::CloseCurrentPopup();
@@ -1782,34 +1535,6 @@ void ContentPanel::render_body(this ContentPanel& self, bool grid) {
   if (!directory_to_open.empty())
     self.update_directory_entries(directory_to_open);
 }
-
-#ifdef OX_DOTNET
-auto ContentPanel::create_csharp_script(this ContentPanel& self) -> void {
-  const auto& scripts_project = App::mod<Editor>().active_project->get_config().scripts_project;
-  if (scripts_project.empty()) {
-    return;
-  }
-
-  const auto class_name = to_csharp_identifier(self.new_script_name);
-  const auto script_path = self.current_directory / (class_name + ".cs");
-  if (std::filesystem::exists(script_path)) {
-    OX_LOG_ERROR("Couldn't create C# script, {} already exists", script_path.string());
-    return;
-  }
-
-  auto file = std::ofstream(script_path, std::ios::binary);
-  if (!file) {
-    OX_LOG_ERROR("Couldn't create C# script {}", script_path.string());
-    return;
-  }
-
-  file << csharp_script_template(self.new_script_kind, scripts_project.stem().string(), class_name);
-  file.close();
-
-  OX_LOG_INFO("Created new C# script {}", class_name);
-  self.refresh();
-}
-#endif
 
 void ContentPanel::update_directory_entries(this ContentPanel& self, const std::filesystem::path& directory) {
   ZoneScoped;
@@ -1916,7 +1641,7 @@ auto ContentPanel::draw_context_menu_items(this ContentPanel& self, const std::f
     if (is_dir) {
       dir_to_open = context.string();
     } else {
-      open_file(context);
+      open_file_action(context);
     }
   }
   if (is_dir) {

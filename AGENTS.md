@@ -489,6 +489,24 @@ preference:
 - Always check the guard (`if (!guard) ...`) before dereferencing; a failed lookup yields a null
   guard, not an exception.
 
+## MCP server
+
+The editor hosts an MCP server (Streamable HTTP on 127.0.0.1, default port 7780) that lets agents drive it. The
+code lives in `OxylusEditor/src/Mcp/`: `McpHttp.cpp` is the only file that includes httplib, `McpProtocol.cpp` is
+JSON-RPC and the MCP methods, and tools sit in `Mcp/Tools/*.cpp`. `OxylusMcpBridge/` builds `oxmcp`, a stdio proxy
+to that endpoint with `--launch` and `--selftest`, and it must never link the engine.
+
+- **Every editor operation reachable from the UI lives in an action** in `OxylusEditor/src/Actions/` that both the
+  panel and the MCP tool call. A new panel feature or tool does not carry its own copy of the logic.
+- **Tools run on the main thread** in `McpServer::pump`, at the top of `Editor::update`. The HTTP thread only parses
+  and queues, never touches the scene. Work that outlasts a frame returns `McpResult::pending` with a poll.
+- **Scene mutations go through `EditTransaction`** so they land in the undo history as one step.
+- `StringUtils::escape_str` emits JSON escapes (`\u00xx`), not C ones, so it is safe for `JsonWriter` and the
+  discovery file.
+- Guides for `editor_guide` are markdown in `OxylusEditor/Assets/Mcp/guide/`, the thin agent skill is
+  `OxylusEditor/Assets/Mcp/skills/oxylus-editor/SKILL.md`. The `Tools > MCP` menu copies client config and installs
+  both into a project, only for files that are absent. `OxylusEditor --project <file.oxproj>` opens a project at start.
+
 ## CI
 
 `.github/workflows/xmake.yaml` builds Windows/msvc, Windows/clang-cl, Linux/clang-23, and

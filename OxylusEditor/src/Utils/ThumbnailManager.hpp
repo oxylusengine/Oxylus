@@ -33,6 +33,13 @@ struct ThumbnailPrewarmProgress {
   std::string current = {};
 };
 
+struct ThumbnailCapture {
+  std::atomic<bool> is_done = false;
+  // both are written before is_done is released
+  std::string png = {};
+  std::string error = {};
+};
+
 class ThumbnailManager {
 public:
   ThumbnailManager();
@@ -66,6 +73,14 @@ public:
     const UUID& asset_uuid = UUID(nullptr)
   ) -> TextureView;
 
+  // renders `uuid` at `size` on a later frame and encodes it as a PNG, models and materials on the GPU, textures from
+  // their source file. Poll `is_done`
+  auto capture_png(this ThumbnailManager& self, const UUID& uuid, u32 size) -> std::shared_ptr<ThumbnailCapture>;
+
+  // RGBA8 pixels as PNG file contents, empty when encoding failed
+  auto encode_capture_png(this ThumbnailManager& self, std::span<const u8> pixels, u32 width, u32 height)
+    -> std::string;
+
   auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
 
   // Asks for every thumbnail up front instead of waiting for the content panel to scroll one into
@@ -80,6 +95,12 @@ private:
     std::string cache_key = {};
     UUID asset_uuid = UUID(nullptr);
     std::filesystem::path expected_png = {};
+  };
+
+  struct PendingCapture {
+    UUID asset_uuid = UUID(nullptr);
+    u32 size = 0;
+    std::shared_ptr<ThumbnailCapture> capture = {};
   };
 
   struct PendingUpload {
@@ -128,6 +149,8 @@ private:
   std::mutex queue_mutex = {};
   std::queue<PendingRender> pending_renders = {};
   std::queue<PendingUpload> pending_uploads = {};
+  std::queue<PendingCapture> pending_captures = {};
+  std::atomic<u32> capture_counter = 0;
 
   ankerl::unordered_dense::map<std::filesystem::path, UUID> material_uuids = {};
   std::shared_mutex material_uuids_mutex = {};
@@ -155,6 +178,7 @@ private:
     -> option<std::vector<u8>>;
   auto render_scene(this ThumbnailManager& self, Scene& scene, u32 size) -> option<std::vector<u8>>;
   auto ensure_material_preview(this ThumbnailManager& self) -> bool;
+  auto run_capture(this ThumbnailManager& self, const PendingCapture& request) -> void;
 
   auto store_thumbnail(this ThumbnailManager& self, const std::string& cache_key, std::span<const u8> pixels) -> void;
   auto drain_pending_upload(this ThumbnailManager& self) -> void;

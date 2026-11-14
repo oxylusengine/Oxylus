@@ -475,6 +475,26 @@ static auto read_material_asset_meta(simdjson::ondemand::value json, Material& m
   read_uuid("occlusion_texture", material.occlusion_texture);
 }
 
+auto read_material_asset_json(std::string_view json, Material& material) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  const auto padded = simdjson::padded_string(json);
+  simdjson::ondemand::parser parser;
+  auto doc = parser.iterate(padded);
+  if (doc.error()) {
+    return std::unexpected(std::string(simdjson::error_message(doc.error())));
+  }
+
+  auto value = doc.get_value();
+  if (value.error() || value.type().value_unsafe() != simdjson::ondemand::json_type::object) {
+    return std::unexpected("a material is a json object");
+  }
+
+  read_material_asset_meta(value.value_unsafe(), material);
+
+  return {};
+}
+
 static auto read_meta_file(Session& session, const std::filesystem::path& path) -> std::unique_ptr<MetaFile> {
   ZoneScoped;
 

@@ -6,6 +6,7 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "Actions/EntityActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
@@ -29,14 +30,6 @@ static auto has_mesh_in_hierarchy(flecs::entity entity) -> bool {
   auto found = false;
   entity.children([&found](flecs::entity child) { found = found || has_mesh_in_hierarchy(child); });
   return found;
-}
-
-static auto add_mesh_colliders_to_hierarchy(flecs::entity entity) -> void {
-  if (entity.has<MeshComponent>() && !entity.has<MeshColliderComponent>()) {
-    entity.add<MeshColliderComponent>();
-  }
-
-  entity.children([](flecs::entity child) { add_mesh_colliders_to_hierarchy(child); });
 }
 
 static auto is_script_selected(const EditorContext& context) -> bool {
@@ -71,7 +64,6 @@ SceneHierarchyPanel::SceneHierarchyPanel() : EditorPanelState("Scene Hierarchy",
 auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   auto& editor = App::mod<Editor>();
   auto& editor_context = editor.get_context();
-  auto& undo_redo_system = editor.undo_redo_system;
 
   if (editor_context.type == EditorContext::Type::Entity) {
     if (editor_context.entity.has_value())
@@ -94,7 +86,13 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
     }
 
     if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D) && self.scene_) {
-      self.selected_entity_.set(self.scene_->duplicate_entity(self.selected_entity_.get()));
+      auto tx = begin_edit(editor, *self.scene_, "duplicate entity");
+      if (const auto clone = duplicate_entity(tx, self.selected_entity_.get())) {
+        self.selected_entity_.set(clone.value());
+      } else {
+        OX_LOG_ERROR("{}", clone.error());
+      }
+      tx.commit();
     }
     if (
       ImGui::IsKeyPressed(ImGuiKey_Delete) && (self.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())
@@ -113,9 +111,14 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
     remove_selected_script(*self.scene_, editor_context);
   }
 
-  if (self.deleted_entity_) {
-    auto command_id = fmt::format("delete entity {}", self.deleted_entity_.name().c_str());
-    undo_redo_system->execute_command<EntityDeleteCommand>(self.scene_, self.deleted_entity_, "", command_id);
+  if (self.deleted_entity_ && self.scene_) {
+    auto tx = begin_edit(editor, *self.scene_, "delete entity");
+    if (const auto result = delete_entity(tx, self.deleted_entity_); !result) {
+      OX_LOG_ERROR("{}", result.error());
+    }
+    tx.commit();
+
+    self.deleted_entity_ = flecs::entity::null();
     self.selected_entity_.reset();
   }
 }
@@ -285,12 +288,8 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
             const auto* payload_data = PayloadData::from_payload(payload);
             const auto path = payload_data->get_path();
             if (path.extension() == ".oxparticle") {
-              auto asset = import_asset(App::mod<AssetManager>(), path);
-              if (asset) {
-                auto new_entity = self.scene_->create_particle_system_entity(asset);
-                if (new_entity != flecs::entity::null()) {
-                  self.selected_entity_.set(new_entity);
-                }
+              if (auto asset = import_asset(App::mod<AssetManager>(), path)) {
+                self.queue_create_from_asset(asset, flecs::entity::null());
               }
             }
           }
@@ -342,10 +341,17 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       }
 
       if (self.dragged_entity_ != flecs::entity::null() && self.dragged_entity_target_ != flecs::entity::null()) {
-        self.dragged_entity_.child_of(self.dragged_entity_target_);
+        auto tx = begin_edit(App::mod<Editor>(), *self.scene_, "reparent entity");
+        if (const auto result = reparent_entity(tx, self.dragged_entity_, self.dragged_entity_target_); !result) {
+          OX_LOG_ERROR("{}", result.error());
+        }
+        tx.commit();
+
         self.dragged_entity_ = flecs::entity::null();
         self.dragged_entity_target_ = flecs::entity::null();
       }
+
+      self.run_deferred_edits();
 
       ImGui::TreePop();
     }
@@ -427,17 +433,21 @@ auto SceneHierarchyPanel::draw_entity_node(
     if (ImGui::MenuItem("Rename", "F2"))
       self.renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
-      self.selected_entity_.set(self.scene_->duplicate_entity(entity));
+      self.queue_edit("duplicate entity", [entity](SceneHierarchyPanel& panel, EditTransaction& tx) {
+        if (const auto clone = duplicate_entity(tx, entity)) {
+          panel.selected_entity_.set(clone.value());
+        } else {
+          OX_LOG_ERROR("{}", clone.error());
+        }
+      });
     }
     if (ImGui::MenuItem("Delete", "Del"))
       entity_deleted = true;
 
     if (has_mesh_in_hierarchy(entity) && ImGui::MenuItem("Add Mesh Colliders")) {
-      // deferred so adding components doesn't move entities out from under the children() walk
-      entity.world().defer([&entity] {
-        add_mesh_colliders_to_hierarchy(entity);
-        if (!entity.has<RigidBodyComponent>()) {
-          entity.set<RigidBodyComponent>({.type = RigidBodyComponent::Static});
+      self.queue_edit("add mesh colliders", [entity](SceneHierarchyPanel&, EditTransaction& tx) {
+        if (const auto result = add_mesh_colliders(tx, entity); !result) {
+          OX_LOG_ERROR("{}", result.error());
         }
       });
     }
@@ -463,13 +473,8 @@ auto SceneHierarchyPanel::draw_entity_node(
         const auto* payload_data = PayloadData::from_payload(payload);
         const auto path = payload_data->get_path();
         if (path.extension() == ".oxparticle") {
-          auto asset = import_asset(App::mod<AssetManager>(), path);
-          if (asset) {
-            auto new_entity = self.scene_->create_particle_system_entity(asset);
-            if (new_entity != flecs::entity::null()) {
-              new_entity.child_of(entity);
-              self.selected_entity_.set(new_entity);
-            }
+          if (auto asset = import_asset(App::mod<AssetManager>(), path)) {
+            self.queue_create_from_asset(asset, entity);
           }
         }
       }
@@ -485,20 +490,23 @@ auto SceneHierarchyPanel::draw_entity_node(
   }
 
   if (entity.id() == self.renaming_entity_.id()) {
-    static bool renaming = false;
-    if (!renaming) {
-      renaming = true;
+    if (!self.is_rename_started_) {
+      self.is_rename_started_ = true;
+      self.rename_original_ = entity.name().c_str();
+      self.rename_text_ = self.rename_original_;
       ImGui::SetKeyboardFocusHere();
     }
 
-    std::string name{entity.name()};
-    if (ImGui::InputText("##Tag", &name)) {
-      entity.set_name(name.c_str());
+    if (ImGui::InputText("##Tag", &self.rename_text_)) {
+      const auto is_applicable = !self.rename_text_.empty() && !self.rename_text_.contains('/') &&
+                                 is_entity_name_free(*self.scene_, entity, self.rename_text_);
+      if (is_applicable) {
+        entity.set_name(self.rename_text_.c_str());
+      }
     }
 
     if (ImGui::IsItemDeactivated()) {
-      renaming = false;
-      self.renaming_entity_ = flecs::entity::null();
+      self.finish_rename(entity);
     }
   }
 
@@ -524,7 +532,14 @@ auto SceneHierarchyPanel::draw_entity_node(
     ImGui::Text("  %s", entity.enabled() ? ICON_MDI_EYE_OUTLINE : ICON_MDI_EYE_OFF_OUTLINE);
 
     if (ImGui::IsItemHovered() && (ImGui::IsMouseDragging(0) || ImGui::IsItemClicked())) {
-      entity.enabled() ? entity.disable() : entity.enable();
+      self.queue_edit(
+        "toggle entity",
+        [entity, is_enabled = entity.enabled()](SceneHierarchyPanel&, EditTransaction& tx) {
+          if (const auto result = set_entity_enabled(tx, entity, !is_enabled); !result) {
+            OX_LOG_ERROR("{}", result.error());
+          }
+        }
+      );
     }
   }
 
@@ -587,66 +602,57 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
 
   const bool has_context = self.selected_entity_.get() != flecs::entity::null();
 
-  flecs::entity to_select = flecs::entity::null();
+  const auto parent = has_context ? self.selected_entity_.get() : flecs::entity::null();
+  const auto create = [&self, parent](EntityPreset preset) {
+    self.queue_edit("create entity", [preset, parent](SceneHierarchyPanel& panel, EditTransaction& tx) {
+      if (const auto created = create_entity(tx, "", parent, preset)) {
+        panel.selected_entity_.set(created.value());
+      } else {
+        OX_LOG_ERROR("{}", created.error());
+      }
+    });
+  };
 
   ImGuiScoped::StyleVar styleVar1(ImGuiStyleVar_ItemInnerSpacing, UI::scale(ImVec2(0.0f, 5.0f)));
   ImGuiScoped::StyleVar styleVar2(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 5.0f)));
   if (ImGui::BeginMenu("Create")) {
     if (ImGui::MenuItem("New Entity")) {
-      to_select = self.scene_->create_entity("entity", true);
+      create(EntityPreset::Empty);
     }
 
     if (ImGui::MenuItem("Sprite")) {
-      to_select = self.scene_->create_entity("sprite", true).add<SpriteComponent>();
+      create(EntityPreset::Sprite);
     }
 
     if (ImGui::MenuItem("Camera")) {
-      to_select = self.scene_->create_entity("camera", true);
-      to_select.add<CameraComponent>().get_mut<TransformComponent>().rotation.y = glm::radians(-90.f);
+      create(EntityPreset::Camera);
     }
 
     if (ImGui::MenuItem("Terrain")) {
-      to_select = self.scene_->create_entity("terrain", true);
-      to_select //
-        .add<TransformComponent>()
-        .set<TerrainComponent>({
-          .domain_size = 0.7f,
-          .height_frequency = 1.1f,
-          .height_amplitude = 3.335f,
-          .height_lacunarity = 0.4f,
-          .height_octaves = 6,
-          .seed = 246,
-          .erosion_scale = 0.450f,
-          .erosion_strength = 0.220f,
-          .ridge_rounding = 0.2f,
-          .crease_rounding = -0.2f,
-          .erosion_octaves = 16,
-        });
+      create(EntityPreset::Terrain);
     }
 
     if (ImGui::MenuItem("Probe Volume")) {
-      to_select = self.scene_->create_entity("probe_volume", true).add<ProbeVolumeComponent>();
+      create(EntityPreset::ProbeVolume);
     }
 
     if (ImGui::BeginMenu("Light")) {
       if (ImGui::MenuItem("Light")) {
-        to_select = self.scene_->create_entity("light", true).add<LightComponent>();
+        create(EntityPreset::Light);
       }
       if (ImGui::MenuItem("Sun")) {
-        to_select = self.scene_->create_entity("sun", true)
-                      .set<LightComponent>(LightComponent{.type = LightComponent::Directional, .intensity = 10.f})
-                      .add<AtmosphereComponent>();
+        create(EntityPreset::Sun);
       }
       ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Audio")) {
       if (ImGui::MenuItem("Audio Source")) {
-        to_select = self.scene_->create_entity("audio_source", true).add<AudioSourceComponent>();
+        create(EntityPreset::AudioSource);
         ImGui::CloseCurrentPopup();
       }
       if (ImGui::MenuItem("Audio Listener")) {
-        to_select = self.scene_->create_entity("audio_listener", true).add<AudioListenerComponent>();
+        create(EntityPreset::AudioListener);
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndMenu();
@@ -654,20 +660,65 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
 
     if (ImGui::BeginMenu("Effects")) {
       if (ImGui::MenuItem("Particle System")) {
-        to_select = self.scene_->create_entity("particle_system", true).add<ParticleSystemComponent>();
+        create(EntityPreset::ParticleSystem);
       }
       ImGui::EndMenu();
     }
 
     ImGui::EndMenu();
   }
+}
 
-  if (has_context && to_select != flecs::entity::null())
-    to_select.child_of(self.selected_entity_.get());
+auto SceneHierarchyPanel::queue_edit(
+  this SceneHierarchyPanel& self, std::string label, std::function<void(SceneHierarchyPanel&, EditTransaction&)> edit
+) -> void {
+  self.deferred_edits_.push_back({.label = std::move(label), .edit = std::move(edit)});
+}
 
-  if (to_select != flecs::entity::null()) {
-    self.selected_entity_.set(to_select);
+auto SceneHierarchyPanel::run_deferred_edits(this SceneHierarchyPanel& self) -> void {
+  ZoneScoped;
+
+  auto edits = std::move(self.deferred_edits_);
+  self.deferred_edits_.clear();
+  if (!self.scene_) {
+    return;
   }
+
+  for (auto& deferred : edits) {
+    auto tx = begin_edit(App::mod<Editor>(), *self.scene_, std::move(deferred.label));
+    deferred.edit(self, tx);
+    tx.commit();
+  }
+}
+
+auto SceneHierarchyPanel::queue_create_from_asset(
+  this SceneHierarchyPanel& self, const UUID& asset, flecs::entity parent
+) -> void {
+  self.queue_edit("create entity", [asset, parent](SceneHierarchyPanel& panel, EditTransaction& tx) {
+    if (const auto created = create_entity_from_asset(tx, asset, parent)) {
+      panel.selected_entity_.set(created.value());
+    } else {
+      OX_LOG_ERROR("{}", created.error());
+    }
+  });
+}
+
+auto SceneHierarchyPanel::finish_rename(this SceneHierarchyPanel& self, flecs::entity entity) -> void {
+  self.is_rename_started_ = false;
+  self.renaming_entity_ = flecs::entity::null();
+
+  if (self.rename_text_ == self.rename_original_) {
+    return;
+  }
+
+  // the typing was applied live, so it goes back first and the action records the one change
+  entity.set_name(self.rename_original_.c_str());
+
+  auto tx = begin_edit(App::mod<Editor>(), *self.scene_, "rename entity");
+  if (const auto result = rename_entity(tx, entity, self.rename_text_); !result) {
+    OX_LOG_ERROR("{}", result.error());
+  }
+  tx.commit();
 }
 
 auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& self) -> void {
@@ -719,6 +770,8 @@ auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene*
   self.dragged_entity_ = {};
   self.dragged_entity_target_ = {};
   self.deleted_entity_ = {};
+  self.is_rename_started_ = false;
+  self.deferred_edits_.clear();
 }
 
 auto SceneHierarchyPanel::get_scene(this const SceneHierarchyPanel& self) -> EditorScene* {

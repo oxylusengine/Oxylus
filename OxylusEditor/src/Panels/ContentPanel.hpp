@@ -121,8 +121,6 @@ private:
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch;
 
-  auto create_csharp_script(this ContentPanel& self) -> void;
-
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;
   auto directory_tree_view_recursive(

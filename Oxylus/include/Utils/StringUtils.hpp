@@ -10,18 +10,23 @@ constexpr std::string escape_str(std::string_view str) {
 
   for (c8 c : str) {
     switch (c) {
-      case '\'': r += "\\\'"; break;
       case '\"': r += "\\\""; break;
-      case '\?': r += "\\?"; break;
       case '\\': r += "\\\\"; break;
-      case '\a': r += "\\a"; break;
       case '\b': r += "\\b"; break;
       case '\f': r += "\\f"; break;
       case '\n': r += "\\n"; break;
       case '\r': r += "\\r"; break;
       case '\t': r += "\\t"; break;
-      case '\v': r += "\\v"; break;
-      default  : r += c; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          constexpr std::string_view hex = "0123456789abcdef";
+          r += "\\u00";
+          r += hex[(static_cast<unsigned char>(c) >> 4) & 0xf];
+          r += hex[static_cast<unsigned char>(c) & 0xf];
+        } else {
+          r += c;
+        }
+        break;
     }
   }
 

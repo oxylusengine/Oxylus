@@ -18,7 +18,7 @@ struct IEntitySerializer {
 
   virtual auto on_primitive(std::string_view name, Primitive primitive) -> void {};
   virtual auto on_string(std::string_view name, const c8** str) -> void {};
-  virtual auto on_entity(std::string_view name, flecs::entity* entity) -> void {};
+  virtual auto on_entity(std::string_view name, flecs::entity_t* entity) -> void {};
   virtual auto on_enum(std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr)
     -> void {};
   virtual auto on_component(std::string_view name, flecs::id_t* component) -> void {};
@@ -35,7 +35,7 @@ struct JsonEntitySerializer : IEntitySerializer {
 
   auto on_primitive(std::string_view name, Primitive primitive) -> void override;
   auto on_string(std::string_view name, const c8** str) -> void override;
-  auto on_entity(std::string_view name, flecs::entity* entity) -> void override;
+  auto on_entity(std::string_view name, flecs::entity_t* entity) -> void override;
   auto on_enum(std::string_view name, ecs_meta_op_kind_t underlying_kind, flecs::entity_t type, void* ptr)
     -> void override;
   auto on_component(std::string_view name, flecs::id_t* component) -> void override;

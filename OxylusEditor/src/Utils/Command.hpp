@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -10,6 +11,7 @@
 #include "Core/UUID.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/JsonWriter.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 class Command {
@@ -158,152 +160,212 @@ private:
   std::string id_;
 };
 
+struct EntityRemap {
+  ankerl::unordered_dense::map<flecs::entity_t, flecs::entity_t> map = {};
+
+  auto record(this EntityRemap& self, flecs::entity_t old_id, flecs::entity_t new_id) -> void;
+  auto resolve(this const EntityRemap& self, const flecs::world& world, flecs::entity_t id) -> flecs::entity;
+};
+
+struct EntitySnapshot {
+  std::string json = {};
+  // root first, then descendants in children() order
+  std::vector<flecs::entity_t> ids = {};
+  // names from the root down to each id, parallel to ids, children() order is not stable across a restore
+  std::vector<std::string> paths = {};
+  flecs::entity_t parent = 0;
+  std::string name = {};
+};
+
+auto snapshot_entity(flecs::entity entity) -> EntitySnapshot;
+auto restore_entity(Scene& scene, EntityRemap& remap, const EntitySnapshot& snapshot) -> flecs::entity;
+
+class ComponentBytes {
+public:
+  ComponentBytes() = default;
+  ComponentBytes(const ComponentBytes&) = delete;
+  auto operator=(const ComponentBytes&) -> ComponentBytes& = delete;
+  ComponentBytes(ComponentBytes&& other) noexcept;
+  auto operator=(ComponentBytes&& other) noexcept -> ComponentBytes&;
+  ~ComponentBytes();
+
+  static auto copy_of(flecs::entity entity, flecs::id_t component) -> ComponentBytes;
+  static auto copy_of(flecs::world& world, flecs::id_t component, const void* source) -> ComponentBytes;
+
+  auto clone(this const ComponentBytes& self) -> ComponentBytes;
+
+  auto is_empty(this const ComponentBytes& self) -> bool { return self.data_ == nullptr; }
+  auto data(this const ComponentBytes& self) -> const void* { return self.data_; }
+  auto mut_data(this ComponentBytes& self) -> void* { return self.data_; }
+  auto size(this const ComponentBytes& self) -> usize { return self.data_ != nullptr ? self.info_.size : 0; }
+  auto component(this const ComponentBytes& self) -> flecs::id_t { return self.component_; }
+
+private:
+  void* data_ = nullptr;
+  flecs::id_t component_ = 0;
+  // a copy, the pointer flecs hands out dies with the world and the hooks have to run after it
+  ecs_type_info_t info_ = {};
+
+  auto release(this ComponentBytes& self) -> void;
+};
+
+// writes `next` over the live component, taking a ref for every uuid it newly names and giving back the ones it
+// replaces
+auto write_component_bytes(flecs::entity entity, flecs::id_t component, const ComponentBytes& next) -> void;
+
 class EntityDeleteCommand : public Command {
 public:
-  EntityDeleteCommand(Scene* scene, flecs::entity entity, std::string entity_name, std::string id)
-      : scene_(scene),
-        entity_(entity),
-        entity_name_(entity_name),
-        id_(id) {}
+  EntityDeleteCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, std::string id);
 
-  auto serialize_entity(flecs::entity entity) -> void {
-    JsonWriter writer{};
-    writer.begin_obj();
-    writer["entities"].begin_array();
-    Scene::entity_to_json(writer, entity);
-    writer.end_array();
-    writer.end_obj();
-    serialized_entity_ = writer.stream.str();
-  }
-
-  auto execute() -> void override {
-    serialize_entity(entity_);
-    parent_ = entity_.parent();
-    entity_name_ = entity_.name().c_str();
-    entity_.destruct();
-  }
-
-  auto undo() -> void override {
-    auto content = simdjson::padded_string(serialized_entity_);
-    simdjson::ondemand::parser parser;
-    auto doc = parser.iterate(content);
-    auto entities_array = doc["entities"];
-    // back under the parent it was deleted from, named so it can't collide with whatever took its name
-    // since, which would make flecs hand back that entity instead
-    const auto parent = parent_ && parent_.is_alive() ? parent_ : flecs::entity::null();
-    const auto restored_name = scene_->safe_entity_name(entity_name_, parent);
-
-    std::vector<UUID> requested_assets = {};
-    for (auto entity_json : entities_array.get_array()) {
-      entity_ = Scene::json_to_entity(
-        *scene_, //
-        parent,
-        entity_json.value_unsafe(),
-        requested_assets,
-        restored_name
-      );
-    }
-
-    // deleting released every ref the entity's components owned, so the restored ones take them back
-    scene_->load_requested_assets(requested_assets);
-  }
-
+  auto execute() -> void override;
+  auto undo() -> void override;
   auto get_id() const -> std::string_view override { return id_; }
-  auto get_entity() const -> flecs::entity { return entity_; }
-
-  auto can_merge(const Command& other) const -> bool override { return false; }
-
-  auto merge(std::unique_ptr<Command> other) -> std::unique_ptr<Command> override { return nullptr; }
 
 private:
   Scene* scene_;
-  flecs::entity entity_;
-  flecs::entity parent_;
-  std::string serialized_entity_;
-  std::string entity_name_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  EntitySnapshot snapshot_ = {};
   std::string id_;
 };
 
-class ComponentCopyCommand : public Command {
+class EntityCreateCommand : public Command {
 public:
-  ComponentCopyCommand(flecs::entity src, flecs::entity dst, flecs::id_t comp_id, std::string id)
-      : dst_(dst),
-        comp_id_(comp_id),
-        had_component_(dst.has(comp_id)),
-        id_(std::move(id)) {
+  EntityCreateCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, std::string id);
 
-    const ecs_type_info_t* ti = ecs_get_type_info(dst.world().c_ptr(), comp_id);
-
-    if (ti && ti->size > 0) {
-      if (had_component_) {
-        const void* dst_ptr = dst.get(comp_id);
-        old_data_ = std::malloc(ti->size);
-        if (ti->hooks.copy_ctor) {
-          ti->hooks.copy_ctor(old_data_, dst_ptr, 1, ti);
-        } else {
-          std::memcpy(old_data_, dst_ptr, ti->size);
-        }
-      }
-
-      const void* src_ptr = src.get(comp_id);
-      if (src_ptr) {
-        new_data_ = std::malloc(ti->size);
-        if (ti->hooks.copy_ctor) {
-          ti->hooks.copy_ctor(new_data_, src_ptr, 1, ti);
-        } else {
-          std::memcpy(new_data_, src_ptr, ti->size);
-        }
-      }
-    }
-  }
-
-  ~ComponentCopyCommand() override {
-    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
-    if (ti) {
-      if (old_data_) {
-        if (ti->hooks.dtor)
-          ti->hooks.dtor(old_data_, 1, ti);
-        std::free(old_data_);
-      }
-      if (new_data_) {
-        if (ti->hooks.dtor)
-          ti->hooks.dtor(new_data_, 1, ti);
-        std::free(new_data_);
-      }
-    }
-  }
-
-  auto execute() -> void override {
-    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
-    if (ti && new_data_) {
-      ecs_set_id(dst_.world().c_ptr(), dst_.id(), comp_id_, ti->size, new_data_);
-    } else {
-      dst_.add(comp_id_);
-    }
-  }
-
-  auto undo() -> void override {
-    if (!had_component_) {
-      dst_.remove(comp_id_);
-      return;
-    }
-
-    const ecs_type_info_t* ti = ecs_get_type_info(dst_.world().c_ptr(), comp_id_);
-    if (ti && old_data_) {
-      ecs_set_id(dst_.world().c_ptr(), dst_.id(), comp_id_, ti->size, old_data_);
-    } else {
-      dst_.add(comp_id_);
-    }
-  }
-
+  auto execute() -> void override;
+  auto undo() -> void override;
   auto get_id() const -> std::string_view override { return id_; }
 
 private:
-  flecs::entity dst_;
-  flecs::id_t comp_id_;
-  bool had_component_ = false;
-  void* old_data_ = nullptr;
-  void* new_data_ = nullptr;
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  EntitySnapshot snapshot_ = {};
+  std::string id_;
+};
+
+class EntityReparentCommand : public Command {
+public:
+  EntityReparentCommand(
+    Scene* scene,
+    EntityRemap* remap,
+    flecs::entity entity,
+    flecs::entity_t old_parent,
+    flecs::entity_t new_parent,
+    std::string id
+  );
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  flecs::entity_t old_parent_;
+  flecs::entity_t new_parent_;
+  std::string original_name_ = {};
+  bool is_renamed_ = false;
+  std::string id_;
+};
+
+class EntityRenameCommand : public Command {
+public:
+  EntityRenameCommand(
+    Scene* scene, EntityRemap* remap, flecs::entity entity, std::string old_name, std::string new_name, std::string id
+  );
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  std::string old_name_;
+  std::string new_name_;
+  std::string id_;
+};
+
+class EntityEnableCommand : public Command {
+public:
+  EntityEnableCommand(
+    Scene* scene, EntityRemap* remap, flecs::entity entity, bool old_enabled, bool new_enabled, std::string id
+  );
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  bool old_enabled_;
+  bool new_enabled_;
+  std::string id_;
+};
+
+class ComponentSnapshotCommand : public Command {
+public:
+  ComponentSnapshotCommand(
+    Scene* scene,
+    EntityRemap* remap,
+    flecs::entity entity,
+    flecs::id_t component,
+    ComponentBytes before,
+    ComponentBytes after,
+    std::string id
+  );
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  flecs::id_t component_;
+  ComponentBytes before_;
+  ComponentBytes after_;
+  std::string id_;
+};
+
+class ComponentAddCommand : public Command {
+public:
+  ComponentAddCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id);
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  flecs::id_t component_;
+  ComponentBytes bytes_;
+  std::string id_;
+};
+
+class ComponentRemoveCommand : public Command {
+public:
+  ComponentRemoveCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id);
+
+  auto execute() -> void override;
+  auto undo() -> void override;
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  EntityRemap* remap_;
+  flecs::entity_t entity_;
+  flecs::id_t component_;
+  ComponentBytes bytes_;
   std::string id_;
 };
 
@@ -359,6 +421,21 @@ public:
     this UndoRedoSystem& self, std::function<void()> execute, std::function<void()> undo, std::string id
   ) -> UndoRedoSystem& {
     self.execute_command(std::make_unique<LambdaCommand>(std::move(execute), std::move(undo), std::move(id)));
+    return self;
+  }
+
+  auto record(this UndoRedoSystem& self, std::unique_ptr<Command> command) -> UndoRedoSystem& {
+    OX_CHECK_NULL(command);
+
+    self.undo_stack_.emplace_back(std::move(command));
+    self.redo_stack_.clear();
+
+    if (self.undo_stack_.size() > self.max_history_size_) {
+      self.undo_stack_.erase(self.undo_stack_.begin());
+    }
+
+    self.last_command_time_ = std::chrono::steady_clock::now();
+
     return self;
   }
 
@@ -418,7 +495,10 @@ public:
   auto clear(this UndoRedoSystem& self) -> void {
     self.undo_stack_.clear();
     self.redo_stack_.clear();
+    self.remap.map.clear();
   }
+
+  EntityRemap remap = {};
 
   auto get_merge_timeout(this const UndoRedoSystem& self) -> std::chrono::milliseconds { return self.merge_timeout_; }
   auto set_merge_enabled(this UndoRedoSystem& self, bool enabled) -> UndoRedoSystem& {

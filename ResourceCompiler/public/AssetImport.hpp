@@ -1,7 +1,9 @@
 #pragma once
 
+#include <expected>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
@@ -64,6 +66,8 @@ OXRC_API auto source_hash(const std::filesystem::path& path) -> u64;
 OXRC_API auto begin_asset_meta(JsonWriter& writer, const UUID& uuid, AssetType type) -> void;
 OXRC_API auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool;
 OXRC_API auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Material& material) -> bool;
+// the reverse of the above: only the keys present in `json` overwrite `material`, texture keys must hold uuids
+OXRC_API auto read_material_asset_json(std::string_view json, Material& material) -> std::expected<void, std::string>;
 
 // One asset an import produced, for the caller to register: the editor into its `AssetManager`, `cook_assets` into
 // an `AssetManifest`. Paths are physical.

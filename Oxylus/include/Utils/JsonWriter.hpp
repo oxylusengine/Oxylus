@@ -14,6 +14,7 @@ struct JsonWriter {
   u32 depth = 0;
   bool first_element = true;
   bool has_key = false;
+  bool is_pretty = true;
 
   void indent() {
     for (u32 i = 0; i < depth; ++i) {
@@ -31,7 +32,7 @@ struct JsonWriter {
       stream << ',';
     }
 
-    if (depth > 0) {
+    if (depth > 0 && is_pretty) {
       stream << '\n';
       indent();
     }
@@ -41,7 +42,7 @@ struct JsonWriter {
 
   JsonWriter& key(std::string_view key) {
     new_element();
-    stream << '"' << key << "\": ";
+    stream << '"' << key << (is_pretty ? "\": " : "\":");
     has_key = true;
     return *this;
   }
@@ -57,7 +58,7 @@ struct JsonWriter {
 
   void end_obj() {
     --depth;
-    if (!first_element) {
+    if (!first_element && is_pretty) {
       stream << '\n';
       indent();
     }
@@ -74,7 +75,7 @@ struct JsonWriter {
 
   void end_array() {
     --depth;
-    if (!first_element) {
+    if (!first_element && is_pretty) {
       stream << '\n';
       indent();
     }
@@ -86,6 +87,11 @@ struct JsonWriter {
   void str(std::string_view v) {
     new_element();
     stream << '"' << StringUtils::escape_str(v) << '"';
+  }
+
+  void raw(std::string_view json) {
+    new_element();
+    stream << json;
   }
 
   template <typename T>

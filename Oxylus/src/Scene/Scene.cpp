@@ -324,7 +324,7 @@ struct JsonEntityDeserializer : IEntitySerializer {
     }
   }
 
-  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {
+  auto on_entity(std::string_view name, flecs::entity_t* entity) -> void override {
     ZoneScoped;
 
     auto field_result = json_value[name];
@@ -338,7 +338,7 @@ struct JsonEntityDeserializer : IEntitySerializer {
       auto* entity_name_cstr = stack.null_terminate_cstr(entity_name);
       auto found_entity = world.lookup(entity_name_cstr);
       if (found_entity.is_valid()) {
-        *entity = found_entity;
+        *entity = found_entity.id();
       }
     }
   }
