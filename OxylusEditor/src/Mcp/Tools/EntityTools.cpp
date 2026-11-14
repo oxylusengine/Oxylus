@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <ankerl/unordered_dense.h>
-#include <cctype>
-#include <charconv>
 #include <flecs/addons/meta.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
+#include <ranges>
 #include <tracy/Tracy.hpp>
 
 #include "Actions/EntityActions.hpp"
@@ -16,7 +16,9 @@
 #include "Mcp/McpSchema.hpp"
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
+#include "Scene/EntitySerializer.hpp"
 #include "Utils/SceneManager.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static i64 TREE_DEFAULT_LIMIT = 500;
@@ -45,25 +47,8 @@ struct Mutation {
 
 using Step = std::expected<void, std::string>;
 
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
-
-static auto entity_name_of(flecs::entity entity) -> std::string {
-  const char* raw_name = entity.name().c_str();
-  return raw_name != nullptr ? std::string(raw_name) : std::string();
-}
-
 static auto open_scene(Editor& editor, const McpArgs& args) -> std::expected<SceneRef, std::string> {
-  const auto arg = scene_arg(args);
-  if (!arg) {
-    return std::unexpected(arg.error());
-  }
-
-  const auto text = arg->has_value() ? option<std::string_view>(std::string_view(arg->value())) : nullopt;
-  const auto resolved = resolve_scene(editor, text);
+  const auto resolved = resolve_scene(editor, args);
   if (!resolved) {
     return std::unexpected(resolved.error());
   }
@@ -139,17 +124,6 @@ static auto raw_field(const McpArgs& item, std::string_view key) -> option<simdj
 
   simdjson::dom::element value;
   if (object.at_key(key).get(value)) {
-    return nullopt;
-  }
-
-  return value;
-}
-
-static auto parse_decimal(std::string_view text) -> option<u64> {
-  u64 value = 0;
-  const auto* end = text.data() + text.size();
-  const auto result = std::from_chars(text.data(), end, value);
-  if (text.empty() || result.ec != std::errc() || result.ptr != end) {
     return nullopt;
   }
 
@@ -254,38 +228,20 @@ static auto resolve_optional_parent(Scene& scene, const McpArgs& item) -> std::e
   return *resolved;
 }
 
-struct PresetName {
-  std::string_view name = {};
-  EntityPreset preset = EntityPreset::Empty;
-};
-
-constexpr static PresetName PRESETS[] = {
-  {"empty", EntityPreset::Empty},
-  {"sprite", EntityPreset::Sprite},
-  {"camera", EntityPreset::Camera},
-  {"light", EntityPreset::Light},
-  {"sun", EntityPreset::Sun},
-  {"terrain", EntityPreset::Terrain},
-  {"probe_volume", EntityPreset::ProbeVolume},
-  {"audio_source", EntityPreset::AudioSource},
-  {"audio_listener", EntityPreset::AudioListener},
-  {"particle_system", EntityPreset::ParticleSystem},
-};
-
 static auto parse_preset(std::string_view text) -> std::expected<EntityPreset, std::string> {
-  const auto lowered = lower(text);
-  for (const auto& entry : PRESETS) {
-    if (entry.name == lowered) {
+  for (const auto& entry : ENTITY_PRESETS) {
+    if (StringUtils::iequals(entry.name, text)) {
       return entry.preset;
     }
   }
 
-  std::string valid;
-  for (const auto& entry : PRESETS) {
-    valid += fmt::format("{}{}", valid.empty() ? "" : ", ", entry.name);
-  }
-
-  return std::unexpected(fmt::format("preset: unknown preset '{}', valid: {}", text, valid));
+  return std::unexpected(
+    fmt::format(
+      "preset: unknown preset '{}', valid: {}",
+      text,
+      fmt::join(ENTITY_PRESETS | std::views::transform(&EntityPresetInfo::name), ", ")
+    )
+  );
 }
 
 using ComponentNames = ankerl::unordered_dense::map<flecs::entity_t, std::string>;
@@ -300,14 +256,14 @@ static auto build_component_names(Scene& scene) -> ComponentNames {
 }
 
 struct TreeOptions {
-  std::string filter = {};
+  std::string_view filter = {};
   i64 max_depth = 0;
   bool is_showing_components = true;
   const ComponentNames* names = nullptr;
 };
 
 static auto tree_line(const TreeOptions& options, flecs::entity entity, i64 level) -> std::string {
-  auto line = fmt::format("{:{}}#{} {}", "", static_cast<usize>(level) * 2, entity.id(), entity_name_of(entity));
+  auto line = fmt::format("{:{}}#{} {}", "", static_cast<usize>(level) * 2, entity.id(), entity_name(entity));
   if (!entity.enabled()) {
     line += " (disabled)";
   }
@@ -342,7 +298,7 @@ static auto collect_tree(const TreeOptions& options, flecs::entity entity, i64 l
     }
   }
 
-  const auto is_match = options.filter.empty() || lower(entity_name_of(entity)).contains(options.filter);
+  const auto is_match = options.filter.empty() || StringUtils::icontains(entity_name(entity), options.filter);
   if (!is_match && !has_child_match) {
     return false;
   }
@@ -368,7 +324,7 @@ static auto entity_tree(Editor& editor, const McpArgs& args) -> McpResult {
   const auto filter_arg = args.opt_str("filter");
   const auto components_arg = args.opt_boolean("components");
   const auto limit_arg = args.opt_integer("limit");
-  const auto cursor_arg = args.opt_str("cursor");
+  const auto cursor_arg = args.cursor();
   if (!root_arg || !depth_arg || !filter_arg || !components_arg || !limit_arg || !cursor_arg) {
     return McpResult::error(
       !root_arg         ? root_arg.error()
@@ -383,22 +339,14 @@ static auto entity_tree(Editor& editor, const McpArgs& args) -> McpResult {
   auto& scene = *target->scene;
   const auto names = build_component_names(scene);
   const auto options = TreeOptions{
-    .filter = lower(filter_arg->value_or("")),
+    .filter = filter_arg->value_or(""),
     .max_depth = std::max<i64>(depth_arg->value_or(0), 0),
     .is_showing_components = components_arg->value_or(true),
     .names = &names,
   };
 
   const auto limit = static_cast<usize>(std::clamp<i64>(limit_arg->value_or(TREE_DEFAULT_LIMIT), 1, TREE_MAX_LIMIT));
-  usize skip = 0;
-  if (cursor_arg->has_value()) {
-    const auto parsed = parse_decimal(cursor_arg->value());
-    if (!parsed.has_value()) {
-      return McpResult::error("argument 'cursor': not a cursor returned by this tool");
-    }
-
-    skip = static_cast<usize>(*parsed);
-  }
+  const auto skip = cursor_arg.value();
 
   std::vector<std::string> lines;
   std::string root_text = "/";
@@ -512,14 +460,14 @@ static auto entity_find(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error("give at least one of 'name' or 'component'");
   }
 
-  const auto name_filter = lower(name_arg->value_or(""));
+  const auto name_filter = name_arg->value_or("");
   const auto limit = static_cast<usize>(std::clamp<i64>(limit_arg->value_or(FIND_DEFAULT_LIMIT), 1, FIND_MAX_LIMIT));
 
   std::string out;
   usize found = 0;
   auto is_truncated = false;
   const auto visit = [&](flecs::entity entity) {
-    if (!name_filter.empty() && !lower(entity_name_of(entity)).contains(name_filter)) {
+    if (!StringUtils::icontains(entity_name(entity), name_filter)) {
       return true;
     }
 
@@ -610,7 +558,7 @@ static auto write_entity_json(
 
     const auto type = id.entity();
     if (!type.has<flecs::Component>() && !is_flecs_builtin(type)) {
-      tags.push_back(entity_name_of(type));
+      tags.push_back(entity_name(type));
     }
   });
 
@@ -620,7 +568,11 @@ static auto write_entity_json(
     const auto* data = ecs_get_id(scene.world, entity.id(), component.raw_id());
     writer.key(component_name(component));
     component_to_json(writer, scene.world, component, data);
-    collect_asset_fields(scene.world, component, data, assets);
+    for (const auto& field : collect_uuid_fields(scene.world, component.type_id(), data)) {
+      if (field.uuid) {
+        assets.push_back(field.uuid);
+      }
+    }
   }
   writer.end_obj();
 
@@ -1078,28 +1030,12 @@ static auto entity_duplicate(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(fmt::format("argument 'count': give 1 to {}", DUPLICATE_MAX_COUNT));
   }
 
-  option<glm::vec3> offset = nullopt;
-  if (
-    const auto offset_field = raw_field(args, "offset");
-    offset_field.has_value() && offset_field->type() != simdjson::dom::element_type::NULL_VALUE
-  ) {
-    simdjson::dom::array array;
-    if (offset_field->get(array) || array.size() != 3) {
-      return McpResult::error("argument 'offset': expected an array of 3 numbers [x,y,z]");
-    }
-
-    glm::vec3 value = {};
-    for (usize i = 0; i < 3; i++) {
-      double number = 0.0;
-      if (array.at(i).get(number)) {
-        return McpResult::error("argument 'offset': expected an array of 3 numbers [x,y,z]");
-      }
-
-      value[static_cast<i32>(i)] = static_cast<f32>(number);
-    }
-
-    offset = value;
+  const auto offset_arg = args.opt_vec3("offset");
+  if (!offset_arg) {
+    return McpResult::error(offset_arg.error());
   }
+
+  const auto offset = offset_arg.value();
 
   const auto source_label = entity_ref_text(*source);
   auto mutation = begin_mutation(editor, *target, "entity_duplicate");
@@ -1271,18 +1207,18 @@ static auto component_copy(Editor& editor, const McpArgs& args) -> McpResult {
   return finish(mutation);
 }
 
-static auto with_scene(SchemaBuilder builder) -> SchemaBuilder {
-  return builder.string("scene", "scene id from editor_state or 'active', default active", false);
-}
-
 constexpr static std::string_view REF_ITEM = R"({"type":"string"})";
 
-constexpr static std::string_view CREATE_ITEM =
-  R"({"type":"object","properties":{"name":{"type":"string","description":"entity name, made unique among siblings"},)"
-  R"("parent":{"type":"string","description":"parent path or #id, may name an entity created earlier in this call"},)"
-  R"("preset":{"type":"string","enum":["empty","sprite","camera","light","sun","terrain","probe_volume","audio_source","audio_listener","particle_system"]},)"
-  R"("components":{"type":"object","description":"{ComponentName: {field: value}}, adds the component if missing"}},)"
-  R"("additionalProperties":false})";
+static auto create_item_schema() -> std::string {
+  return fmt::format(
+    R"({{"type":"object","properties":{{"name":{{"type":"string","description":"entity name, made unique among siblings"}},)"
+    R"("parent":{{"type":"string","description":"parent path or #id, may name an entity created earlier in this call"}},)"
+    R"("preset":{{"type":"string","enum":["{}"]}},)"
+    R"("components":{{"type":"object","description":"{{ComponentName: {{field: value}}}}, adds the component if missing"}}}},)"
+    R"("additionalProperties":false}})",
+    fmt::join(ENTITY_PRESETS | std::views::transform(&EntityPresetInfo::name), "\",\"")
+  );
+}
 
 constexpr static std::string_view UPDATE_ITEM =
   R"({"type":"object","properties":{"entity":{"type":"string","description":"path or #id"},)"
@@ -1305,17 +1241,19 @@ auto register_entity_tools(McpServer& server) -> void {
       .description = "Outline of the scene hierarchy, one line per entity: indentation per depth, '#id name', "
                      "'(disabled)' and the component names in brackets. The first line names the scene and root, "
                      "'next_cursor N' ends a truncated listing.",
-      .input_schema =
-        with_scene(
-          SchemaBuilder{}
-            .string("root", "entity path or #id to start from, default all roots", false)
-            .integer("depth", "levels to show, 1 is only the root, default unlimited", false, 1)
-            .string("filter", "case-insensitive name substring, matches are shown with their ancestors", false)
-            .boolean("components", "list component names, default true", false)
-            .integer("limit", "lines to return, default 500", false, 1, TREE_MAX_LIMIT)
-            .string("cursor", "next_cursor from the previous call", false)
-        )
-          .build(),
+      .input_schema = SchemaBuilder{}
+                        .string("root", "entity path or #id to start from, default all roots", false)
+                        .integer("depth", "levels to show, 1 is only the root, default unlimited", false, 1)
+                        .string(
+                          "filter",
+                          "case-insensitive name substring, matches are shown with their ancestors",
+                          false
+                        )
+                        .boolean("components", "list component names, default true", false)
+                        .integer("limit", "lines to return, default 500", false, 1, TREE_MAX_LIMIT)
+                        .string("cursor", "next_cursor from the previous call", false)
+                        .scene()
+                        .build(),
       .is_read_only = true,
       .is_idempotent = true,
       .handler = entity_tree,
@@ -1328,12 +1266,11 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Find entities",
       .description = "Finds scene entities by name substring and or required components. Returns one '#id path' line "
                      "per match in hierarchy order.",
-      .input_schema = with_scene(
-                        SchemaBuilder{}
-                          .string("name", "case-insensitive name substring", false)
-                          .array("component", "component names the entity must all have", REF_ITEM, false)
-                          .integer("limit", "matches to return, default 100", false, 1, FIND_MAX_LIMIT)
-      )
+      .input_schema = SchemaBuilder{}
+                        .string("name", "case-insensitive name substring", false)
+                        .array("component", "component names the entity must all have", REF_ITEM, false)
+                        .integer("limit", "matches to return, default 100", false, 1, FIND_MAX_LIMIT)
+                        .scene()
                         .build(),
       .is_read_only = true,
       .is_idempotent = true,
@@ -1348,11 +1285,10 @@ auto register_entity_tools(McpServer& server) -> void {
       .description = "Reads up to 50 entities in full. Returns {\"entities\":[{id,path,enabled,parent,children,"
                      "components:{Name:{fields}},tags}],\"assets\":{uuid:{type,path}}} where assets names every "
                      "asset the returned components reference.",
-      .input_schema = with_scene(
-                        SchemaBuilder{}
-                          .array("entities", "entity paths or #ids", REF_ITEM, true)
-                          .array("components", "only return these components", REF_ITEM, false)
-      )
+      .input_schema = SchemaBuilder{}
+                        .array("entities", "entity paths or #ids", REF_ITEM, true)
+                        .array("components", "only return these components", REF_ITEM, false)
+                        .scene()
                         .build(),
       .is_read_only = true,
       .is_idempotent = true,
@@ -1366,7 +1302,8 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Create entities",
       .description = "Creates up to 200 entities in one undo step, each with an optional preset and component "
                      "values. Returns 'created #id path' per entity. If any item fails nothing is applied.",
-      .input_schema = with_scene(SchemaBuilder{}.array("entities", "entities to create", CREATE_ITEM, true)).build(),
+      .input_schema =
+        SchemaBuilder{}.array("entities", "entities to create", create_item_schema(), true).scene().build(),
       .handler = entity_create,
     }
   );
@@ -1376,13 +1313,12 @@ auto register_entity_tools(McpServer& server) -> void {
       .name = "entity_create_from_asset",
       .title = "Create entity from asset",
       .description = "Places a model or particle system asset as a new entity hierarchy. Returns 'created #id path'.",
-      .input_schema = with_scene(
-                        SchemaBuilder{}
-                          .string("asset", "asset uuid or source path", true)
-                          .string("parent", "parent path or #id, default the scene root", false)
-                          .string("name", "rename the new entity", false)
-                          .object("transform", "TransformComponent fields to set", PATCH_OBJECT, false)
-      )
+      .input_schema = SchemaBuilder{}
+                        .string("asset", "asset uuid or source path", true)
+                        .string("parent", "parent path or #id, default the scene root", false)
+                        .string("name", "rename the new entity", false)
+                        .object("transform", "TransformComponent fields to set", PATCH_OBJECT, false)
+                        .scene()
                         .build(),
       .handler = entity_create_from_asset,
     }
@@ -1394,7 +1330,7 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Update entities",
       .description = "Edits up to 200 entities in one undo step. Per entity the order is name, parent, enabled, "
                      "remove, add, set. Returns 'updated #id path' per entity. If any item fails nothing is applied.",
-      .input_schema = with_scene(SchemaBuilder{}.array("entities", "edits to apply", UPDATE_ITEM, true)).build(),
+      .input_schema = SchemaBuilder{}.array("entities", "edits to apply", UPDATE_ITEM, true).scene().build(),
       .handler = entity_update,
     }
   );
@@ -1405,7 +1341,7 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Delete entities",
       .description = "Deletes entities with all their children in one undo step. Returns 'deleted #id path' per "
                      "entity, references already removed with a deleted parent are skipped.",
-      .input_schema = with_scene(SchemaBuilder{}.array("entities", "entity paths or #ids", REF_ITEM, true)).build(),
+      .input_schema = SchemaBuilder{}.array("entities", "entity paths or #ids", REF_ITEM, true).scene().build(),
       .is_destructive = true,
       .handler = entity_delete,
     }
@@ -1418,12 +1354,11 @@ auto register_entity_tools(McpServer& server) -> void {
       .description = "Duplicates an entity with its children 'count' times, optionally moving each successive copy "
                      "by 'offset'. Returns 'created #id path' per copy.",
       .input_schema =
-        with_scene(
-          SchemaBuilder{}
-            .string("entity", "path or #id", true)
-            .integer("count", "copies to make, default 1", false, 1, DUPLICATE_MAX_COUNT)
-            .array("offset", "[x,y,z] added to the position of each successive copy", R"({"type":"number"})", false)
-        )
+        SchemaBuilder{}
+          .string("entity", "path or #id", true)
+          .integer("count", "copies to make, default 1", false, 1, DUPLICATE_MAX_COUNT)
+          .array("offset", "[x,y,z] added to the position of each successive copy", R"({"type":"number"})", false)
+          .scene()
           .build(),
       .handler = entity_duplicate,
     }
@@ -1435,7 +1370,7 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Component types",
       .description = "Without a name, lists every component as 'Name (N fields)' or 'Name (tag)'. With a name returns "
                      "its schema as JSON: fields in order with type, enum constants, default value and asset type.",
-      .input_schema = with_scene(SchemaBuilder{}.string("name", "component name, omit to list all", false)).build(),
+      .input_schema = SchemaBuilder{}.string("name", "component name, omit to list all", false).scene().build(),
       .is_read_only = true,
       .is_idempotent = true,
       .handler = component_types,
@@ -1447,9 +1382,11 @@ auto register_entity_tools(McpServer& server) -> void {
       .name = "component_reset",
       .title = "Reset component",
       .description = "Resets a component on an entity to its default values. Returns the entity reference.",
-      .input_schema =
-        with_scene(SchemaBuilder{}.string("entity", "path or #id", true).string("component", "component name", true))
-          .build(),
+      .input_schema = SchemaBuilder{}
+                        .string("entity", "path or #id", true)
+                        .string("component", "component name", true)
+                        .scene()
+                        .build(),
       .handler = component_reset,
     }
   );
@@ -1460,12 +1397,11 @@ auto register_entity_tools(McpServer& server) -> void {
       .title = "Copy component",
       .description = "Copies a component's values from one entity to another, adding it if missing. Returns the "
                      "destination reference.",
-      .input_schema = with_scene(
-                        SchemaBuilder{}
-                          .string("from", "source entity path or #id", true)
-                          .string("to", "destination entity path or #id", true)
-                          .string("component", "component name", true)
-      )
+      .input_schema = SchemaBuilder{}
+                        .string("from", "source entity path or #id", true)
+                        .string("to", "destination entity path or #id", true)
+                        .string("component", "component name", true)
+                        .scene()
                         .build(),
       .handler = component_copy,
     }

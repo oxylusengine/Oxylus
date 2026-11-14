@@ -10,6 +10,7 @@ target("Oxylus")
 
     add_options("profile")
     add_options("llvmpipe")
+    add_rules("ox.platform_defines")
 
     if is_plat("windows") then
         add_defines("_UNICODE", { force = true, public = true  })
@@ -22,18 +23,12 @@ target("Oxylus")
 
         remove_files("./src/OS/Linux*")
         remove_files("./src/OS/MacOS*")
-
-        add_defines("OX_PLATFORM_WINDOWS", { public = true })
     elseif is_plat("linux") then
         remove_files("./src/OS/Win32*")
         remove_files("./src/OS/MacOS*")
-
-        add_defines("OX_PLATFORM_LINUX", { public = true })
     elseif is_plat("macosx") then
         remove_files("./src/OS/Win32*")
         remove_files("./src/OS/Linux*")
-
-        add_defines("OX_PLATFORM_MACOSX", { public = true })
     end
 
     if is_mode("debug")  then

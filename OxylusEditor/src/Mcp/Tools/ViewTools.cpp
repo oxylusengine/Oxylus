@@ -4,7 +4,6 @@
 #include <string>
 #include <tracy/Tracy.hpp>
 
-#include "Actions/ViewActions.hpp"
 #include "Editor.hpp"
 #include "Mcp/McpArgs.hpp"
 #include "Mcp/McpRefs.hpp"
@@ -18,6 +17,10 @@ constexpr static i64 SCREENSHOT_MIN_SIZE = 64;
 constexpr static i64 SCREENSHOT_MAX_SIZE = 4096;
 constexpr static u32 SCREENSHOT_CAMERA_FRAMES = 2;
 
+static auto viewport_of(Editor& editor, SceneID scene) -> ViewportPanel* {
+  return editor.main_viewport_panel.find_viewport(editor.scene_manager.find_scene(scene));
+}
+
 struct ViewTarget {
   ViewportPanel* viewport = nullptr;
   EditorScene* scene = nullptr;
@@ -30,7 +33,7 @@ static auto resolve_view(Editor& editor, const McpArgs& args) -> std::expected<V
   }
 
   if (!arg->has_value()) {
-    auto* viewport = default_viewport(editor);
+    auto* viewport = editor.main_viewport_panel.preferred_viewport();
     if (viewport == nullptr) {
       return std::unexpected("no viewport shows a scene, open one with scene_open or scene_focus");
     }
@@ -38,7 +41,7 @@ static auto resolve_view(Editor& editor, const McpArgs& args) -> std::expected<V
     return ViewTarget{.viewport = viewport, .scene = viewport->get_scene()};
   }
 
-  const auto scene = resolve_scene(editor, std::string_view(arg->value()));
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return std::unexpected(scene.error());
   }
@@ -51,36 +54,6 @@ static auto resolve_view(Editor& editor, const McpArgs& args) -> std::expected<V
   }
 
   return ViewTarget{.viewport = viewport, .scene = *scene};
-}
-
-static auto number_array_arg(const McpArgs& args, std::string_view key, usize count)
-  -> std::expected<option<std::array<f32, 3>>, std::string> {
-  if (!args.has(key)) {
-    return option<std::array<f32, 3>>(nullopt);
-  }
-
-  const auto array = args.array(key);
-  if (!array) {
-    return std::unexpected(array.error());
-  }
-
-  std::array<f32, 3> out = {};
-  usize index = 0;
-  for (const auto& element : *array) {
-    double value = 0.0;
-    if (index >= count || element.get(value)) {
-      return std::unexpected(fmt::format("argument '{}': expected {} numbers", key, count));
-    }
-
-    out[index] = static_cast<f32>(value);
-    index += 1;
-  }
-
-  if (index != count) {
-    return std::unexpected(fmt::format("argument '{}': expected {} numbers", key, count));
-  }
-
-  return option<std::array<f32, 3>>(out);
 }
 
 static auto scene_view_text(const ViewTarget& target) -> std::string {
@@ -136,7 +109,7 @@ struct ScreenshotState {
   flecs::entity_t previous_camera_id = 0;
   std::string camera_label = "editor";
   u64 frames_target = 0;
-  std::shared_ptr<ViewCapture> capture = {};
+  std::shared_ptr<AsyncResult<ViewCapture>> capture = {};
 
   explicit ScreenshotState(Editor& owner) : editor(owner) {}
 
@@ -148,7 +121,7 @@ struct ScreenshotState {
       return;
     }
 
-    auto* viewport = find_scene_viewport(editor, scene);
+    auto* viewport = viewport_of(editor, scene);
     if (viewport == nullptr) {
       return;
     }
@@ -161,7 +134,7 @@ struct ScreenshotState {
       }
     }
 
-    std::ignore = look_through(*viewport, nullopt);
+    std::ignore = viewport->look_through(nullopt);
   }
 };
 
@@ -199,7 +172,7 @@ static auto view_screenshot(Editor& editor, const McpArgs& args) -> McpResult {
     }
 
     const auto previous = target->viewport->piloted_camera;
-    if (const auto looked = look_through(*target->viewport, *camera); !looked) {
+    if (const auto looked = target->viewport->look_through(*camera); !looked) {
       return McpResult::error(looked.error());
     }
 
@@ -210,7 +183,7 @@ static auto view_screenshot(Editor& editor, const McpArgs& args) -> McpResult {
   }
 
   return McpResult::pending([state]() -> option<McpResult> {
-    auto* viewport = find_scene_viewport(state->editor, state->scene);
+    auto* viewport = viewport_of(state->editor, state->scene);
     if (viewport == nullptr) {
       return McpResult::error("the viewport was closed before the screenshot finished");
     }
@@ -224,25 +197,26 @@ static auto view_screenshot(Editor& editor, const McpArgs& args) -> McpResult {
         return nullopt;
       }
 
-      state->capture = capture_viewport(*viewport, state->max_size);
+      state->capture = viewport->capture(state->max_size);
       return nullopt;
     }
 
-    if (!state->capture->is_done.load(std::memory_order_acquire)) {
+    if (!state->capture->is_ready()) {
       return nullopt;
     }
 
-    if (!state->capture->error.empty()) {
-      return McpResult::error(state->capture->error);
+    auto& result = state->capture->result;
+    if (!result) {
+      return McpResult::error(result.error());
     }
 
     return McpResult::image(
-      std::move(state->capture->png),
+      std::move(result->png),
       fmt::format(
         "scene {}, {}x{}, camera {}",
         std::to_underlying(state->scene),
-        state->capture->width,
-        state->capture->height,
+        result->width,
+        result->height,
         state->camera_label
       )
     );
@@ -267,17 +241,17 @@ static auto view_camera_get(Editor& editor, const McpArgs& args) -> McpResult {
 static auto view_camera_set(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto position = number_array_arg(args, "position", 3);
+  const auto position = args.opt_vec3("position");
   if (!position) {
     return McpResult::error(position.error());
   }
 
-  const auto yaw_pitch = number_array_arg(args, "yaw_pitch", 2);
+  const auto yaw_pitch = args.opt_vec2("yaw_pitch");
   if (!yaw_pitch) {
     return McpResult::error(yaw_pitch.error());
   }
 
-  const auto look_at = number_array_arg(args, "look_at", 3);
+  const auto look_at = args.opt_vec3("look_at");
   if (!look_at) {
     return McpResult::error(look_at.error());
   }
@@ -304,16 +278,10 @@ static auto view_camera_set(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(target.error());
   }
 
-  const auto to_vec3 = [](const option<std::array<f32, 3>>& value) -> option<glm::vec3> {
-    return value.has_value() ? option<glm::vec3>(glm::vec3((*value)[0], (*value)[1], (*value)[2])) : nullopt;
-  };
-  const auto pose_yaw_pitch = yaw_pitch->has_value() ? option<glm::vec2>(glm::vec2((**yaw_pitch)[0], (**yaw_pitch)[1]))
-                                                     : nullopt;
-  const auto set = set_camera_pose(
-    *target->viewport,
-    to_vec3(*position),
-    pose_yaw_pitch,
-    to_vec3(*look_at),
+  const auto set = target->viewport->set_camera_pose(
+    *position,
+    *yaw_pitch,
+    *look_at,
     fov->has_value() ? option<f32>(static_cast<f32>(**fov)) : nullopt
   );
   if (!set) {
@@ -341,7 +309,7 @@ static auto view_focus(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(entity.error());
   }
 
-  if (const auto focused = focus_camera_on(*target->viewport, *entity); !focused) {
+  if (const auto focused = target->viewport->focus_camera_on(*entity); !focused) {
     return McpResult::error(focused.error());
   }
 
@@ -351,31 +319,31 @@ static auto view_focus(Editor& editor, const McpArgs& args) -> McpResult {
 static auto view_pick(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto uv_arg = number_array_arg(args, "uv", 2);
+  const auto uv_arg = args.opt_vec2("uv");
   if (!uv_arg) {
     return McpResult::error(uv_arg.error());
   }
 
-  const auto pixel_arg = number_array_arg(args, "pixel", 2);
+  const auto pixel_arg = args.opt_vec2("pixel");
   if (!pixel_arg) {
     return McpResult::error(pixel_arg.error());
   }
 
-  const auto image_size_arg = number_array_arg(args, "image_size", 2);
+  const auto image_size_arg = args.opt_vec2("image_size");
   if (!image_size_arg) {
     return McpResult::error(image_size_arg.error());
   }
 
   glm::vec2 uv = {};
   if (uv_arg->has_value()) {
-    uv = {(**uv_arg)[0], (**uv_arg)[1]};
+    uv = **uv_arg;
   } else if (pixel_arg->has_value() && image_size_arg->has_value()) {
-    const auto size = glm::vec2((**image_size_arg)[0], (**image_size_arg)[1]);
+    const auto size = **image_size_arg;
     if (size.x < 1.0f || size.y < 1.0f) {
       return McpResult::error("image_size must be positive");
     }
 
-    uv = glm::vec2((**pixel_arg)[0], (**pixel_arg)[1]) / size;
+    uv = **pixel_arg / size;
   } else {
     return McpResult::error("give uv, or pixel together with image_size");
   }
@@ -390,27 +358,27 @@ static auto view_pick(Editor& editor, const McpArgs& args) -> McpResult {
   }
 
   const auto scene_id = target->scene->get_id();
-  const auto pick = request_pick(*target->viewport, uv);
+  const auto pick = target->viewport->request_pick(uv);
 
   return McpResult::pending([&editor, scene_id, uv, pick]() -> option<McpResult> {
-    if (!pick->is_done.load(std::memory_order_acquire)) {
+    if (!pick->is_ready()) {
       return nullopt;
     }
 
-    if (!pick->error.empty()) {
-      return McpResult::error(pick->error);
+    if (!pick->result) {
+      return McpResult::error(pick->result.error());
     }
 
-    if (!pick->entity.has_value()) {
+    if (!pick->result->has_value()) {
       return McpResult::ok(fmt::format("nothing under uv [{:.4f}, {:.4f}]", uv.x, uv.y));
     }
 
-    const auto* viewport = find_scene_viewport(editor, scene_id);
+    const auto* viewport = viewport_of(editor, scene_id);
     if (viewport == nullptr || viewport->get_scene() == nullptr) {
       return McpResult::error("the viewport was closed before the pick finished");
     }
 
-    const auto entity = flecs::entity(viewport->get_scene()->get_scene()->world, *pick->entity);
+    const auto entity = flecs::entity(viewport->get_scene()->get_scene()->world, pick->result->value());
     if (!entity.is_alive()) {
       return McpResult::ok("the picked entity was deleted");
     }
@@ -489,8 +457,7 @@ static auto view_gizmo(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(target.error());
   }
 
-  set_gizmo(
-    *target->viewport,
+  target->viewport->set_gizmo(
     mode,
     space,
     *snap,
@@ -499,10 +466,6 @@ static auto view_gizmo(Editor& editor, const McpArgs& args) -> McpResult {
   );
 
   return McpResult::ok(gizmo_text(*target));
-}
-
-static auto scene_property(SchemaBuilder builder) -> SchemaBuilder {
-  return builder.string("scene", "scene id from scene_list or 'active', default the focused viewport's scene", false);
 }
 
 auto register_view_tools(McpServer& server) -> void {
@@ -519,7 +482,8 @@ auto register_view_tools(McpServer& server) -> void {
         "through it: the viewport looks through it for the shot and goes back afterwards. Waits for the viewport "
         "to render, so a hidden or minimized viewport times out.",
       .input_schema =
-        scene_property(SchemaBuilder{})
+        SchemaBuilder{}
+          .scene("the focused viewport's scene")
           .string(
             "camera",
             "camera entity to look through for this shot, path or #id, default the editor camera",
@@ -539,7 +503,7 @@ auto register_view_tools(McpServer& server) -> void {
       .title = "Get viewport camera",
       .description = "The viewport camera: position, yaw and pitch in degrees, fov, clip planes, the viewport size "
                      "and the camera entity it looks through, if any.",
-      .input_schema = scene_property(SchemaBuilder{}).build(),
+      .input_schema = SchemaBuilder{}.scene("the focused viewport's scene").build(),
       .is_read_only = true,
       .is_idempotent = true,
       .handler = view_camera_get,
@@ -555,7 +519,8 @@ auto register_view_tools(McpServer& server) -> void {
                      "left, positive pitch looks up. Parts you leave out keep their value. Ends looking through a "
                      "scene camera.",
       .input_schema =
-        scene_property(SchemaBuilder{})
+        SchemaBuilder{}
+          .scene("the focused viewport's scene")
           .array("position", "camera position [x, y, z] in world space", R"({"type":"number"})", false)
           .array("yaw_pitch", "[yaw, pitch] in degrees", R"({"type":"number"})", false)
           .array("look_at", "world point [x, y, z] to aim at, instead of yaw_pitch", R"({"type":"number"})", false)
@@ -571,7 +536,8 @@ auto register_view_tools(McpServer& server) -> void {
       .name = "view_focus",
       .title = "Focus viewport on entity",
       .description = "Moves the editor camera to look at an entity, the same as the F shortcut.",
-      .input_schema = scene_property(SchemaBuilder{}).string("entity", "entity path or #id", true).build(),
+      .input_schema =
+        SchemaBuilder{}.scene("the focused viewport's scene").string("entity", "entity path or #id", true).build(),
       .is_idempotent = true,
       .handler = view_focus,
     }
@@ -586,7 +552,8 @@ auto register_view_tools(McpServer& server) -> void {
                      "screenshot. Coordinates refer to the latest view_screenshot of the same camera, so move the "
                      "camera only through the same tools in between. Picks what the viewport renders now and "
                      "does not change the selection.",
-      .input_schema = scene_property(SchemaBuilder{})
+      .input_schema = SchemaBuilder{}
+                        .scene("the focused viewport's scene")
                         .array("uv", "[u, v] in 0 to 1", R"({"type":"number"})", false)
                         .array("pixel", "[x, y] in pixels of the screenshot", R"({"type":"number"})", false)
                         .array("image_size", "[width, height] of that screenshot", R"({"type":"number"})", false)
@@ -603,7 +570,8 @@ auto register_view_tools(McpServer& server) -> void {
       .title = "Viewport gizmo",
       .description = "Sets the transform gizmo mode, space and snapping, and returns the resulting state. Call it "
                      "without arguments to read the state.",
-      .input_schema = scene_property(SchemaBuilder{})
+      .input_schema = SchemaBuilder{}
+                        .scene("the focused viewport's scene")
                         .string("mode", "gizmo mode", false, {"none", "translate", "rotate", "scale", "universal"})
                         .string("space", "gizmo space", false, {"local", "world"})
                         .boolean("snap", "snap to the step sizes", false)

@@ -14,6 +14,7 @@
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
 #include "Panels/LoadingPanel.hpp"
+#include "Utils/AsyncResult.hpp"
 
 namespace ox {
 constexpr static usize OPEN_REPORTED_ERRORS = 5;
@@ -217,21 +218,21 @@ static auto project_cook(Editor& editor, const McpArgs& args) -> McpResult {
     folder = resolved.value();
   }
 
-  const auto status = cook_project(editor, folder);
+  const auto status = editor.cook_assets_into(folder);
   if (!status) {
     return McpResult::error(status.error());
   }
 
   return McpResult::pending([cook_status = status.value()]() -> option<McpResult> {
-    if (!cook_status->is_done.load(std::memory_order_acquire)) {
+    if (!cook_status->is_ready()) {
       return nullopt;
     }
 
-    if (!cook_status->is_ok.load(std::memory_order_relaxed)) {
-      return McpResult::error(cook_status->error);
+    if (!cook_status->result) {
+      return McpResult::error(cook_status->result.error());
     }
 
-    return McpResult::ok(fmt::format("cooked the project assets into {}", cook_status->output.string()));
+    return McpResult::ok(fmt::format("cooked the project assets into {}", cook_status->result->string()));
   });
 }
 

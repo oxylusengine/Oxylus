@@ -58,7 +58,7 @@ static auto report_written(std::string_view what, bool is_ok) -> void {
 auto mcp_bridge_path() -> std::filesystem::path {
   const auto* base = SDL_GetBasePath();
   const auto directory = base != nullptr ? std::filesystem::path(base) : std::filesystem::current_path();
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
   return directory / "oxmcp.exe";
 #else
   return directory / "oxmcp";

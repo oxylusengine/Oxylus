@@ -12,49 +12,11 @@ namespace ox {
 constexpr c8 PATH_SEPARATOR = '\n';
 constexpr auto UNRESOLVABLE_PATH = std::string_view("\x01");
 
-struct UuidSlot {
-  usize offset = 0;
-  UUID uuid = {};
-};
-
-struct UuidScanner : IEntitySerializer {
-  const u8* base = nullptr;
-  ankerl::svector<UuidSlot, 4> slots = {};
-
-  UuidScanner(flecs::world& world_, const void* base_)
-      : IEntitySerializer(world_),
-        base(static_cast<const u8*>(base_)) {}
-
-  auto on_opaque_value(
-    std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
-  ) -> void override {
-    if (field_type != world.entity<UUID>()) {
-      return;
-    }
-
-    slots.push_back(
-      {.offset = static_cast<usize>(static_cast<const u8*>(field_ptr) - base), .uuid = *static_cast<UUID*>(field_ptr)}
-    );
-  }
-};
-
 static auto is_null_entity(flecs::entity entity) -> bool { return entity.id() == 0; }
 
 static auto collect_uuid_slots(flecs::world& world, flecs::id_t component, const ComponentBytes& bytes)
-  -> ankerl::svector<UuidSlot, 4> {
-  if (bytes.is_empty()) {
-    return {};
-  }
-
-  const auto type = flecs::id(world.c_ptr(), component).type_id();
-  if (type.id() == 0 || !type.has<flecs::TypeSerializer>()) {
-    return {};
-  }
-
-  auto scanner = UuidScanner(world, bytes.data());
-  scanner.serialize(type, const_cast<void*>(bytes.data()));
-
-  return std::move(scanner.slots);
+  -> ankerl::svector<UuidField, 4> {
+  return collect_uuid_fields(world, flecs::id(world.c_ptr(), component).type_id(), bytes.data());
 }
 
 static auto resolve_entity(const Scene* scene, const EntityRemap* remap, flecs::entity_t id, std::string_view command)
@@ -568,13 +530,38 @@ auto EntityEnableCommand::undo() -> void {
   }
 }
 
+auto ComponentSnapshot::of(flecs::entity entity, flecs::id_t component) -> ComponentSnapshot {
+  if (!entity.has(component)) {
+    return {};
+  }
+
+  return {.is_present = true, .bytes = ComponentBytes::copy_of(entity, component)};
+}
+
+static auto apply_component_snapshot_to(flecs::entity entity, flecs::id_t component, const ComponentSnapshot& state)
+  -> void {
+  if (!state.is_present) {
+    if (entity.has(component)) {
+      entity.remove(component);
+    }
+
+    return;
+  }
+
+  if (!entity.has(component)) {
+    entity.add(component);
+  }
+
+  write_component_bytes(entity, component, state.bytes);
+}
+
 ComponentSnapshotCommand::ComponentSnapshotCommand(
   Scene* scene,
   EntityRemap* remap,
   flecs::entity entity,
   flecs::id_t component,
-  ComponentBytes before,
-  ComponentBytes after,
+  ComponentSnapshot before,
+  ComponentSnapshot after,
   std::string id
 )
     : scene_(scene),
@@ -589,7 +576,7 @@ auto ComponentSnapshotCommand::execute() -> void {
   ZoneScoped;
 
   if (auto entity = resolve_entity(scene_, remap_, entity_, id_); !is_null_entity(entity)) {
-    write_component_bytes(entity, component_, after_);
+    apply_component_snapshot_to(entity, component_, after_);
   }
 }
 
@@ -597,74 +584,7 @@ auto ComponentSnapshotCommand::undo() -> void {
   ZoneScoped;
 
   if (auto entity = resolve_entity(scene_, remap_, entity_, id_); !is_null_entity(entity)) {
-    write_component_bytes(entity, component_, before_);
+    apply_component_snapshot_to(entity, component_, before_);
   }
-}
-
-ComponentAddCommand::ComponentAddCommand(
-  Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id
-)
-    : scene_(scene),
-      remap_(remap),
-      entity_(entity.id()),
-      component_(component),
-      bytes_(ComponentBytes::copy_of(entity, component)),
-      id_(std::move(id)) {}
-
-auto ComponentAddCommand::execute() -> void {
-  ZoneScoped;
-
-  auto entity = resolve_entity(scene_, remap_, entity_, id_);
-  if (is_null_entity(entity)) {
-    return;
-  }
-
-  if (!entity.has(component_)) {
-    entity.add(component_);
-  }
-
-  write_component_bytes(entity, component_, bytes_);
-}
-
-auto ComponentAddCommand::undo() -> void {
-  ZoneScoped;
-
-  if (auto entity = resolve_entity(scene_, remap_, entity_, id_); !is_null_entity(entity)) {
-    entity.remove(component_);
-  }
-}
-
-ComponentRemoveCommand::ComponentRemoveCommand(
-  Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id
-)
-    : scene_(scene),
-      remap_(remap),
-      entity_(entity.id()),
-      component_(component),
-      bytes_(ComponentBytes::copy_of(entity, component)),
-      id_(std::move(id)) {}
-
-auto ComponentRemoveCommand::execute() -> void {
-  ZoneScoped;
-
-  if (auto entity = resolve_entity(scene_, remap_, entity_, id_); !is_null_entity(entity)) {
-    entity.remove(component_);
-  }
-}
-
-auto ComponentRemoveCommand::undo() -> void {
-  ZoneScoped;
-
-  auto entity = resolve_entity(scene_, remap_, entity_, id_);
-  if (is_null_entity(entity)) {
-    return;
-  }
-
-  if (entity.has(component_)) {
-    OX_LOG_WARN("{}: the component is already back, skipping", id_);
-    return;
-  }
-
-  write_component_bytes(entity, component_, bytes_);
 }
 } // namespace ox

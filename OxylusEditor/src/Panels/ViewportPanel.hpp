@@ -10,6 +10,7 @@
 
 #include "EditorPanelState.hpp"
 #include "UI/RuntimeConsole.hpp"
+#include "Utils/AsyncResult.hpp"
 #include "Utils/PendingPick.hpp"
 #include "Utils/SceneManager.hpp"
 #include "Utils/SceneTarget.hpp"
@@ -17,19 +18,13 @@
 
 namespace ox {
 struct ViewCapture {
-  std::atomic<bool> is_done = false;
-  // written before is_done is released
   std::string png = {};
-  std::string error = {};
   u32 width = 0;
   u32 height = 0;
 };
 
-struct ViewPick {
-  std::atomic<bool> is_done = false;
-  option<flecs::entity_t> entity = nullopt;
-  std::string error = {};
-};
+// nullopt when the pixel shows no entity
+using ViewPick = AsyncResult<option<flecs::entity_t>>;
 
 struct ViewCameraPose {
   glm::vec3 position = {};
@@ -83,7 +78,7 @@ public:
   u64 rendered_frames = 0;
 
   // the PNG lands once the viewport has rendered, copied back without stalling the GPU
-  auto capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<ViewCapture>;
+  auto capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<AsyncResult<ViewCapture>>;
 
   // yaw and pitch in degrees
   auto camera_pose(this const ViewportPanel& self) -> option<ViewCameraPose>;
@@ -131,7 +126,7 @@ private:
   };
 
   struct CaptureRequest {
-    std::shared_ptr<ViewCapture> capture = {};
+    std::shared_ptr<AsyncResult<ViewCapture>> capture = {};
     u32 max_size = 0;
   };
 

@@ -8,7 +8,6 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
-#include "Actions/AssetActions.hpp"
 #include "Actions/EntityActions.hpp"
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
@@ -23,6 +22,7 @@
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "ParticleEditorPanel.hpp"
+#include "Scene/ComponentRegistry.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/EntitySerializer.hpp"
 #ifdef OX_DOTNET
@@ -377,7 +377,7 @@ struct EntityInspector : IEntitySerializer {
     // row, so they go between two property tables rather than inside one.
     UI::end_properties();
 
-    modified |= inspector_panel.draw_asset_field(name, *uuid);
+    modified |= inspector_panel.draw_asset_field(name, asset_field_type(component_type, name), *uuid);
     modified |= inspector_panel.draw_animation_clip_selector(*uuid);
     inspector_panel.draw_asset_contents(*uuid);
 
@@ -644,11 +644,9 @@ void InspectorPanel::draw_component_context_menu(bool& is_remove_requested, flec
     is_remove_requested = true;
   }
   if (ImGui::MenuItem(reset_component_txt.data())) {
-    auto tx = begin_edit(App::mod<Editor>(), *scene_, "reset component");
-    if (const auto result = reset_component(tx, entity, fid); !result) {
-      OX_LOG_ERROR("{}", result.error());
-    }
-    tx.commit();
+    edit_scene(App::mod<Editor>(), *scene_, "reset component", [&](EditTransaction& tx) {
+      return reset_component(tx, entity, fid);
+    });
   }
   if (ImGui::MenuItem(copy_component_txt.data())) {
     component_clipboard.source_entity = entity;
@@ -656,19 +654,10 @@ void InspectorPanel::draw_component_context_menu(bool& is_remove_requested, flec
   }
   if (ImGui::MenuItem(paste_component_txt.data())) {
     if (component_clipboard.is_valid() && component_clipboard.source_entity != entity) {
-      auto tx = begin_edit(App::mod<Editor>(), *scene_, "paste component");
-      if (
-        const auto result = paste_component(
-          tx,
-          component_clipboard.source_entity,
-          entity,
-          flecs::id(entity.world(), component_clipboard.component_id)
-        );
-        !result
-      ) {
-        OX_LOG_ERROR("{}", result.error());
-      }
-      tx.commit();
+      edit_scene(App::mod<Editor>(), *scene_, "paste component", [&](EditTransaction& tx) {
+        const auto component = flecs::id(entity.world(), component_clipboard.component_id);
+        return paste_component(tx, component_clipboard.source_entity, entity, component);
+      });
     }
   }
 }
@@ -688,11 +677,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     ImGui::SetKeyboardFocusHere();
   UI::push_frame_style();
   if (ImGui::InputText("##Tag", &new_name, ImGuiInputTextFlags_EnterReturnsTrue)) {
-    auto tx = begin_edit(editor, *self.scene_, "rename entity");
-    if (const auto result = rename_entity(tx, entity, new_name); !result) {
-      OX_LOG_ERROR("{}", result.error());
-    }
-    tx.commit();
+    edit_scene(editor, *self.scene_, "rename entity", [&](EditTransaction& tx) {
+      return rename_entity(tx, entity, new_name);
+    });
   }
   UI::pop_frame_style();
   ImGui::PopItemWidth();
@@ -728,11 +715,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       }
 
       if (ImGui::MenuItem(component_name)) {
-        auto tx = begin_edit(editor, *self.scene_, "add component");
-        if (const auto result = add_component(tx, entity, component); !result) {
-          OX_LOG_WARN("{}", result.error());
-        }
-        tx.commit();
+        edit_scene(editor, *self.scene_, "add component", [&](EditTransaction& tx) {
+          return add_component(tx, entity, component);
+        });
         ImGui::CloseCurrentPopup();
       }
     }
@@ -811,16 +796,16 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     }
 
     if (is_remove_requested) {
-      auto tx = begin_edit(editor, *self.scene_, "remove component");
-      if (const auto result = remove_component(tx, entity, fid); !result) {
-        OX_LOG_ERROR("{}", result.error());
-      }
-      tx.commit();
+      edit_scene(editor, *self.scene_, "remove component", [&](EditTransaction& tx) {
+        return remove_component(tx, entity, fid);
+      });
     }
   });
 }
 
-auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+auto InspectorPanel::draw_asset_field(
+  this InspectorPanel& self, const std::string_view label, const AssetType field_type, UUID& uuid
+) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -833,7 +818,7 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
     type = asset->type;
     registry_path = asset->path;
   }
-  const auto picker_type = type != AssetType::None ? type : expected_asset_type(label);
+  const auto picker_type = type != AssetType::None ? type : field_type;
   // The same resolution the browser rows get, so a field and the picker it opens call an asset by
   // the same name instead of the field showing the cache pack.
   const auto path = asset_display_path(uuid, registry_path);

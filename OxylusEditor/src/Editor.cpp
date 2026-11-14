@@ -9,7 +9,6 @@
 #include <vir/RenderGraph.hpp>
 
 #include "Actions/ProjectActions.hpp"
-#include "Actions/SceneActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
@@ -36,6 +35,7 @@
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/UI.hpp"
+#include "Utils/AsyncResult.hpp"
 #include "Utils/Command.hpp"
 
 namespace ox {
@@ -432,18 +432,32 @@ void Editor::reset(this Editor& self) {
   self.scene_manager.reset();
 }
 
-void Editor::new_scene(this Editor& self) {
+auto Editor::new_scene(this Editor& self) -> EditorScene* {
   ZoneScoped;
 
   App::get_rendercontext().wait();
 
-  ox::new_scene(self);
+  const auto scene_id = self.scene_manager.new_scene();
+  self.scene_manager.load_default_scene(scene_id);
+  auto scene = self.scene_manager.get_scene(scene_id);
+  self.main_viewport_panel.add_new_scene(scene);
+
+  return scene.get();
 }
 
-bool Editor::open_scene(const std::filesystem::path& path) {
+auto Editor::open_scene(this Editor& self, const std::filesystem::path& path)
+  -> std::expected<EditorScene*, std::string> {
   ZoneScoped;
 
-  return ox::open_scene(*this, path).has_value();
+  const auto scene_id = self.scene_manager.load_scene(path);
+  if (!scene_id.has_value()) {
+    return std::unexpected(fmt::format("could not load '{}', see the log", path.string()));
+  }
+
+  auto scene = self.scene_manager.get_scene(scene_id.value());
+  self.main_viewport_panel.add_new_scene(scene);
+
+  return scene.get();
 }
 
 void Editor::open_scene_file_dialog() {
@@ -488,7 +502,7 @@ void Editor::save_scene() {
   }
 
   if (!scene->get_path().empty()) {
-    if (const auto saved = ox::save_scene(*this, *scene, nullopt); !saved) {
+    if (const auto saved = save_scene_to(*scene, nullopt); !saved) {
       OX_LOG_ERROR("Couldn't save the scene: {}", saved.error());
     }
   } else {
@@ -526,9 +540,30 @@ auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path&
   return asset ? App::get_vfs().to_physical(asset->path) : std::filesystem::path{};
 }
 
-auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path, std::shared_ptr<SaveStatus> status)
-  -> void {
-  App::defer_to_next_frame([scene, scene_path = std::move(path), save_status = std::move(status)] {
+auto Editor::save_scene_to(this Editor&, EditorScene& editor_scene, option<std::filesystem::path> path)
+  -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string> {
+  ZoneScoped;
+
+  if (editor_scene.is_playing()) {
+    return std::unexpected("stop the scene before saving");
+  }
+
+  auto target = path.has_value() ? path.value() : editor_scene.get_path();
+  if (target.empty()) {
+    return std::unexpected("the scene has no file yet, give a path");
+  }
+
+  if (target.extension() != ".oxscene") {
+    return std::unexpected(fmt::format("'{}' must end in .oxscene", target.string()));
+  }
+
+  std::error_code error;
+  if (const auto parent = target.parent_path(); !parent.empty() && !std::filesystem::is_directory(parent, error)) {
+    return std::unexpected(fmt::format("the folder '{}' does not exist", parent.string()));
+  }
+
+  auto status = std::make_shared<AsyncResult<std::filesystem::path>>();
+  App::defer_to_next_frame([scene = &editor_scene, scene_path = std::move(target), save_status = status] {
     // The readback records GPU work, so it has to finish here on the main thread; the job below
     // only writes files.
     auto edits_path = sync_terrain_edits_asset(*scene->get_scene(), scene_path);
@@ -551,12 +586,16 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path, s
         export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
       scene->set_path(scene_path);
-      if (save_status != nullptr) {
-        finish_save(*save_status, is_saved);
+      if (is_saved) {
+        save_status->finish(scene_path);
+      } else {
+        save_status->fail(fmt::format("the scene file '{}' could not be written", scene_path.string()));
       }
     }));
     job_man.pop_job_name();
   });
+
+  return status;
 }
 
 void Editor::save_scene_as() {
@@ -602,7 +641,7 @@ void Editor::save_scene_as() {
             scene_path += ".oxscene";
           }
 
-          if (const auto saved = ox::save_scene(*udata->editor, *udata->scene, scene_path); !saved) {
+          if (const auto saved = udata->editor->save_scene_to(*udata->scene, scene_path); !saved) {
             OX_LOG_ERROR("Couldn't save the scene: {}", saved.error());
           }
         }
@@ -666,9 +705,8 @@ void Editor::reset_current_docking_layout() {
   main_viewport_panel.update_dockspace();
 }
 
-auto Editor::cook_assets_into(
-  this Editor& self, const std::filesystem::path& folder, std::shared_ptr<CookStatus> status
-) -> std::expected<void, std::string> {
+auto Editor::cook_assets_into(this Editor& self, const std::filesystem::path& folder)
+  -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string> {
   ZoneScoped;
 
   if (self.cooking_assets.exchange(true, std::memory_order_acq_rel)) {
@@ -685,6 +723,7 @@ auto Editor::cook_assets_into(
   auto assets_dir = vfs.resolve_physical_dir(VFS::ASSETS_DIR, "");
   auto output_dir = folder / VFS::COOKED_SUBDIR;
 
+  auto status = std::make_shared<AsyncResult<std::filesystem::path>>();
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("Cooking assets");
   job_man.submit(
@@ -696,14 +735,17 @@ auto Editor::cook_assets_into(
         }
 
         self.cooking_assets.store(false, std::memory_order_release);
-        if (status != nullptr) {
-          finish_cook(*status, is_ok, output_directory);
+        if (is_ok) {
+          status->finish(output_directory);
+        } else {
+          status->fail(fmt::format("cooking into '{}' failed, see the log", output_directory.string()));
         }
       }
     )
   );
   job_man.pop_job_name();
-  return {};
+
+  return status;
 }
 
 void Editor::draw_menubar(this Editor& self) {
@@ -795,7 +837,7 @@ void Editor::draw_menubar(this Editor& self) {
 
               auto folder = std::filesystem::path(std::string(*files));
               App::defer_to_next_frame([editor, f = std::move(folder)]() -> void {
-                std::ignore = editor->cook_assets_into(f, nullptr);
+                std::ignore = editor->cook_assets_into(f);
               });
             },
           .title = "Cook assets into (a game build's Assets folder works)",

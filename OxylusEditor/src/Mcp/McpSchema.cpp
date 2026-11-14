@@ -1,5 +1,6 @@
 #include "Mcp/McpSchema.hpp"
 
+#include <fmt/format.h>
 #include <tracy/Tracy.hpp>
 
 #include "Utils/JsonWriter.hpp"
@@ -43,6 +44,10 @@ auto SchemaBuilder::string(
 ) -> SchemaBuilder {
   add_property(self, name, description, "string", is_required).enum_values = std::move(enum_values);
   return self;
+}
+
+auto SchemaBuilder::scene(this SchemaBuilder self, const std::string_view fallback) -> SchemaBuilder {
+  return self.string("scene", fmt::format("scene id from scene_list or 'active', default {}", fallback), false);
 }
 
 auto SchemaBuilder::integer(

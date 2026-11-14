@@ -1,11 +1,29 @@
 #include "Scene/Components.hpp"
 
+#include "Asset/AssetFile.hpp"
 #include "Scene/ComponentRegistry.hpp"
 
 namespace ox {
+auto asset_field_type(const flecs::entity component, const std::string_view member) -> AssetType {
+  const auto* asset_fields = component.try_get<AssetFields>();
+  if (asset_fields == nullptr) {
+    return AssetType::None;
+  }
+
+  for (const auto& field : asset_fields->fields) {
+    if (member == field.member) {
+      return field.type;
+    }
+  }
+
+  return AssetType::None;
+}
+
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
+  // registered ahead of the module scope, everything inside it is listed as a component an entity can carry
+  world.component<AssetFields>();
   world.module<CoreComponentsModule>("Core");
 
   auto registry = ComponentRegistry{world};
@@ -60,27 +78,34 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   // Rendering Components
   {
     using C = MeshComponent;
-    registry.bind<&C::model_uuid, &C::mesh_index, &C::material_uuid, &C::cast_shadows>();
+    registry.bind<&C::model_uuid, &C::mesh_index, &C::material_uuid, &C::cast_shadows>()
+      .asset<&C::model_uuid>(AssetType::Model)
+      .asset<&C::material_uuid>(AssetType::Material);
   }
 
   {
     using C = SkinnedMeshComponent;
-    registry.bind<&C::skeleton_uuid>();
+    registry.bind<&C::skeleton_uuid>().asset<&C::skeleton_uuid>(AssetType::Skeleton);
   }
 
   {
     using C = AnimatorComponent;
-    registry.bind<&C::clip_uuid, &C::speed, &C::blend_time, &C::loop, &C::playing>();
+    registry.bind<&C::clip_uuid, &C::speed, &C::blend_time, &C::loop, &C::playing>().asset<&C::clip_uuid>(
+      AssetType::Animation
+    );
   }
 
   {
     using C = CinematicPlayerComponent;
-    registry.bind<&C::cinematic_uuid, &C::speed, &C::loop, &C::play_on_awake, &C::playing, &C::restore_on_stop>();
+    registry.bind<&C::cinematic_uuid, &C::speed, &C::loop, &C::play_on_awake, &C::playing, &C::restore_on_stop>()
+      .asset<&C::cinematic_uuid>(AssetType::Cinematic);
   }
 
   {
     using C = SpriteComponent;
-    registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>();
+    registry.bind<&C::layer, &C::sort_y, &C::flip_x, &C::material>().tags<Networked>().asset<&C::material>(
+      AssetType::Material
+    );
   }
 
   {
@@ -95,18 +120,20 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = ParticleSystemComponent;
-    registry.bind<
-      &C::particle_system,
-      &C::play_on_awake,
-      &C::simulation_speed,
-      &C::seed,
-      &C::emission_rate_scale,
-      &C::velocity_offset,
-      &C::override_parameters,
-      &C::param0,
-      &C::param1,
-      &C::param2,
-      &C::param3>();
+    registry
+      .bind<
+        &C::particle_system,
+        &C::play_on_awake,
+        &C::simulation_speed,
+        &C::seed,
+        &C::emission_rate_scale,
+        &C::velocity_offset,
+        &C::override_parameters,
+        &C::param0,
+        &C::param1,
+        &C::param2,
+        &C::param3>()
+      .asset<&C::particle_system>(AssetType::ParticleSystem);
   }
 
   {
@@ -133,47 +160,53 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = SkyComponent;
-    registry.bind<&C::solid_color, &C::ambient_color, &C::texture>();
+    registry.bind<&C::solid_color, &C::ambient_color, &C::texture>().asset<&C::texture>(AssetType::Texture);
   }
 
   {
     using C = TerrainComponent;
-    registry.bind<
-      &C::world_size,
-      &C::height_range,
-      &C::resolution,
-      &C::patch_count,
-      &C::target_edge_pixels,
-      &C::max_tessellation,
-      &C::domain_size,
-      &C::height_frequency,
-      &C::height_amplitude,
-      &C::height_lacunarity,
-      &C::height_gain,
-      &C::height_octaves,
-      &C::seed,
-      &C::erosion_scale,
-      &C::erosion_strength,
-      &C::gully_weight,
-      &C::detail,
-      &C::ridge_rounding,
-      &C::crease_rounding,
-      &C::erosion_octaves,
-      &C::slope_rock_begin,
-      &C::slope_rock_end,
-      &C::altitude_snow_begin,
-      &C::altitude_snow_end,
-      &C::terrain_edits,
-      &C::layer_grass,
-      &C::layer_rock,
-      &C::layer_drainage,
-      &C::layer_snow,
-      &C::layer_tiling,
-      &C::triplanar_begin,
-      &C::collision_enabled,
-      &C::collision_resolution,
-      &C::collision_friction,
-      &C::collision_restitution>();
+    registry
+      .bind<
+        &C::world_size,
+        &C::height_range,
+        &C::resolution,
+        &C::patch_count,
+        &C::target_edge_pixels,
+        &C::max_tessellation,
+        &C::domain_size,
+        &C::height_frequency,
+        &C::height_amplitude,
+        &C::height_lacunarity,
+        &C::height_gain,
+        &C::height_octaves,
+        &C::seed,
+        &C::erosion_scale,
+        &C::erosion_strength,
+        &C::gully_weight,
+        &C::detail,
+        &C::ridge_rounding,
+        &C::crease_rounding,
+        &C::erosion_octaves,
+        &C::slope_rock_begin,
+        &C::slope_rock_end,
+        &C::altitude_snow_begin,
+        &C::altitude_snow_end,
+        &C::terrain_edits,
+        &C::layer_grass,
+        &C::layer_rock,
+        &C::layer_drainage,
+        &C::layer_snow,
+        &C::layer_tiling,
+        &C::triplanar_begin,
+        &C::collision_enabled,
+        &C::collision_resolution,
+        &C::collision_friction,
+        &C::collision_restitution>()
+      .asset<&C::terrain_edits>(AssetType::Terrain)
+      .asset<&C::layer_grass>(AssetType::Texture)
+      .asset<&C::layer_rock>(AssetType::Texture)
+      .asset<&C::layer_drainage>(AssetType::Texture)
+      .asset<&C::layer_snow>(AssetType::Texture);
   }
 
   {
@@ -342,23 +375,25 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   // Audio Components
   {
     using C = AudioSourceComponent;
-    registry.bind<
-      &C::audio_source,
-      &C::attenuation_model,
-      &C::volume,
-      &C::pitch,
-      &C::play_on_awake,
-      &C::looping,
-      &C::spatialization,
-      &C::roll_off,
-      &C::min_gain,
-      &C::max_gain,
-      &C::min_distance,
-      &C::max_distance,
-      &C::cone_inner_angle,
-      &C::cone_outer_angle,
-      &C::cone_outer_gain,
-      &C::doppler_factor>();
+    registry
+      .bind<
+        &C::audio_source,
+        &C::attenuation_model,
+        &C::volume,
+        &C::pitch,
+        &C::play_on_awake,
+        &C::looping,
+        &C::spatialization,
+        &C::roll_off,
+        &C::min_gain,
+        &C::max_gain,
+        &C::min_distance,
+        &C::max_distance,
+        &C::cone_inner_angle,
+        &C::cone_outer_angle,
+        &C::cone_outer_gain,
+        &C::doppler_factor>()
+      .asset<&C::audio_source>(AssetType::Audio);
   }
 
   {
@@ -381,16 +416,18 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
 
   {
     using C = ColorGradingComponent;
-    registry.bind<
-      &C::temperature,
-      &C::tint,
-      &C::saturation,
-      &C::contrast,
-      &C::lift,
-      &C::gamma,
-      &C::gain,
-      &C::lut,
-      &C::lut_contribution>();
+    registry
+      .bind<
+        &C::temperature,
+        &C::tint,
+        &C::saturation,
+        &C::contrast,
+        &C::lift,
+        &C::gamma,
+        &C::gain,
+        &C::lut,
+        &C::lut_contribution>()
+      .asset<&C::lut>(AssetType::Texture);
   }
 
   {

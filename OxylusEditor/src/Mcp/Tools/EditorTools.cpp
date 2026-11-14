@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <fmt/chrono.h>
@@ -18,10 +17,12 @@
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
 #include "OS/File.hpp"
+#include "OS/OS.hpp"
 #include "Panels/LoadingPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/ViewportPanel.hpp"
 #include "Project/Project.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static usize STATE_LOG_ENTRIES = 5;
@@ -56,21 +57,9 @@ static auto severity_letter(Notification::Type type) -> char {
   }
 }
 
-static auto to_lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
-
 static auto local_time_text(std::chrono::system_clock::time_point time) -> std::string {
-  const auto seconds = std::chrono::system_clock::to_time_t(time);
-  std::tm local = {};
-#ifdef _WIN32
-  localtime_s(&local, &seconds);
-#else
-  localtime_r(&seconds, &local);
-#endif
-  return fmt::format("{:%H:%M:%S}", local);
+  const auto local = os::local_time(std::chrono::system_clock::to_time_t(time));
+  return local.has_value() ? fmt::format("{:%H:%M:%S}", local.value()) : std::string("--:--:--");
 }
 
 static auto editor_state(Editor& editor, const McpServer& server) -> std::string {
@@ -237,7 +226,7 @@ static auto log_read(Editor& editor, const McpArgs& args) -> McpResult {
 
   const auto limit = std::clamp<i64>(limit_arg->value_or(LOG_DEFAULT_LIMIT), 1, LOG_MAX_LIMIT);
   const auto after_id = static_cast<u64>(std::max<i64>(since_id->value_or(0), 0));
-  const auto filter = to_lower(filter_arg->value_or(""));
+  const auto filter = filter_arg->value_or("");
 
   editor.notification_system.drain_pending();
   const auto& history = editor.notification_system.notification_history;
@@ -248,7 +237,7 @@ static auto log_read(Editor& editor, const McpArgs& args) -> McpResult {
       continue;
     }
 
-    if (!filter.empty() && to_lower(entry.title).find(filter) == std::string::npos) {
+    if (!StringUtils::icontains(entry.title, filter)) {
       continue;
     }
 
@@ -350,9 +339,8 @@ static auto editor_guide(Editor&, const McpArgs& args) -> McpResult {
 }
 
 static auto find_panel(Editor& editor, std::string_view name) -> PanelMetadata* {
-  const auto wanted = to_lower(name);
   for (auto& panel : editor.editor_panel_registry.panel_metadata) {
-    if (to_lower(panel.name) == wanted) {
+    if (StringUtils::iequals(panel.name, name)) {
       return &panel;
     }
   }
@@ -412,14 +400,7 @@ static auto editor_select(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::ok("selection cleared");
   }
 
-  const auto scene_text = scene_arg(args);
-  if (!scene_text) {
-    return McpResult::error(scene_text.error());
-  }
-
-  const auto scene_ref = scene_text->has_value() ? option<std::string_view>(std::string_view(scene_text->value()))
-                                                 : nullopt;
-  const auto target = resolve_scene(editor, scene_ref);
+  const auto target = resolve_scene(editor, args);
   if (!target) {
     return McpResult::error(target.error());
   }
@@ -738,7 +719,7 @@ auto register_editor_tools(McpServer& server) -> void {
       .input_schema = SchemaBuilder{}
                         .string("entity", "entity path or #id", false)
                         .string("file", "project-relative file path", false)
-                        .string("scene", "scene id from scene_list or 'active', default active", false)
+                        .scene()
                         .build(),
       .is_idempotent = true,
       .handler = editor_select,

@@ -2,8 +2,6 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Character/Character.h>
-#include <Jolt/Physics/Collision/CastResult.h>
-#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
@@ -21,9 +19,6 @@
 #include "Scene/Scene.hpp"
 
 namespace ox {
-// a ray longer than this is as good as unbounded, and keeps an infinite distance out of jolt's math
-constexpr auto MAX_RAY_DISTANCE = 100'000.0f;
-
 static auto scenes = ankerl::unordered_dense::map<ecs_world_t*, Scene*>{};
 
 static auto to_jolt(const OxVec3& v) -> JPH::Vec3 { return JPH::Vec3(v.x, v.y, v.z); }
@@ -76,61 +71,31 @@ static auto vehicle_constraint_of(ecs_world_t* world, u64 entity) -> JPH::Vehicl
   return vehicle ? static_cast<JPH::VehicleConstraint*>(vehicle->runtime_constraint) : nullptr;
 }
 
-class LayerMaskFilter final : public JPH::ObjectLayerFilter {
-public:
-  explicit LayerMaskFilter(u32 mask) : mask_(mask) {}
-
-  auto ShouldCollide(JPH::ObjectLayer layer) const -> bool override {
-    return layer < 32 && ((mask_ >> layer) & 1) != 0;
-  }
-
-private:
-  u32 mask_ = 0;
-};
-
-class IgnoreBodyFilter final : public JPH::BodyFilter {
-public:
-  explicit IgnoreBodyFilter(JPH::BodyID ignored) : ignored_(ignored) {}
-
-  auto ShouldCollide(const JPH::BodyID& body) const -> bool override { return body != ignored_; }
-
-private:
-  JPH::BodyID ignored_ = {};
-};
-
 static auto physics_raycast(ecs_world_t* world, const OxRay* ray, OxRayHit* hit) -> bool {
   ZoneScoped;
 
   *hit = {};
-  auto* physics = physics_of(world);
-  const auto direction = to_jolt(ray->direction);
-  if (!physics || direction.LengthSq() < 1.0e-12f) {
+  auto* scene = scene_of(world);
+  if (!scene) {
     return false;
   }
 
-  const auto distance = std::isfinite(ray->max_distance) && ray->max_distance > 0.0f
-                          ? std::min(ray->max_distance, MAX_RAY_DISTANCE)
-                          : MAX_RAY_DISTANCE;
-  const auto cast = JPH::RRayCast(to_jolt(ray->origin), direction.Normalized() * distance);
-  auto result = JPH::RayCastResult();
-  const auto layer_filter = LayerMaskFilter(ray->layer_mask);
-  const auto body_filter = IgnoreBodyFilter(body_of(world, ray->ignore_entity));
-  if (!physics->GetNarrowPhaseQuery().CastRay(cast, result, {}, layer_filter, body_filter)) {
+  const auto found = scene->raycast(
+    glm::vec3(ray->origin.x, ray->origin.y, ray->origin.z),
+    glm::vec3(ray->direction.x, ray->direction.y, ray->direction.z),
+    ray->max_distance,
+    ray->layer_mask,
+    ray->ignore_entity
+  );
+  if (!found) {
     return false;
   }
 
-  const auto point = cast.GetPointOnRay(result.mFraction);
-  const auto lock = JPH::BodyLockRead(physics->GetBodyLockInterface(), result.mBodyID);
-  if (!lock.Succeeded()) {
-    return false;
-  }
-
-  const auto& body = lock.GetBody();
   *hit = OxRayHit{
-    .entity = body.GetUserData(),
-    .point = to_ox(point),
-    .distance = result.mFraction * distance,
-    .normal = to_ox(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point)),
+    .entity = found->entity,
+    .point = OxVec3{.x = found->point.x, .y = found->point.y, .z = found->point.z},
+    .distance = found->distance,
+    .normal = OxVec3{.x = found->normal.x, .y = found->normal.y, .z = found->normal.z},
   };
   return true;
 }

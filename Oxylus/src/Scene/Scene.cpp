@@ -5,6 +5,7 @@
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/Character.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -182,6 +183,41 @@ static auto unlink_skinned_mesh(Scene& scene, flecs::entity entity) -> void {
     mesh_instance->transform_id = transform_it->second;
   }
   scene.meshes_dirty = true;
+}
+
+class LayerMaskFilter final : public JPH::ObjectLayerFilter {
+public:
+  explicit LayerMaskFilter(u32 mask) : mask_(mask) {}
+
+  auto ShouldCollide(JPH::ObjectLayer layer) const -> bool override {
+    return layer < 32 && ((mask_ >> layer) & 1) != 0;
+  }
+
+private:
+  u32 mask_ = 0;
+};
+
+class IgnoreBodyFilter final : public JPH::BodyFilter {
+public:
+  explicit IgnoreBodyFilter(JPH::BodyID ignored) : ignored_(ignored) {}
+
+  auto ShouldCollide(const JPH::BodyID& body) const -> bool override { return body != ignored_; }
+
+private:
+  JPH::BodyID ignored_ = {};
+};
+
+static auto rigid_body_id(const flecs::world& world, const flecs::entity_t entity) -> JPH::BodyID {
+  if (entity == 0 || !world.is_alive(entity)) {
+    return {};
+  }
+
+  const auto* rigid_body = world.entity(entity).try_get<RigidBodyComponent>();
+  if (!rigid_body || !rigid_body->runtime_body) {
+    return {};
+  }
+
+  return static_cast<const JPH::Body*>(rigid_body->runtime_body)->GetID();
 }
 
 static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
@@ -1972,15 +2008,44 @@ auto Scene::get_physics_system(this const Scene& self) -> JPH::PhysicsSystem* {
   return self.physics_system.get();
 }
 
-auto Scene::cast_ray(this const Scene& self, const RayCast& ray_cast)
-  -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> {
+auto Scene::raycast(
+  this const Scene& self,
+  const glm::vec3 origin,
+  const glm::vec3 direction,
+  const f32 max_distance,
+  const u32 layer_mask,
+  const flecs::entity_t ignore_entity
+) -> option<RayHit> {
   ZoneScoped;
 
-  JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector> collector;
-  const JPH::RayCast ray{math::to_jolt(ray_cast.get_origin()), math::to_jolt(ray_cast.get_direction())};
-  self.physics_system->GetBroadPhaseQuery().CastRay(ray, collector);
+  const auto length = glm::length(direction);
+  if (!self.physics_system || !(length > 1.0e-6f)) {
+    return nullopt;
+  }
 
-  return collector;
+  const auto distance = std::isfinite(max_distance) && max_distance > 0.0f ? ox::min(max_distance, MAX_RAY_DISTANCE)
+                                                                           : MAX_RAY_DISTANCE;
+  const auto ray = JPH::RRayCast(math::to_jolt(origin), math::to_jolt(direction / length * distance));
+  const auto layer_filter = LayerMaskFilter(layer_mask);
+  const auto body_filter = IgnoreBodyFilter(rigid_body_id(self.world, ignore_entity));
+  auto result = JPH::RayCastResult();
+  if (!self.physics_system->GetNarrowPhaseQuery().CastRay(ray, result, {}, layer_filter, body_filter)) {
+    return nullopt;
+  }
+
+  const auto point = ray.GetPointOnRay(result.mFraction);
+  const auto lock = JPH::BodyLockRead(self.physics_system->GetBodyLockInterface(), result.mBodyID);
+  if (!lock.Succeeded()) {
+    return nullopt;
+  }
+
+  const auto& body = lock.GetBody();
+  return RayHit{
+    .entity = body.GetUserData(),
+    .point = math::from_jolt(JPH::Vec3(point)),
+    .normal = math::from_jolt(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point)),
+    .distance = result.mFraction * distance,
+  };
 }
 
 auto Scene::defer_function(this Scene& self, const std::function<void(Scene* scene)>& func) -> void {

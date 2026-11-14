@@ -15,6 +15,7 @@
 #include "Asset/Texture.hpp"
 #include "Core/Types.hpp"
 #include "Core/UUID.hpp"
+#include "Utils/AsyncResult.hpp"
 
 namespace ox {
 class Scene;
@@ -31,13 +32,6 @@ struct ThumbnailPrewarmProgress {
   usize completed = 0;
   usize total = 0;
   std::string current = {};
-};
-
-struct ThumbnailCapture {
-  std::atomic<bool> is_done = false;
-  // both are written before is_done is released
-  std::string png = {};
-  std::string error = {};
 };
 
 class ThumbnailManager {
@@ -74,12 +68,9 @@ public:
   ) -> TextureView;
 
   // renders `uuid` at `size` on a later frame and encodes it as a PNG, models and materials on the GPU, textures from
-  // their source file. Poll `is_done`
-  auto capture_png(this ThumbnailManager& self, const UUID& uuid, u32 size) -> std::shared_ptr<ThumbnailCapture>;
-
-  // RGBA8 pixels as PNG file contents, empty when encoding failed
-  auto encode_capture_png(this ThumbnailManager& self, std::span<const u8> pixels, u32 width, u32 height)
-    -> std::string;
+  // their source file
+  auto capture_png(this ThumbnailManager& self, const UUID& uuid, u32 size)
+    -> std::shared_ptr<AsyncResult<std::string>>;
 
   auto thumbnail_unavailable(this ThumbnailManager& self, const std::filesystem::path& asset_path) -> bool;
 
@@ -100,7 +91,7 @@ private:
   struct PendingCapture {
     UUID asset_uuid = UUID(nullptr);
     u32 size = 0;
-    std::shared_ptr<ThumbnailCapture> capture = {};
+    std::shared_ptr<AsyncResult<std::string>> capture = {};
   };
 
   struct PendingUpload {
@@ -150,7 +141,6 @@ private:
   std::queue<PendingRender> pending_renders = {};
   std::queue<PendingUpload> pending_uploads = {};
   std::queue<PendingCapture> pending_captures = {};
-  std::atomic<u32> capture_counter = 0;
 
   ankerl::unordered_dense::map<std::filesystem::path, UUID> material_uuids = {};
   std::shared_mutex material_uuids_mutex = {};

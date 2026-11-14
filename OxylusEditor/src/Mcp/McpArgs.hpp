@@ -1,6 +1,8 @@
 #pragma once
 
 #include <expected>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
 #include <simdjson.h>
 #include <string>
 #include <string_view>
@@ -29,6 +31,13 @@ struct McpArgs {
 
   auto boolean(this const McpArgs& self, std::string_view key) -> std::expected<bool, std::string>;
   auto opt_boolean(this const McpArgs& self, std::string_view key) -> std::expected<option<bool>, std::string>;
+
+  auto opt_vec2(this const McpArgs& self, std::string_view key) -> std::expected<option<glm::vec2>, std::string>;
+  auto opt_vec3(this const McpArgs& self, std::string_view key) -> std::expected<option<glm::vec3>, std::string>;
+  auto vec3(this const McpArgs& self, std::string_view key) -> std::expected<glm::vec3, std::string>;
+
+  // 0 when absent
+  auto cursor(this const McpArgs& self) -> std::expected<usize, std::string>;
 
   auto object(this const McpArgs& self, std::string_view key) -> std::expected<McpArgs, std::string>;
   auto array(this const McpArgs& self, std::string_view key) -> std::expected<simdjson::dom::array, std::string>;

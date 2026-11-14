@@ -45,6 +45,8 @@ struct SchemaBuilder {
   auto boolean(this SchemaBuilder self, std::string_view name, std::string_view description, bool is_required)
     -> SchemaBuilder;
 
+  auto scene(this SchemaBuilder self, std::string_view fallback = "the active scene") -> SchemaBuilder;
+
   // raw_schema is a complete schema object like {"type":"object",...}
   auto object(
     this SchemaBuilder self,

@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <charconv>
 #include <filesystem>
 #include <fmt/format.h>
 #include <string>
@@ -16,40 +15,12 @@
 #include "Mcp/McpSchema.hpp"
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
+#include "Memory/Stack.hpp"
 #include "Panels/ContentPanel.hpp"
 
 namespace ox {
 constexpr static i64 LIST_DEFAULT_LIMIT = 200;
 constexpr static i64 LIST_MAX_LIMIT = 5000;
-
-static auto file_type_name(FileType type) -> std::string_view {
-  switch (type) {
-    case FileType::Unknown       : return "Unknown";
-    case FileType::Directory     : return "Directory";
-    case FileType::Meta          : return "Meta";
-    case FileType::Scene         : return "Scene";
-    case FileType::Prefab        : return "Prefab";
-    case FileType::Shader        : return "Shader";
-    case FileType::Texture       : return "Texture";
-    case FileType::Model         : return "Model";
-    case FileType::Audio         : return "Audio";
-    case FileType::Material      : return "Material";
-    case FileType::Terrain       : return "Terrain";
-    case FileType::ParticleSystem: return "ParticleSystem";
-    case FileType::Cinematic     : return "Cinematic";
-    case FileType::UI            : return "UI";
-    case FileType::CSharp        : return "CSharp";
-    case FileType::Font          : return "Font";
-  }
-
-  return "Unknown";
-}
-
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
 
 static auto is_hidden(const std::filesystem::path& path) -> bool {
   const auto name = path.filename().string();
@@ -73,7 +44,7 @@ static auto file_list(Editor& editor, const McpArgs& args) -> McpResult {
   const auto recursive_arg = args.opt_boolean("recursive");
   const auto meta_arg = args.opt_boolean("show_meta");
   const auto limit_arg = args.opt_integer("limit");
-  const auto cursor_arg = args.opt_str("cursor");
+  const auto cursor_arg = args.cursor();
   if (!path_arg || !recursive_arg || !meta_arg || !limit_arg || !cursor_arg) {
     return McpResult::error(
       !path_arg        ? path_arg.error()
@@ -104,17 +75,7 @@ static auto file_list(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(fmt::format("'{}' is not a folder", project_relative_text(editor, root)));
   }
 
-  usize skip = 0;
-  if (cursor_arg->has_value()) {
-    const auto text = cursor_arg->value();
-    u64 value = 0;
-    const auto [end, parse_error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (parse_error != std::errc{} || end != text.data() + text.size()) {
-      return McpResult::error("argument 'cursor': not a cursor returned by this tool");
-    }
-
-    skip = static_cast<usize>(value);
-  }
+  const auto skip = cursor_arg.value();
 
   const auto limit = static_cast<usize>(std::clamp<i64>(limit_arg->value_or(LIST_DEFAULT_LIMIT), 1, LIST_MAX_LIMIT));
   const auto is_showing_meta = meta_arg->value_or(false);
@@ -125,13 +86,14 @@ static auto file_list(Editor& editor, const McpArgs& args) -> McpResult {
     std::string line = {};
   };
 
+  memory::ScopedStack stack;
   std::vector<Row> rows;
   const auto add_entry = [&](const std::filesystem::directory_entry& entry) {
     std::error_code entry_error;
     const auto is_directory = entry.is_directory(entry_error);
     const auto path_text = project_relative_text(editor, entry.path());
     if (is_directory) {
-      rows.push_back({.sort_key = "0" + lower(path_text), .line = path_text + "/"});
+      rows.push_back({.sort_key = "0" + std::string(stack.to_lower(path_text)), .line = path_text + "/"});
       return;
     }
 
@@ -139,24 +101,22 @@ static auto file_list(Editor& editor, const McpArgs& args) -> McpResult {
       return;
     }
 
-    const auto size = entry.file_size(entry_error);
-    auto line = fmt::format(
-      "{} {} {}",
-      path_text,
-      entry_error ? 0 : size,
-      file_type_name(classify_file_type(entry.path()))
-    );
-
     auto asset_path = entry.path();
     if (asset_path.extension() == ".oxasset") {
       asset_path.replace_extension();
     }
 
-    if (const auto uuid = asset_man.find_asset(asset_path); uuid) {
-      line += " " + uuid.str();
-    }
+    const auto uuid = asset_man.find_asset(asset_path);
+    const auto size = entry.file_size(entry_error);
+    auto line = fmt::format(
+      "{} {} {} {}",
+      path_text,
+      entry_error ? 0 : size,
+      uuid ? uuid.str() : std::string("-"),
+      file_type_label(classify_file_type(entry.path()))
+    );
 
-    rows.push_back({.sort_key = "1" + lower(path_text), .line = std::move(line)});
+    rows.push_back({.sort_key = "1" + std::string(stack.to_lower(path_text)), .line = std::move(line)});
   };
 
   if (recursive_arg->value_or(false)) {
@@ -360,7 +320,8 @@ auto register_file_tools(McpServer& server) -> void {
       .name = "file_list",
       .title = "List files",
       .description = "Lists the asset directory or a folder in it. One line per entry: 'dir/' for folders, 'file size "
-                     "Type [uuid]' for files, with the uuid of the asset registered for the file. Folders come first, "
+                     "uuid type' for files, the uuid of the asset registered for the file or '-', and the type last "
+                     "since it can contain spaces. Folders come first, "
                      ".oxasset sidecars are hidden unless show_meta. Paths are project-relative. 'next_cursor N' ends "
                      "a truncated listing.",
       .input_schema = SchemaBuilder{}

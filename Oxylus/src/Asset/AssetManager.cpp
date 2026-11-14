@@ -13,6 +13,7 @@
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
 #include "Utils/Log.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 // without an app (the engine tests) nothing is mounted and every path stays physical
@@ -159,6 +160,19 @@ auto AssetManager::to_asset_type_sv(AssetType type) -> std::string_view {
     case AssetType::UI            : return "UI";
     default                       : return {};
   }
+}
+
+auto AssetManager::from_asset_type_sv(const std::string_view name) -> option<AssetType> {
+  ZoneScoped;
+
+  for (u32 i = 0; i < ASSET_TYPE_COUNT; i++) {
+    const auto type = static_cast<AssetType>(i);
+    if (StringUtils::iequals(to_asset_type_sv(type), name)) {
+      return type;
+    }
+  }
+
+  return nullopt;
 }
 
 auto AssetManager::create_asset(this AssetManager& self, const AssetType type, const std::filesystem::path& path)
@@ -673,9 +687,9 @@ auto AssetManager::load_asset_impl(
         const auto* info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
       }
-      case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
-      case AssetType::Audio         : return static_cast<u64>(self.load_audio(asset_path));
-      case AssetType::Script        : {
+      case AssetType::Scene : return static_cast<u64>(self.load_scene(asset_path));
+      case AssetType::Audio : return static_cast<u64>(self.load_audio(asset_path));
+      case AssetType::Script: {
         OX_LOG_WARN("Can't load asset {}, Lua script assets are no longer supported", uuid.str());
         return ~0_u64;
       }

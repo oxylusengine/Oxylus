@@ -20,7 +20,8 @@ class EditorScene;
 // the `scene` argument as text, accepting a string or an integer
 auto scene_arg(const McpArgs& args) -> std::expected<option<std::string>, std::string>;
 
-auto resolve_scene(Editor& editor, option<std::string_view> arg) -> std::expected<EditorScene*, std::string>;
+// the active scene when the argument is absent, null or 'active'
+auto resolve_scene(Editor& editor, const McpArgs& args) -> std::expected<EditorScene*, std::string>;
 
 // what the hierarchy shows: a transform and no Hidden tag. Everything else in the world is invisible to MCP
 auto is_scene_entity(flecs::entity entity) -> bool;
@@ -30,6 +31,8 @@ auto scene_children(flecs::entity entity) -> std::vector<flecs::entity>;
 // `#1234` is a flecs id, anything else is a path `A/B/C` of exact names
 auto resolve_entity(Scene& scene, std::string_view ref) -> std::expected<flecs::entity, std::string>;
 
+// empty for an unnamed entity
+auto entity_name(flecs::entity entity) -> std::string;
 auto entity_path(flecs::entity entity) -> std::string;
 auto entity_ref_text(flecs::entity entity) -> std::string;
 

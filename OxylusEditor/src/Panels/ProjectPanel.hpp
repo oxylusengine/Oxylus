@@ -19,6 +19,7 @@ public:
 
   // bring the launcher back when a load fails after the loading panel takes over
   auto show_error(this ProjectPanel& self, std::string message) -> void;
+  auto close_launcher(this ProjectPanel& self) -> void;
 
 private:
   bool creating_project = false;

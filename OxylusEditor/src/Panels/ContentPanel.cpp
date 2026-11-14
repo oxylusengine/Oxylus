@@ -124,16 +124,11 @@ static auto format_modified_time(const std::filesystem::file_time_type modified_
   const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
     modified_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
   );
-  const auto time = std::chrono::system_clock::to_time_t(system_time);
-  std::tm local_time = {};
-#if defined(_WIN32)
-  if (localtime_s(&local_time, &time) != 0)
+  const auto local_time = os::local_time(std::chrono::system_clock::to_time_t(system_time));
+  if (!local_time.has_value())
     return "—";
-#else
-  if (localtime_r(&time, &local_time) == nullptr)
-    return "—";
-#endif
-  return fmt::format("{:%Y-%m-%d %H:%M}", local_time);
+
+  return fmt::format("{:%Y-%m-%d %H:%M}", local_time.value());
 }
 
 static const ankerl::unordered_dense::map<FileType, const char*> FILE_TYPES_TO_STRING = {
@@ -255,7 +250,7 @@ static constexpr u32 ALL_FILTER_TYPES_MASK = [] {
   return mask;
 }();
 
-static auto file_type_label(const FileType type) -> const char* {
+auto file_type_label(const FileType type) -> const char* {
   const auto it = FILE_TYPES_TO_STRING.find(type);
   return it != FILE_TYPES_TO_STRING.end() ? it->second : "Unknown";
 }

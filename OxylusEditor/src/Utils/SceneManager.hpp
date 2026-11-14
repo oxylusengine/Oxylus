@@ -50,6 +50,9 @@ public:
   auto load_default_scene(this SceneManager& self, SceneID scene_id) -> void;
 
   auto get_scene(this const SceneManager& self, SceneID scene_id) -> std::shared_ptr<EditorScene>;
+  auto find_scene(this const SceneManager& self, SceneID scene_id) -> EditorScene*;
+  auto find_play_scene(this SceneManager& self, SceneID source) -> EditorScene*;
+  auto find_edit_scene(this SceneManager& self, const std::filesystem::path& path) -> EditorScene*;
 
   template <typename Fn>
   auto for_each_scene(this SceneManager& self, Fn&& fn) -> void {

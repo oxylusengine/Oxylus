@@ -23,8 +23,8 @@
 #endif
 
 namespace ox {
-struct SaveStatus;
-struct CookStatus;
+template <typename T>
+struct AsyncResult;
 
 class Editor {
 public:
@@ -95,14 +95,16 @@ public:
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
 
-  auto new_scene(this Editor& self) -> void;
+  auto new_scene(this Editor& self) -> EditorScene*;
 
   // Loads the scene from the path and appends the scene to the first viewport panel
-  auto open_scene(const std::filesystem::path& path) -> bool;
+  auto open_scene(this Editor& self, const std::filesystem::path& path) -> std::expected<EditorScene*, std::string>;
 
   auto open_scene_file_dialog() -> void;
   auto save_scene() -> void;
   auto save_scene_as() -> void;
+  auto save_scene_to(this Editor& self, EditorScene& scene, option<std::filesystem::path> path)
+    -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string>;
 
   auto get_context() -> EditorContext& { return editor_context; }
 
@@ -118,13 +120,10 @@ public:
   auto set_docking_layout(this Editor& self, EditorLayout layout) -> void;
   auto reset_current_docking_layout() -> void;
 
-  // the status is finished once the file is written, nullptr when nobody waits for it
-  static auto submit_scene_save(EditorScene* scene, std::filesystem::path path, std::shared_ptr<SaveStatus> status)
-    -> void;
-
-  // refuses when a cook is already running or no assets are mounted, the status finishes when the cook does
-  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder, std::shared_ptr<CookStatus> status)
-    -> std::expected<void, std::string>;
+  // refuses when a cook is already running or no assets are mounted, the result is the output folder once the cook
+  // finishes
+  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder)
+    -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string>;
 
 private:
   // Context

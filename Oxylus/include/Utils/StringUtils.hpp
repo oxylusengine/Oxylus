@@ -1,5 +1,11 @@
 #pragma once
 
+#include <algorithm>
+#include <charconv>
+#include <string>
+#include <string_view>
+
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -31,6 +37,31 @@ constexpr std::string escape_str(std::string_view str) {
   }
 
   return r;
+}
+
+constexpr auto ascii_lower(const c8 c) -> c8 { return c >= 'A' && c <= 'Z' ? static_cast<c8>(c - 'A' + 'a') : c; }
+
+// ASCII only
+constexpr auto iequals(std::string_view a, std::string_view b) -> bool {
+  return std::ranges::equal(a, b, {}, ascii_lower, ascii_lower);
+}
+
+// ASCII only, an empty needle is always found
+constexpr auto icontains(std::string_view haystack, std::string_view needle) -> bool {
+  return needle.empty() || !std::ranges::search(haystack, needle, {}, ascii_lower, ascii_lower).empty();
+}
+
+// the whole text has to be the number
+template <typename T>
+auto parse_integer(std::string_view text) -> option<T> {
+  auto value = T{};
+  const auto* end = text.data() + text.size();
+  const auto [ptr, error] = std::from_chars(text.data(), end, value);
+  if (text.empty() || error != std::errc() || ptr != end) {
+    return nullopt;
+  }
+
+  return value;
 }
 
 inline void replace_string(std::string& subject, std::string_view search, std::string_view replace) {

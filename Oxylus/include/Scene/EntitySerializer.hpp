@@ -1,15 +1,18 @@
 #pragma once
 
+#include <ankerl/svector.h>
 #include <flecs.h>
 #include <string_view>
 #include <variant>
 
 #include "Core/Types.hpp"
+#include "Core/UUID.hpp"
 #include "Utils/JsonWriter.hpp"
 
 namespace ox {
 struct IEntitySerializer {
   flecs::world& world;
+  flecs::entity component_type = flecs::entity::null();
 
   using Primitive = std::variant<bool*, c8*, i8*, u8*, i16*, u16*, i32*, u32*, i64*, u64*, f32*, f64*>;
   IEntitySerializer(flecs::world& world_) : world(world_) {}
@@ -45,4 +48,11 @@ struct JsonEntitySerializer : IEntitySerializer {
   ) -> void override;
 };
 
+struct UuidField {
+  usize offset = 0;
+  UUID uuid = {};
+};
+
+// nested structs included
+auto collect_uuid_fields(flecs::world& world, flecs::entity type, const void* value) -> ankerl::svector<UuidField, 4>;
 } // namespace ox

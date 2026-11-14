@@ -1,7 +1,6 @@
 #include "Mcp/McpComponentCodec.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <flecs/addons/meta.h>
@@ -12,12 +11,13 @@
 #include <type_traits>
 #include <utility>
 
-#include "Actions/AssetActions.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Mcp/McpRefs.hpp"
 #include "Memory/Stack.hpp"
+#include "Scene/ComponentRegistry.hpp"
 #include "Scene/EntitySerializer.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 struct IntLayout {
@@ -53,12 +53,6 @@ struct PatchContext {
 };
 
 using PatchResult = std::expected<void, std::string>;
-
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
 
 static auto layout_of(ecs_primitive_kind_t kind) -> option<IntLayout> {
   switch (kind) {
@@ -343,32 +337,6 @@ struct McpJsonSerializer : IEntitySerializer {
   }
 };
 
-struct AssetCollector : IEntitySerializer {
-  std::vector<UUID>& out;
-  flecs::entity_t uuid_type = 0;
-
-  AssetCollector(flecs::world& world_, std::vector<UUID>& out_)
-      : IEntitySerializer(world_),
-        out(out_),
-        uuid_type(world_.entity<UUID>().id()) {}
-
-  auto on_struct(std::string_view, flecs::meta::op_t* ops, i32 op_count, void* base) -> void override {
-    serialize_ops(ops + 1, op_count - 1, base);
-  }
-
-  auto on_opaque_value(std::string_view, flecs::entity_t field_type, void* field_ptr, flecs::entity_t, const void*)
-    -> void override {
-    if (field_type != uuid_type) {
-      return;
-    }
-
-    const auto& uuid = *static_cast<const UUID*>(field_ptr);
-    if (uuid) {
-      out.push_back(uuid);
-    }
-  }
-};
-
 auto component_to_json(JsonWriter& writer, flecs::world& world, flecs::id component, const void* data) -> void {
   ZoneScoped;
 
@@ -378,17 +346,6 @@ auto component_to_json(JsonWriter& writer, flecs::world& world, flecs::id compon
     serializer.serialize(flecs::entity(world, component.raw_id()), const_cast<void*>(data));
   }
   writer.end_obj();
-}
-
-auto collect_asset_fields(flecs::world& world, flecs::id component, const void* data, std::vector<UUID>& out) -> void {
-  ZoneScoped;
-
-  if (data == nullptr) {
-    return;
-  }
-
-  auto collector = AssetCollector(world, out);
-  collector.serialize(flecs::entity(world, component.raw_id()), const_cast<void*>(data));
 }
 
 static auto json_type_name(simdjson::dom::element_type type) -> std::string_view {
@@ -819,9 +776,9 @@ static auto patch_enum(
 
   const EnumConstant* match = nullptr;
   if (value.type() == simdjson::dom::element_type::STRING) {
-    const auto text = lower(std::string_view(value));
+    const auto text = std::string_view(value);
     for (const auto& constant : constants) {
-      if (lower(constant.name) == text) {
+      if (StringUtils::iequals(constant.name, text)) {
         match = &constant;
         break;
       }
@@ -902,7 +859,8 @@ static auto patch_uuid(
     return std::unexpected(fmt::format("{}: {}", path, asset.error()));
   }
 
-  const auto expected_type = expected_asset_type(field_name);
+  const auto expected_type = is_top_level ? asset_field_type(flecs::entity(ctx.world, ctx.component), field_name)
+                                          : AssetType::None;
   if (expected_type != AssetType::None) {
     auto actual_type = AssetType::None;
     {
@@ -1126,7 +1084,12 @@ auto patch_component(
 }
 
 static auto write_field_schema(
-  JsonWriter& writer, Scene& scene, std::string_view name, flecs::entity_t type, option<simdjson::dom::element> defaults
+  JsonWriter& writer,
+  Scene& scene,
+  flecs::entity_t owner,
+  std::string_view name,
+  flecs::entity_t type,
+  option<simdjson::dom::element> defaults
 ) -> void;
 
 static auto write_struct_fields(
@@ -1156,7 +1119,7 @@ static auto write_struct_fields(
         continue;
       }
 
-      write_field_schema(writer, scene, members[i].name, members[i].type, member_default);
+      write_field_schema(writer, scene, type, members[i].name, members[i].type, member_default);
     }
   }
 
@@ -1164,7 +1127,12 @@ static auto write_struct_fields(
 }
 
 static auto write_field_schema(
-  JsonWriter& writer, Scene& scene, std::string_view name, flecs::entity_t type, option<simdjson::dom::element> defaults
+  JsonWriter& writer,
+  Scene& scene,
+  flecs::entity_t owner,
+  std::string_view name,
+  flecs::entity_t type,
+  option<simdjson::dom::element> defaults
 ) -> void {
   auto& world = scene.world;
 
@@ -1180,7 +1148,7 @@ static auto write_field_schema(
 
   if (type == world.entity<UUID>().id()) {
     writer["type"] = "uuid";
-    if (const auto asset_type = expected_asset_type(name); asset_type != AssetType::None) {
+    if (const auto asset_type = asset_field_type(flecs::entity(world, owner), name); asset_type != AssetType::None) {
       writer["asset_type"] = AssetManager::to_asset_type_sv(asset_type);
     }
     write_default();

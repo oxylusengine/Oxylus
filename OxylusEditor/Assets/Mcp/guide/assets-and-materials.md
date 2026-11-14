@@ -7,7 +7,7 @@ Referencing assets
 
 Moving files
 - Never move, rename or delete asset files with a shell. `file_move`, `file_rename` and `file_delete` carry the `.oxasset` sidecar and the registry with the file, so uuids and every reference to them survive. `file_delete` refuses while a loaded asset under the path is still in use, `force` deletes the files anyway, assets still in use then stay registered until the editor restarts.
-- `file_list` shows `file size Type uuid`, `file_mkdir` creates folders, `file_open` does what a double-click does.
+- `file_list` shows `file size uuid type`, with `-` for a file that is not an asset, `file_mkdir` creates folders, `file_open` does what a double-click does.
 
 Importing
 - `asset_import {path}` imports a source file inside the asset directory right away and returns its uuid. It runs on the editor thread, so a big model stalls the editor until it finishes.

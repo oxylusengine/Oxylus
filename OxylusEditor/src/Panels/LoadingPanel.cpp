@@ -89,7 +89,9 @@ LoadingPanel::LoadingPanel() : EditorPanelState("Loading", ICON_MDI_TIMER_SAND, 
 auto LoadingPanel::begin(this LoadingPanel& self, std::filesystem::path project_file_) -> void {
   // whatever the last open queued is about to be replaced, and its paths point into a project that
   // is being torn down
-  App::mod<Editor>().thumbnail_manager.cancel_prewarm();
+  auto& editor = App::mod<Editor>();
+  editor.thumbnail_manager.cancel_prewarm();
+  editor.editor_panel_registry.get<ProjectPanel>().close_launcher();
 
   self.project_file = std::move(project_file_);
   self.project_name = self.project_file.stem().string();

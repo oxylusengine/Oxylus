@@ -318,13 +318,7 @@ static auto scene_scripts_failed(EditTransaction& tx, std::string_view what) -> 
 static auto scene_scripts(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto scene_text = scene_arg(args);
-  if (!scene_text) {
-    return McpResult::error(scene_text.error());
-  }
-
-  const auto text = scene_text->has_value() ? option<std::string_view>(std::string_view(scene_text->value())) : nullopt;
-  const auto resolved = resolve_scene(editor, text);
+  const auto resolved = resolve_scene(editor, args);
   if (!resolved) {
     return McpResult::error(resolved.error());
   }
@@ -531,7 +525,7 @@ auto register_script_tools(McpServer& server) -> void {
                      "step, but undoing a remove creates a fresh script and a removed script's runtime state is not "
                      "restored. If any name fails, everything the call did is undone.",
       .input_schema = SchemaBuilder{}
-                        .string("scene", "scene id from editor_state or 'active', default active", false)
+                        .scene()
                         .array("add", "SceneBehaviour type names to add", NAME_ITEM, false)
                         .array("remove", "type names to remove", NAME_ITEM, false)
                         .build(),

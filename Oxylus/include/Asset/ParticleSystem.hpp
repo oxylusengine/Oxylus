@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <expected>
 #include <filesystem>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -17,6 +18,8 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+struct JsonWriter;
+
 enum class ParticleSystemID : u64 { Invalid = std::numeric_limits<u64>::max() };
 
 using ParticleEmissionShape = GPU::ParticleEmissionShape;
@@ -125,7 +128,9 @@ struct ParticleSystem {
   static auto make_default() -> ParticleSystem;
 
   static auto read(const std::filesystem::path& path) -> option<ParticleSystem>;
+  static auto from_json(std::string_view json) -> std::expected<ParticleSystem, std::string>;
   auto write(this const ParticleSystem& self, const std::filesystem::path& path) -> bool;
+  auto to_json(this const ParticleSystem& self, JsonWriter& writer) -> void;
 
   auto recompile(this ParticleSystem& self) -> void;
   auto destroy(this ParticleSystem& self) -> void;

@@ -34,6 +34,7 @@
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
+#include "Utils/Png.hpp"
 #include "Utils/ThumbnailCamera.hpp"
 
 namespace ox {
@@ -343,15 +344,6 @@ static auto render_audio_preview(const AudioPeaks& peaks, u32 size) -> std::vect
   return pixels;
 }
 
-static auto write_thumbnail_png(const std::filesystem::path& path, std::span<const u8> pixels, u32 size) -> void {
-  ZoneScoped;
-
-  // color_rgba is laid out r, g, b, a, the same RGBA8 the thumbnail pixels are in
-  auto image = basisu::image(size, size);
-  std::memcpy(image.get_ptr(), pixels.data(), ox::min(pixels.size_bytes(), static_cast<usize>(size) * size * 4));
-  basisu::save_png(path.string().c_str(), image);
-}
-
 // A compiled texture is block compressed, so a preview cannot be resampled out of it. The smallest
 // mip that still covers the thumbnail becomes the preview's level 0 instead, which keeps a 4K source
 // from costing its full size in VRAM for a content browser icon.
@@ -560,7 +552,7 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("ContentPanelThumbnail_WritePNG");
     job_man.submit(Job::create([expected_png = render_job->expected_png, pixel_bytes = *pixels]() {
-      write_thumbnail_png(expected_png, pixel_bytes, THUMBNAIL_SIZE);
+      write_png(expected_png, pixel_bytes, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     }));
     job_man.pop_job_name();
   }
@@ -569,10 +561,10 @@ auto ThumbnailManager::update(this ThumbnailManager& self) -> void {
 }
 
 auto ThumbnailManager::capture_png(this ThumbnailManager& self, const UUID& uuid, const u32 size)
-  -> std::shared_ptr<ThumbnailCapture> {
+  -> std::shared_ptr<AsyncResult<std::string>> {
   ZoneScoped;
 
-  auto capture = std::make_shared<ThumbnailCapture>();
+  auto capture = std::make_shared<AsyncResult<std::string>>();
 
   auto lock = std::unique_lock(self.queue_mutex);
   self.pending_captures.push({.asset_uuid = uuid, .size = size, .capture = capture});
@@ -580,42 +572,17 @@ auto ThumbnailManager::capture_png(this ThumbnailManager& self, const UUID& uuid
   return capture;
 }
 
-auto ThumbnailManager::encode_capture_png(
-  this ThumbnailManager& self, const std::span<const u8> pixels, const u32 width, const u32 height
-) -> std::string {
-  ZoneScoped;
-
-  auto image = basisu::image(width, height);
-  std::memcpy(image.get_ptr(), pixels.data(), ox::min(pixels.size_bytes(), static_cast<usize>(width) * height * 4));
-
-  const auto path = self.cache_dir / fmt::format("capture_{}.png", self.capture_counter.fetch_add(1));
-  if (!basisu::save_png(path.string().c_str(), image)) {
-    return {};
-  }
-
-  auto png = File::to_string(path);
-  std::error_code error;
-  std::filesystem::remove(path, error);
-
-  return png;
-}
-
 auto ThumbnailManager::run_capture(this ThumbnailManager& self, const PendingCapture& request) -> void {
   ZoneScoped;
 
   auto& capture = *request.capture;
-  const auto fail = [&capture](std::string message) {
-    capture.error = std::move(message);
-    capture.is_done.store(true, std::memory_order_release);
-  };
-
   auto& asset_man = App::mod<AssetManager>();
   auto type = AssetType::None;
   auto source_path = std::filesystem::path{};
   {
     const auto asset = asset_man.get_asset(request.asset_uuid);
     if (!asset) {
-      return fail("the asset is no longer registered");
+      return capture.fail("the asset is no longer registered");
     }
 
     type = asset->type;
@@ -627,74 +594,57 @@ auto ThumbnailManager::run_capture(this ThumbnailManager& self, const PendingCap
     case AssetType::Model   :
     case AssetType::Material: {
       if (type == AssetType::Material && !self.acquire_asset(request.asset_uuid)) {
-        return fail("the material could not be loaded");
+        return capture.fail("the material could not be loaded");
       }
 
       const auto pixels = type == AssetType::Model ? self.render_model_thumbnail(request.asset_uuid, size)
                                                    : self.render_material_thumbnail(request.asset_uuid, size);
       self.release_asset(request.asset_uuid);
       if (!pixels.has_value() || pixels->empty()) {
-        return fail("the render failed, log_read has the reason");
+        return capture.fail("the render failed, see the log");
       }
 
-      capture.png = self.encode_capture_png(*pixels, size, size);
-      if (capture.png.empty()) {
-        return fail("the PNG could not be encoded");
+      auto png = encode_png(*pixels, size, size);
+      if (png.empty()) {
+        return capture.fail("the PNG could not be encoded");
       }
 
-      capture.is_done.store(true, std::memory_order_release);
+      capture.finish(std::move(png));
     } break;
     case AssetType::Texture: {
       if (source_path.empty() || !std::filesystem::exists(source_path)) {
-        return fail("the texture has no source file of its own to preview, it is embedded in another asset");
+        return capture.fail("the texture has no source file of its own to preview, it is embedded in another asset");
       }
 
       auto& job_man = App::get_job_manager();
-      job_man.push_job_name("McpThumbnail_Texture");
-      job_man.submit(Job::create([&self, request, source_path, size]() {
-        auto& result = *request.capture;
-        const auto fail_job = [&result](std::string message) {
-          result.error = std::move(message);
-          result.is_done.store(true, std::memory_order_release);
-        };
-
+      job_man.push_job_name("ThumbnailCapture_Texture");
+      job_man.submit(Job::create([result = request.capture, source_path, size]() {
         basisu::basisu_encoder_init();
 
-        auto image = basisu::image{};
-        if (!basisu::load_image(source_path.string().c_str(), image) || image.get_width() == 0) {
-          return fail_job("the source file is not a PNG, JPEG, BMP or TGA image that can be decoded");
+        auto source = basisu::image{};
+        if (!basisu::load_image(source_path.string().c_str(), source) || source.get_width() == 0) {
+          return result->fail("the source file is not a PNG, JPEG, BMP or TGA image that can be decoded");
         }
 
-        const auto scale = ox::min(
-          1.0f,
-          static_cast<f32>(size) / static_cast<f32>(ox::max(image.get_width(), image.get_height()))
-        );
-        const auto target_w = ox::max(1_u32, static_cast<u32>(static_cast<f32>(image.get_width()) * scale));
-        const auto target_h = ox::max(1_u32, static_cast<u32>(static_cast<f32>(image.get_height()) * scale));
-        if (target_w != image.get_width() || target_h != image.get_height()) {
-          auto resized = basisu::image(target_w, target_h);
-          if (!basisu::image_resample(image, resized, true)) {
-            return fail_job("the image could not be resized");
-          }
+        auto image = RgbaImage{
+          .pixels = std::vector<u8>(static_cast<usize>(source.get_total_pixels()) * 4),
+          .width = source.get_width(),
+          .height = source.get_height(),
+        };
+        std::memcpy(image.pixels.data(), source.get_ptr(), image.pixels.size());
+        image = downscale_rgba(std::move(image), size);
 
-          image = std::move(resized);
+        auto png = encode_png(image.pixels, image.width, image.height);
+        if (png.empty()) {
+          return result->fail("the PNG could not be encoded");
         }
 
-        const auto pixels = std::span<const u8>(
-          reinterpret_cast<const u8*>(image.get_ptr()),
-          static_cast<usize>(image.get_width()) * image.get_height() * 4
-        );
-        result.png = self.encode_capture_png(pixels, image.get_width(), image.get_height());
-        if (result.png.empty()) {
-          return fail_job("the PNG could not be encoded");
-        }
-
-        result.is_done.store(true, std::memory_order_release);
+        result->finish(std::move(png));
       }));
       job_man.pop_job_name();
     } break;
     default: {
-      fail(
+      capture.fail(
         fmt::format(
           "{} assets have no thumbnail, models, materials and textures do",
           AssetManager::to_asset_type_sv(type)
@@ -1273,7 +1223,7 @@ auto ThumbnailManager::get_thumbnail_terrain(this ThumbnailManager& self, const 
       return;
     }
 
-    write_thumbnail_png(expected_png, pixels, THUMBNAIL_SIZE);
+    write_png(expected_png, pixels, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
 
     auto lock = std::unique_lock(self.queue_mutex);
     self.pending_uploads.push({.cache_key = asset_hash, .pixels = std::move(pixels)});
@@ -1323,7 +1273,7 @@ auto ThumbnailManager::get_thumbnail_audio(this ThumbnailManager& self, const st
       return;
     }
 
-    write_thumbnail_png(expected_png, pixels, THUMBNAIL_SIZE);
+    write_png(expected_png, pixels, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
 
     auto lock = std::unique_lock(self.queue_mutex);
     self.pending_uploads.push({.cache_key = asset_hash, .pixels = std::move(pixels)});

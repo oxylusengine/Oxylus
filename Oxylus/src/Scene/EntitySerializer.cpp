@@ -3,9 +3,49 @@
 #include <flecs/addons/meta.h>
 
 namespace ox {
+struct UuidCollector : IEntitySerializer {
+  const u8* base = nullptr;
+  flecs::entity_t uuid_type = 0;
+  ankerl::svector<UuidField, 4> fields = {};
+
+  UuidCollector(flecs::world& world_, const void* base_)
+      : IEntitySerializer(world_),
+        base(static_cast<const u8*>(base_)),
+        uuid_type(world_.entity<UUID>().id()) {}
+
+  auto on_struct(std::string_view, flecs::meta::op_t* ops, i32 op_count, void* struct_base) -> void override {
+    serialize_ops(ops + 1, op_count - 1, struct_base);
+  }
+
+  auto on_opaque_value(std::string_view, flecs::entity_t field_type, void* field_ptr, flecs::entity_t, const void*)
+    -> void override {
+    if (field_type != uuid_type) {
+      return;
+    }
+
+    fields.push_back(
+      {.offset = static_cast<usize>(static_cast<const u8*>(field_ptr) - base), .uuid = *static_cast<UUID*>(field_ptr)}
+    );
+  }
+};
+
+auto collect_uuid_fields(flecs::world& world, const flecs::entity type, const void* value)
+  -> ankerl::svector<UuidField, 4> {
+  ZoneScoped;
+
+  if (value == nullptr || type.id() == 0) {
+    return {};
+  }
+
+  auto collector = UuidCollector(world, value);
+  collector.serialize(type, const_cast<void*>(value));
+  return std::move(collector.fields);
+}
+
 auto IEntitySerializer::serialize(flecs::entity type, void* component) -> void {
   ZoneScoped;
 
+  component_type = type;
   if (type.has<flecs::TypeSerializer>()) {
     const auto& ts = type.get<flecs::TypeSerializer>();
     auto* ops = ecs_vec_first_t(&ts.ops, flecs::meta::op_t);

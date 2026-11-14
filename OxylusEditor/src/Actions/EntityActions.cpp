@@ -1,11 +1,13 @@
 #include "Actions/EntityActions.hpp"
 
+#include <algorithm>
 #include <ankerl/svector.h>
 #include <glm/trigonometric.hpp>
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Editor.hpp"
+#include "Memory/Stack.hpp"
 
 namespace ox {
 static auto is_live(flecs::entity entity) -> bool { return entity.id() != 0 && entity.is_alive(); }
@@ -19,21 +21,9 @@ static auto entity_label(flecs::entity entity) -> std::string {
 
 static auto component_label(flecs::id component) -> std::string { return std::string(component.str().c_str()); }
 
-static auto default_name(EntityPreset preset) -> std::string_view {
-  switch (preset) {
-    case EntityPreset::Empty         : return "entity";
-    case EntityPreset::Sprite        : return "sprite";
-    case EntityPreset::Camera        : return "camera";
-    case EntityPreset::Light         : return "light";
-    case EntityPreset::Sun           : return "sun";
-    case EntityPreset::Terrain       : return "terrain";
-    case EntityPreset::ProbeVolume   : return "probe_volume";
-    case EntityPreset::AudioSource   : return "audio_source";
-    case EntityPreset::AudioListener : return "audio_listener";
-    case EntityPreset::ParticleSystem: return "particle_system";
-  }
-
-  return "entity";
+static auto default_name(const EntityPreset preset) -> std::string_view {
+  const auto info = std::ranges::find(ENTITY_PRESETS, preset, &EntityPresetInfo::preset);
+  return info != ENTITY_PRESETS.end() ? info->entity_name : "entity";
 }
 
 static auto apply_preset(flecs::entity entity, EntityPreset preset) -> void {
@@ -91,13 +81,24 @@ static auto collect_missing_colliders(flecs::entity entity, ankerl::svector<flec
   return has_mesh;
 }
 
-auto is_entity_name_free(const Scene& scene, flecs::entity entity, std::string_view name) -> bool {
-  const auto name_cstr = std::string(name);
-  const auto parent = entity.parent();
-  const auto taken_by = parent.id() != 0 ? parent.lookup(name_cstr.c_str()).id()
-                                         : scene.world.lookup(name_cstr.c_str()).id();
+auto entity_name_error(const Scene& scene, const flecs::entity entity, const std::string_view name) -> std::string {
+  if (name.empty()) {
+    return "An entity name can't be empty";
+  }
 
-  return taken_by == 0 || taken_by == entity.id();
+  if (name.contains('/')) {
+    return fmt::format("Entity name '{}' can't contain '/'", name);
+  }
+
+  memory::ScopedStack stack;
+  const auto* name_cstr = stack.null_terminate_cstr(name);
+  const auto parent = entity.parent();
+  const auto taken_by = parent.id() != 0 ? parent.lookup(name_cstr).id() : scene.world.lookup(name_cstr).id();
+  if (taken_by != 0 && taken_by != entity.id()) {
+    return fmt::format("The name '{}' is already used by a sibling", name);
+  }
+
+  return {};
 }
 
 auto EditTransaction::record(this EditTransaction& self, std::unique_ptr<Command> command) -> void {
@@ -315,23 +316,16 @@ auto rename_entity(EditTransaction& tx, flecs::entity entity, std::string_view n
     return std::unexpected("The entity no longer exists");
   }
 
-  if (name.empty()) {
-    return std::unexpected("An entity name can't be empty");
-  }
-
-  if (name.contains('/')) {
-    return std::unexpected(fmt::format("Entity name '{}' can't contain '/'", name));
-  }
-
   const auto old_name = std::string(entity.name().c_str());
   if (old_name == name) {
     return {};
   }
 
-  const auto new_name = std::string(name);
-  if (!is_entity_name_free(tx.scene, entity, new_name)) {
-    return std::unexpected(fmt::format("The name '{}' is already used by a sibling", name));
+  if (auto problem = entity_name_error(tx.scene, entity, name); !problem.empty()) {
+    return std::unexpected(std::move(problem));
   }
+
+  const auto new_name = std::string(name);
 
   auto command = std::make_unique<EntityRenameCommand>(
     &tx.scene,
@@ -374,6 +368,23 @@ auto set_entity_enabled(EditTransaction& tx, flecs::entity entity, bool is_enabl
   return {};
 }
 
+// the change is already applied, this only records it
+static auto record_component(
+  EditTransaction& tx, flecs::entity entity, flecs::id component, ComponentSnapshot before, std::string label
+) -> void {
+  tx.record(
+    std::make_unique<ComponentSnapshotCommand>(
+      &tx.scene,
+      remap_of(tx),
+      entity,
+      component.raw_id(),
+      std::move(before),
+      ComponentSnapshot::of(entity, component.raw_id()),
+      std::move(label)
+    )
+  );
+}
+
 auto add_component(EditTransaction& tx, flecs::entity entity, flecs::id component) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -386,15 +397,7 @@ auto add_component(EditTransaction& tx, flecs::entity entity, flecs::id componen
   }
 
   entity.add(component);
-  tx.record(
-    std::make_unique<ComponentAddCommand>(
-      &tx.scene,
-      remap_of(tx),
-      entity,
-      component.raw_id(),
-      fmt::format("add {}", component_label(component))
-    )
-  );
+  record_component(tx, entity, component, {}, fmt::format("add {}", component_label(component)));
 
   return {};
 }
@@ -415,15 +418,9 @@ auto remove_component(EditTransaction& tx, flecs::entity entity, flecs::id compo
     return std::unexpected(fmt::format("'{}' has no {}", entity_label(entity), component_label(component)));
   }
 
-  auto command = std::make_unique<ComponentRemoveCommand>(
-    &tx.scene,
-    remap_of(tx),
-    entity,
-    component.raw_id(),
-    fmt::format("remove {}", component_label(component))
-  );
-  command->execute();
-  tx.record(std::move(command));
+  auto before = ComponentSnapshot::of(entity, component.raw_id());
+  entity.remove(component);
+  record_component(tx, entity, component, std::move(before), fmt::format("remove {}", component_label(component)));
 
   return {};
 }
@@ -440,26 +437,14 @@ auto reset_component(EditTransaction& tx, flecs::entity entity, flecs::id compon
     return std::unexpected(fmt::format("'{}' has no {}", entity_label(entity), component_label(component)));
   }
 
-  auto remove_command = std::make_unique<ComponentRemoveCommand>(
-    &tx.scene,
-    remap_of(tx),
-    entity,
-    component.raw_id(),
-    fmt::format("reset {}", component_label(component))
-  );
-  remove_command->execute();
-  tx.record(std::move(remove_command));
-
+  // two steps so undo removes the fresh component before restoring the old one, writing the old bytes over it
+  // would hand back runtime handles (physics bodies) the remove already destroyed
+  const auto label = fmt::format("reset {}", component_label(component));
+  auto before = ComponentSnapshot::of(entity, component.raw_id());
+  entity.remove(component);
+  record_component(tx, entity, component, std::move(before), label);
   entity.add(component);
-  tx.record(
-    std::make_unique<ComponentAddCommand>(
-      &tx.scene,
-      remap_of(tx),
-      entity,
-      component.raw_id(),
-      fmt::format("reset {}", component_label(component))
-    )
-  );
+  record_component(tx, entity, component, {}, label);
 
   return {};
 }
@@ -476,38 +461,13 @@ auto paste_component(EditTransaction& tx, flecs::entity source, flecs::entity de
     return std::unexpected(fmt::format("'{}' has no {}", entity_label(source), component_label(component)));
   }
 
-  auto copied = ComponentBytes::copy_of(source, component.raw_id());
-
+  auto before = ComponentSnapshot::of(destination, component.raw_id());
   if (!destination.has(component)) {
     destination.add(component);
-    tx.record(
-      std::make_unique<ComponentAddCommand>(
-        &tx.scene,
-        remap_of(tx),
-        destination,
-        component.raw_id(),
-        fmt::format("paste {}", component_label(component))
-      )
-    );
   }
 
-  if (copied.is_empty()) {
-    return {};
-  }
-
-  auto before = ComponentBytes::copy_of(destination, component.raw_id());
-  write_component_bytes(destination, component.raw_id(), copied);
-  tx.record(
-    std::make_unique<ComponentSnapshotCommand>(
-      &tx.scene,
-      remap_of(tx),
-      destination,
-      component.raw_id(),
-      std::move(before),
-      std::move(copied),
-      fmt::format("paste {}", component_label(component))
-    )
-  );
+  write_component_bytes(destination, component.raw_id(), ComponentBytes::copy_of(source, component.raw_id()));
+  record_component(tx, destination, component, std::move(before), fmt::format("paste {}", component_label(component)));
 
   return {};
 }
@@ -525,20 +485,16 @@ auto add_mesh_colliders(EditTransaction& tx, flecs::entity entity) -> std::expec
     return std::unexpected(fmt::format("'{}' has no meshes", entity_label(entity)));
   }
 
-  const auto collider_id = entity.world().id<MeshColliderComponent>();
+  auto& world = tx.scene.world;
+  const auto collider_id = flecs::id(world, world.id<MeshColliderComponent>());
   for (auto mesh_entity : missing) {
     mesh_entity.add<MeshColliderComponent>();
-    tx.record(
-      std::make_unique<ComponentAddCommand>(&tx.scene, remap_of(tx), mesh_entity, collider_id, "add mesh collider")
-    );
+    record_component(tx, mesh_entity, collider_id, {}, "add mesh collider");
   }
 
   if (!entity.has<RigidBodyComponent>()) {
     entity.set<RigidBodyComponent>({.type = RigidBodyComponent::Static});
-    tx.record(
-      std::make_unique<
-        ComponentAddCommand>(&tx.scene, remap_of(tx), entity, entity.world().id<RigidBodyComponent>(), "add rigid body")
-    );
+    record_component(tx, entity, flecs::id(world, world.id<RigidBodyComponent>()), {}, "add rigid body");
   }
 
   return {};
@@ -562,16 +518,12 @@ auto apply_component_snapshot(
   }
 
   write_component_bytes(entity, component.raw_id(), after);
-  tx.record(
-    std::make_unique<ComponentSnapshotCommand>(
-      &tx.scene,
-      remap_of(tx),
-      entity,
-      component.raw_id(),
-      std::move(before),
-      std::move(after),
-      fmt::format("edit {}", component_label(component))
-    )
+  record_component(
+    tx,
+    entity,
+    component,
+    {.is_present = true, .bytes = std::move(before)},
+    fmt::format("edit {}", component_label(component))
   );
 
   return {};

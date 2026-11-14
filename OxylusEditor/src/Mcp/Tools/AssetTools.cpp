@@ -1,7 +1,5 @@
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <charconv>
 #include <cmath>
 #include <fmt/format.h>
 #include <memory>
@@ -12,6 +10,8 @@
 #include "Actions/AssetActions.hpp"
 #include "Actions/FileActions.hpp"
 #include "Asset/AssetImporter.hpp"
+#include "Asset/AssetManager.hpp"
+#include "Cinematic/Cinematic.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
@@ -22,6 +22,7 @@
 #include "Mcp/McpTools.hpp"
 #include "Render/Utils/TextureFormat.hpp"
 #include "Utils/JsonWriter.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static i64 LIST_DEFAULT_LIMIT = 200;
@@ -31,7 +32,6 @@ constexpr static i64 THUMBNAIL_MAX_SIZE = 1024;
 constexpr static u32 THUMBNAIL_TIMEOUT_MS = 30000;
 constexpr static u32 IMPORT_TIMEOUT_MS = 300000;
 constexpr static u32 LOAD_TIMEOUT_MS = 120000;
-constexpr static auto ASSET_TYPE_COUNT = std::to_underlying(AssetType::UI) + 1;
 
 enum class PatchKind : u8 { Number, Bool, Vec2, Vec3, Vec4, Enum, Texture };
 
@@ -61,24 +61,6 @@ constexpr static std::array<PatchField, 17> MATERIAL_FIELDS = {{
   {"occlusion_texture", PatchKind::Texture, 0},
 }};
 
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
-
-static auto parse_asset_type(std::string_view name) -> option<AssetType> {
-  const auto wanted = lower(name);
-  for (u32 i = 0; i < ASSET_TYPE_COUNT; i++) {
-    const auto type = static_cast<AssetType>(i);
-    if (lower(AssetManager::to_asset_type_sv(type)) == wanted) {
-      return type;
-    }
-  }
-
-  return nullopt;
-}
-
 static auto asset_type_names() -> std::vector<std::string> {
   std::vector<std::string> names;
   for (u32 i = 0; i < ASSET_TYPE_COUNT; i++) {
@@ -86,26 +68,6 @@ static auto asset_type_names() -> std::vector<std::string> {
   }
 
   return names;
-}
-
-static auto parse_cursor(const McpArgs& args) -> std::expected<usize, std::string> {
-  const auto cursor_arg = args.opt_str("cursor");
-  if (!cursor_arg) {
-    return std::unexpected(cursor_arg.error());
-  }
-
-  if (!cursor_arg->has_value()) {
-    return usize{0};
-  }
-
-  const auto text = cursor_arg->value();
-  u64 value = 0;
-  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-  if (error != std::errc{} || end != text.data() + text.size()) {
-    return std::unexpected("argument 'cursor': not a cursor returned by this tool");
-  }
-
-  return static_cast<usize>(value);
 }
 
 static auto asset_path_text(Editor& editor, const Asset& asset) -> std::string {
@@ -171,14 +133,14 @@ static auto asset_list(Editor& editor, const McpArgs& args) -> McpResult {
     );
   }
 
-  const auto cursor = parse_cursor(args);
+  const auto cursor = args.cursor();
   if (!cursor) {
     return McpResult::error(cursor.error());
   }
 
   auto type_filter = option<AssetType>(nullopt);
   if (type_arg->has_value()) {
-    type_filter = parse_asset_type(type_arg->value());
+    type_filter = AssetManager::from_asset_type_sv(type_arg->value());
     if (!type_filter) {
       return McpResult::error(fmt::format("argument 'type': unknown asset type '{}'", type_arg->value()));
     }
@@ -307,17 +269,24 @@ static auto asset_get(Editor& editor, const McpArgs& args) -> McpResult {
       }
 
       if (is_known) {
-        writer["material"];
-        writer.raw(material_json(*uuid, material));
+        writer.key("material");
+        rc::write_material_asset_meta(writer, *uuid, material);
       }
     } break;
     case AssetType::ParticleSystem:
     case AssetType::Cinematic     : {
-      if (is_loaded) {
-        if (const auto document = asset_document(*uuid)) {
-          writer["document"];
-          writer.raw(*document);
+      if (!is_loaded) {
+        break;
+      }
+
+      if (asset.type == AssetType::ParticleSystem) {
+        if (const auto system = asset_man.get_particle_system(*uuid)) {
+          writer.key("document");
+          system->to_json(writer);
         }
+      } else if (const auto cinematic = asset_man.get_cinematic(*uuid)) {
+        writer.key("document");
+        cinematic->to_json(writer);
       }
     } break;
     case AssetType::Model: {
@@ -401,7 +370,7 @@ static auto asset_create(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(!type_arg ? type_arg.error() : path_arg.error());
   }
 
-  const auto type = parse_asset_type(*type_arg);
+  const auto type = AssetManager::from_asset_type_sv(*type_arg);
   if (!type) {
     return McpResult::error(fmt::format("argument 'type': unknown asset type '{}'", *type_arg));
   }
@@ -411,7 +380,7 @@ static auto asset_create(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(fmt::format("argument 'path': {}", path.error()));
   }
 
-  const auto created = create_asset(editor, *type, *path);
+  const auto created = create_asset_file(editor, path->parent_path(), *type, path->filename().string());
   if (!created) {
     return McpResult::error(created.error());
   }
@@ -575,12 +544,16 @@ static auto patch_material(Editor& editor, const UUID& uuid, const McpArgs& patc
     return McpResult::error(updated.error());
   }
 
+  JsonWriter writer{};
+  writer.is_pretty = false;
+  rc::write_material_asset_meta(writer, uuid, material);
+
   return McpResult::ok(
     fmt::format(
       "updated {}: {}\nnot saved to disk yet, asset_save writes it\n{}",
       uuid.str(),
       applied,
-      material_json(uuid, material)
+      writer.stream.view()
     )
   );
 }
@@ -629,14 +602,14 @@ static auto asset_update(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(loaded.error());
   }
 
-  if (const auto set = set_asset_document(editor, *uuid, document_arg->value()); !set) {
+  if (const auto set = set_asset_document(*uuid, document_arg->value()); !set) {
     return McpResult::error(set.error());
   }
 
   return McpResult::ok(
     fmt::format(
       "replaced the {} document of {}, not saved to disk yet, asset_save writes it",
-      lower(AssetManager::to_asset_type_sv(type)),
+      AssetManager::to_asset_type_sv(type),
       uuid->str()
     )
   );
@@ -726,15 +699,15 @@ static auto asset_thumbnail(Editor& editor, const McpArgs& args) -> McpResult {
   const auto
     caption = fmt::format("{} {} at up to {}x{}", uuid->str(), AssetManager::to_asset_type_sv(type), size, size);
   return McpResult::pending([capture, caption]() -> option<McpResult> {
-    if (!capture->is_done.load(std::memory_order_acquire)) {
+    if (!capture->is_ready()) {
       return nullopt;
     }
 
-    if (!capture->error.empty()) {
-      return McpResult::error(capture->error);
+    if (!capture->result) {
+      return McpResult::error(capture->result.error());
     }
 
-    return McpResult::image(std::move(capture->png), caption);
+    return McpResult::image(std::move(*capture->result), caption);
   });
 }
 

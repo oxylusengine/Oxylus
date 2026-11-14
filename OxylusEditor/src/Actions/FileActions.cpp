@@ -580,7 +580,7 @@ auto open_file(Editor& editor, const std::filesystem::path& path) -> std::expect
 
   switch (classify_file_type(path)) {
     case FileType::Scene: {
-      const auto opened = open_scene(editor, path);
+      const auto opened = editor.open_scene(path);
       if (!opened) {
         return std::unexpected(opened.error());
       }
@@ -596,7 +596,7 @@ auto open_file(Editor& editor, const std::filesystem::path& path) -> std::expect
       // `open_asset` loads it and holds the ref for as long as the panel shows it
       const auto uuid = import_asset(App::mod<AssetManager>(), path);
       if (!uuid) {
-        return std::unexpected(fmt::format("could not import {}, log_read has the reason", path.string()));
+        return std::unexpected(fmt::format("could not import {}, see the log", path.string()));
       }
 
       editor.editor_panel_registry.get<ParticleEditorPanel>().open_asset(uuid);
@@ -605,7 +605,7 @@ auto open_file(Editor& editor, const std::filesystem::path& path) -> std::expect
     case FileType::Cinematic: {
       const auto uuid = import_asset(App::mod<AssetManager>(), path);
       if (!uuid) {
-        return std::unexpected(fmt::format("could not import {}, log_read has the reason", path.string()));
+        return std::unexpected(fmt::format("could not import {}, see the log", path.string()));
       }
 
       editor.editor_panel_registry.get<CinematicEditorPanel>().open_asset(uuid);

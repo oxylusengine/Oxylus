@@ -103,11 +103,32 @@ auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self)
 auto MainViewportPanel::find_viewport(this const MainViewportPanel& self, const EditorScene* scene) -> ViewportPanel* {
   ZoneScoped;
 
+  if (scene == nullptr) {
+    return nullptr;
+  }
+
   for (const auto* list : {&self.viewport_panels, &self.pending_viewports}) {
     for (const auto& viewport : *list) {
       if (viewport != nullptr && viewport->get_scene() == scene) {
         return viewport.get();
       }
+    }
+  }
+
+  return nullptr;
+}
+
+auto MainViewportPanel::preferred_viewport(this const MainViewportPanel& self) -> ViewportPanel* {
+  ZoneScoped;
+
+  auto* focused = self.get_focused_viewport();
+  if (focused != nullptr && focused->get_scene() != nullptr) {
+    return focused;
+  }
+
+  for (const auto& viewport : self.viewport_panels) {
+    if (viewport != nullptr && viewport->visible && viewport->get_scene() != nullptr) {
+      return viewport.get();
     }
   }
 

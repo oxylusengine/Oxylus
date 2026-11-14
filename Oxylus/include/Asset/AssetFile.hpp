@@ -3,6 +3,7 @@
 #include <array>
 #include <filesystem>
 #include <span>
+#include <utility>
 #include <vir/ShaderLayout.hpp>
 #include <zpp_bits.h>
 
@@ -42,6 +43,13 @@ enum class AssetType : u32 {
   Cinematic,
   UI,
 };
+
+constexpr static u32 ASSET_TYPE_COUNT = std::to_underlying(AssetType::UI) + 1;
+
+constexpr auto is_exportable(const AssetType type) -> bool {
+  return type == AssetType::Material || type == AssetType::ParticleSystem || type == AssetType::Cinematic ||
+         type == AssetType::Scene || type == AssetType::Terrain;
+}
 
 struct NoneAsset {
   using serialize_id = zpp::bits::serialization_id<AssetType::None>;

@@ -496,8 +496,13 @@ code lives in `OxylusEditor/src/Mcp/`: `McpHttp.cpp` is the only file that inclu
 JSON-RPC and the MCP methods, and tools sit in `Mcp/Tools/*.cpp`. `OxylusMcpBridge/` builds `oxmcp`, a stdio proxy
 to that endpoint with `--launch` and `--selftest`, and it must never link the engine.
 
-- **Every editor operation reachable from the UI lives in an action** in `OxylusEditor/src/Actions/` that both the
-  panel and the MCP tool call. A new panel feature or tool does not carry its own copy of the logic.
+- **One copy of every operation, on the type that owns it.** Panels and tools call the same code. Scene lookups
+  belong on `SceneManager`, opening and saving scenes on `Editor`, camera, gizmo, pick and capture on
+  `ViewportPanel`, raycasts on `Scene`, serialization on the asset type. `OxylusEditor/src/Actions/` holds only
+  multi-step edits that no single type owns, such as undoable entity and component edits, file moves that carry
+  sidecars, project creation and play/stop. Never add a function that only forwards to another one. Before
+  writing a helper, look for an existing one in the engine and extend it.
+- Action errors are shown to the person in the editor too, so they never name MCP tools. Tools add MCP hints.
 - **Tools run on the main thread** in `McpServer::pump`, at the top of `Editor::update`. The HTTP thread only parses
   and queues, never touches the scene. Work that outlasts a frame returns `McpResult::pending` with a poll.
 - **Scene mutations go through `EditTransaction`** so they land in the undo history as one step.

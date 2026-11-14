@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ctime>
 #include <expected>
 #include <filesystem>
 #include <span>
@@ -8,6 +9,7 @@
 #include <thread>
 
 #include "Core/Enum.hpp" // IWYU pragma: export
+#include "Core/Option.hpp"
 #include "Core/Types.hpp"
 
 namespace ox {
@@ -48,7 +50,11 @@ auto set_thread_name(std::string_view name) -> void;
 auto set_thread_name(std::thread::native_handle_type thread, std::string_view name) -> void;
 
 // Process
+auto process_id() -> i64;
 auto spawn_detached(std::span<const std::string_view> args) -> std::expected<void, std::string>;
+
+// Time
+auto local_time(std::time_t time) -> option<std::tm>;
 
 // IO
 auto open_folder_select_file(const std::filesystem::path& path) -> void;

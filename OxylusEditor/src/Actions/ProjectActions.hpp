@@ -1,9 +1,7 @@
 #pragma once
 
-#include <atomic>
 #include <expected>
 #include <filesystem>
-#include <memory>
 #include <string>
 #include <string_view>
 
@@ -11,16 +9,6 @@
 
 namespace ox {
 class Editor;
-
-struct CookStatus {
-  std::atomic<bool> is_done = false;
-  std::atomic<bool> is_ok = false;
-  // written before is_done is released
-  std::string error = {};
-  std::filesystem::path output = {};
-};
-
-auto finish_cook(CookStatus& status, bool is_ok, const std::filesystem::path& output) -> void;
 
 // empty when the form is fine, otherwise what is wrong with it
 auto validate_new_project_form(std::string_view location, std::string_view name, std::string_view asset_directory)
@@ -36,6 +24,4 @@ auto new_project(
 // start_scene is relative to the asset folder
 auto set_project(Editor& editor, option<std::string_view> name, option<std::string_view> start_scene)
   -> std::expected<void, std::string>;
-auto cook_project(Editor& editor, const std::filesystem::path& folder)
-  -> std::expected<std::shared_ptr<CookStatus>, std::string>;
 } // namespace ox

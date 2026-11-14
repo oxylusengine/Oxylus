@@ -73,18 +73,12 @@ ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_FOLDER_OPEN
 auto ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void {
   ZoneScoped;
 
-  auto& editor = App::mod<Editor>();
-
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(filepath, error)) {
-    OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", filepath);
-    editor.editor_cvar.remove_recent_project(filepath);
-    self.panel_error = "That project file no longer exists and was removed from the recent list";
-    return;
+  if (const auto opened = open_project(App::mod<Editor>(), filepath); !opened) {
+    self.panel_error = opened.error();
   }
+}
 
-  // let the loading panel paint before the directory walk starts
-  editor.editor_panel_registry.get<LoadingPanel>().begin(filepath);
+auto ProjectPanel::close_launcher(this ProjectPanel& self) -> void {
   self.panel_error.clear();
   self.creating_project = false;
   self.close_requested = true;
@@ -106,13 +100,15 @@ auto ProjectPanel::new_project(
 ) -> bool {
   ZoneScoped;
 
-  if (!ox::new_project(App::mod<Editor>(), project_location, project_name, project_asset_dir)) {
+  if (
+    const auto created = ox::new_project(App::mod<Editor>(), project_location, project_name, project_asset_dir);
+    !created
+  ) {
+    self.panel_error = created.error();
     return false;
   }
 
-  self.panel_error.clear();
-  self.creating_project = false;
-  self.close_requested = true;
+  self.close_launcher();
   return true;
 }
 

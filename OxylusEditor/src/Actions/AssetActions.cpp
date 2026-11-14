@@ -1,57 +1,18 @@
 #include "Actions/AssetActions.hpp"
 
-#include <atomic>
 #include <fmt/format.h>
 #include <simdjson.h>
 #include <tracy/Tracy.hpp>
 
 #include "Actions/FileActions.hpp"
 #include "Asset/AssetImporter.hpp"
+#include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
-#include "OS/File.hpp"
-#include "Utils/JsonWriter.hpp"
 
 namespace ox {
-static auto document_temp_path(const UUID& uuid) -> std::filesystem::path {
-  static std::atomic<u32> counter = 0;
-  return std::filesystem::temp_directory_path() / fmt::format("oxmcp_{}_{}.json", uuid.str(), counter.fetch_add(1));
-}
-
-// Components only carry a UUID, and nothing in the reflection says which kind of asset a field
-// points at, so an empty field is matched by the name the component gave it. A field that already
-// holds something uses the type of what it holds instead.
-auto expected_asset_type(const std::string_view field_name) -> AssetType {
-  const auto has = [field_name](const std::string_view needle) {
-    return field_name.find(needle) != std::string_view::npos;
-  };
-
-  if (has("skeleton"))
-    return AssetType::Skeleton;
-  if (has("clip") || has("animation"))
-    return AssetType::Animation;
-  if (has("cinematic"))
-    return AssetType::Cinematic;
-  if (has("model"))
-    return AssetType::Model;
-  if (has("material"))
-    return AssetType::Material;
-  if (has("texture") || has("layer_") || has("lut"))
-    return AssetType::Texture;
-  if (has("audio") || has("sound"))
-    return AssetType::Audio;
-  if (has("particle"))
-    return AssetType::ParticleSystem;
-  if (has("terrain"))
-    return AssetType::Terrain;
-  if (has("scene") || has("prefab"))
-    return AssetType::Scene;
-
-  return AssetType::None;
-}
-
 auto import_file(Editor&, const std::filesystem::path& path) -> std::expected<UUID, std::string> {
   ZoneScoped;
 
@@ -70,17 +31,10 @@ auto import_file(Editor&, const std::filesystem::path& path) -> std::expected<UU
 
   const auto uuid = import_asset(App::mod<AssetManager>(), path);
   if (!uuid) {
-    return std::unexpected(fmt::format("importing {} failed, log_read has the reason", path.string()));
+    return std::unexpected(fmt::format("importing {} failed, see the log", path.string()));
   }
 
   return uuid;
-}
-
-auto create_asset(Editor& editor, const AssetType type, const std::filesystem::path& path)
-  -> std::expected<CreatedAsset, std::string> {
-  ZoneScoped;
-
-  return create_asset_file(editor, path.parent_path(), type, path.filename().string());
 }
 
 auto save_asset(Editor& editor, const UUID& uuid) -> std::expected<std::filesystem::path, std::string> {
@@ -103,15 +57,9 @@ auto save_asset(Editor& editor, const UUID& uuid) -> std::expected<std::filesyst
     has_source = !asset->source_path.empty();
   }
 
-  const auto is_saveable = type == AssetType::Material || type == AssetType::ParticleSystem ||
-                           type == AssetType::Cinematic || type == AssetType::Scene || type == AssetType::Terrain;
-  if (!is_saveable) {
+  if (!is_exportable(type)) {
     return std::unexpected(
-      fmt::format(
-        "{} assets are not saved from the editor, only materials, particle systems, cinematics, scenes and terrain "
-        "are",
-        AssetManager::to_asset_type_sv(type)
-      )
+      fmt::format("{} assets can't be saved from the editor", AssetManager::to_asset_type_sv(type))
     );
   }
 
@@ -120,11 +68,11 @@ auto save_asset(Editor& editor, const UUID& uuid) -> std::expected<std::filesyst
   }
 
   if (!is_loaded) {
-    return std::unexpected("the asset is not loaded, so there is nothing to save, asset_load it first");
+    return std::unexpected("the asset is not loaded, so there is nothing to save");
   }
 
   if (!export_asset(asset_man, uuid, path)) {
-    return std::unexpected(fmt::format("saving {} failed, log_read has the reason", path.string()));
+    return std::unexpected(fmt::format("saving {} failed, see the log", path.string()));
   }
 
   if (type == AssetType::Material) {
@@ -134,22 +82,12 @@ auto save_asset(Editor& editor, const UUID& uuid) -> std::expected<std::filesyst
   return path;
 }
 
-auto material_json(const UUID& uuid, const Material& material) -> std::string {
-  ZoneScoped;
-
-  JsonWriter writer{};
-  writer.is_pretty = false;
-  rc::write_material_asset_meta(writer, uuid, material);
-
-  return writer.stream.str();
-}
-
 auto update_material(Editor& editor, const UUID& uuid, const Material& material) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
   if (!asset_man.is_loaded(uuid)) {
-    return std::unexpected("the material is not loaded, asset_load it first");
+    return std::unexpected("the material is not loaded");
   }
 
   if (!asset_man.set_material(uuid, material)) {
@@ -161,53 +99,7 @@ auto update_material(Editor& editor, const UUID& uuid, const Material& material)
   return {};
 }
 
-auto asset_document(const UUID& uuid) -> std::expected<std::string, std::string> {
-  ZoneScoped;
-
-  auto& asset_man = App::mod<AssetManager>();
-  auto type = AssetType::None;
-  {
-    const auto asset = asset_man.get_asset(uuid);
-    if (!asset) {
-      return std::unexpected(fmt::format("{} is not a registered asset", uuid.str()));
-    }
-
-    type = asset->type;
-  }
-
-  if (type != AssetType::ParticleSystem && type != AssetType::Cinematic) {
-    return std::unexpected("only particle systems and cinematics have a document");
-  }
-
-  const auto temp_path = document_temp_path(uuid);
-  auto is_written = false;
-  if (type == AssetType::ParticleSystem) {
-    const auto system = asset_man.get_particle_system(uuid);
-    is_written = system && system->write(temp_path);
-  } else {
-    const auto cinematic = asset_man.get_cinematic(uuid);
-    is_written = cinematic && cinematic->write(temp_path);
-  }
-
-  if (!is_written) {
-    return std::unexpected("the asset is not loaded, asset_load it first");
-  }
-
-  const auto text = File::to_string(temp_path);
-  std::error_code error;
-  std::filesystem::remove(temp_path, error);
-
-  simdjson::dom::parser parser;
-  simdjson::dom::element element;
-  if (const auto parsed = parser.parse(text).get(element); parsed) {
-    return std::unexpected(fmt::format("the document could not be read back: {}", simdjson::error_message(parsed)));
-  }
-
-  return simdjson::minify(element);
-}
-
-auto set_asset_document(Editor&, const UUID& uuid, const std::string_view document)
-  -> std::expected<void, std::string> {
+auto set_asset_document(const UUID& uuid, const std::string_view document) -> std::expected<void, std::string> {
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
@@ -228,12 +120,13 @@ auto set_asset_document(Editor&, const UUID& uuid, const std::string_view docume
   }
 
   if (!is_loaded) {
-    return std::unexpected("the asset is not loaded, asset_load it first");
+    return std::unexpected("the asset is not loaded");
   }
 
+  // the readers skip fields they can't read, so a broken document has to be refused before it replaces the asset
   simdjson::dom::parser parser;
   simdjson::dom::element element;
-  if (const auto parsed = parser.parse(document).get(element); parsed) {
+  if (const auto parsed = parser.parse(document.data(), document.size()).get(element); parsed) {
     return std::unexpected(fmt::format("the document is not valid json: {}", simdjson::error_message(parsed)));
   }
 
@@ -241,29 +134,13 @@ auto set_asset_document(Editor&, const UUID& uuid, const std::string_view docume
     return std::unexpected("the document must be a json object");
   }
 
-  // the parsers read from files and log what they dislike
-  const auto temp_path = document_temp_path(uuid);
-  {
-    auto file = File(temp_path, FileAccess::Write);
-    if (!file) {
-      return std::unexpected(fmt::format("could not write {}", temp_path.string()));
-    }
-
-    file.write(document);
-    file.close();
-  }
-
-  OX_DEFER(&) {
-    std::error_code error;
-    std::filesystem::remove(temp_path, error);
-  };
-
   if (type == AssetType::ParticleSystem) {
-    auto parsed = ParticleSystem::read(temp_path);
+    auto parsed = ParticleSystem::from_json(document);
     if (!parsed) {
-      return std::unexpected("the particle system parser rejected the document, log_read has the reason");
+      return std::unexpected(fmt::format("the particle system document does not parse: {}", parsed.error()));
     }
 
+    // the runtime state (compiled programs, curve atlas) stays, only the authored data is replaced
     asset_man.edit_particle_system(uuid, [&parsed](ParticleSystem& system) {
       system.emitter = parsed->emitter;
       system.render = parsed->render;
@@ -278,9 +155,9 @@ auto set_asset_document(Editor&, const UUID& uuid, const std::string_view docume
     return {};
   }
 
-  auto parsed = Cinematic::read(temp_path);
+  auto parsed = Cinematic::from_json(document);
   if (!parsed) {
-    return std::unexpected("the cinematic parser rejected the document, log_read has the reason");
+    return std::unexpected(fmt::format("the cinematic document does not parse: {}", parsed.error()));
   }
 
   asset_man.edit_cinematic(uuid, [&parsed](Cinematic& cinematic) { cinematic = std::move(*parsed); });

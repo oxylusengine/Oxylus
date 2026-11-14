@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <fmt/format.h>
 #include <string>
@@ -15,6 +14,7 @@
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
 #include "Render/RenderContext.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static std::string_view HIDDEN_VALUE = "<hidden>";
@@ -30,12 +30,6 @@ struct CVarEntry {
   CVarSystem* system = nullptr;
   CVarParameter* parameter = nullptr;
 };
-
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
 
 static auto has_flag(const CVarParameter& parameter, CVarFlags flag) -> bool {
   return (std::to_underlying(parameter.flags) & std::to_underlying(flag)) != 0;
@@ -180,9 +174,8 @@ static auto find_entry(Editor& editor, std::string_view name, option<std::string
 
   std::string suggestions;
   usize suggested = 0;
-  const auto needle = lower(name);
   for (const auto& entry : all_entries(*scopes)) {
-    if (suggested < SUGGESTION_COUNT && lower(entry.parameter->name).find(needle) != std::string::npos) {
+    if (suggested < SUGGESTION_COUNT && StringUtils::icontains(entry.parameter->name, name)) {
       suggestions += fmt::format("{}{}", suggestions.empty() ? "" : ", ", entry.parameter->name);
       suggested += 1;
     }
@@ -219,11 +212,11 @@ static auto cvar_list(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(scopes.error());
   }
 
-  const auto filter = lower(filter_arg->value_or(""));
+  const auto filter = filter_arg->value_or("");
   std::string out;
   usize count = 0;
   for (const auto& entry : all_entries(*scopes)) {
-    if (!filter.empty() && lower(entry.parameter->name).find(filter) == std::string::npos) {
+    if (!StringUtils::icontains(entry.parameter->name, filter)) {
       continue;
     }
 

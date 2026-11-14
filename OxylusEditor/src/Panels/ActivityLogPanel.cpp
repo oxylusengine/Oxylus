@@ -14,6 +14,7 @@
 #include "Core/App.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
+#include "OS/OS.hpp"
 #include "Project/Project.hpp"
 #include "UI/UI.hpp"
 #include "Utils/EditorTheme.hpp"
@@ -103,18 +104,12 @@ static auto type_label(const Notification::Type type) -> const c8* {
 
 static auto format_time(memory::ScopedStack& stack, const std::chrono::system_clock::time_point time)
   -> std::string_view {
-  const auto as_time_t = std::chrono::system_clock::to_time_t(time);
-  std::tm local_time = {};
-#if defined(_WIN32)
-  if (localtime_s(&local_time, &as_time_t) != 0)
+  const auto local_time = os::local_time(std::chrono::system_clock::to_time_t(time));
+  if (!local_time.has_value())
     return "--:--:--";
-#else
-  if (localtime_r(&as_time_t, &local_time) == nullptr)
-    return "--:--:--";
-#endif
 
   const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()) % 1000;
-  return stack.format("{:%H:%M:%S}.{:03}", local_time, millis.count());
+  return stack.format("{:%H:%M:%S}.{:03}", local_time.value(), millis.count());
 }
 
 // rows are one line tall, so only the first line ever reaches the list; the rest lives in the

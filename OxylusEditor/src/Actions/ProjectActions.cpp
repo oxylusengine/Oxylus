@@ -5,26 +5,14 @@
 #include <system_error>
 #include <tracy/Tracy.hpp>
 
-#include "Actions/SceneActions.hpp"
 #include "Core/App.hpp"
 #include "Core/VFS.hpp"
 #include "Editor.hpp"
 #include "Panels/ContentPanel.hpp"
 #include "Panels/LoadingPanel.hpp"
-#include "Panels/ProjectPanel.hpp"
 #include "Project/Project.hpp"
 
 namespace ox {
-auto finish_cook(CookStatus& status, bool is_ok, const std::filesystem::path& output) -> void {
-  status.output = output;
-  if (!is_ok) {
-    status.error = fmt::format("cooking into '{}' failed, log_read has the errors", output.string());
-  }
-
-  status.is_ok.store(is_ok, std::memory_order_relaxed);
-  status.is_done.store(true, std::memory_order_release);
-}
-
 auto validate_new_project_form(
   const std::string_view location, const std::string_view name, const std::string_view asset_directory
 ) -> std::string_view {
@@ -81,19 +69,30 @@ auto open_project(Editor& editor, const std::filesystem::path& project_file) -> 
   ZoneScoped;
 
   std::error_code error;
-  if (!std::filesystem::is_regular_file(project_file, error) || project_file.extension() != ".oxproj") {
-    return std::unexpected(fmt::format("'{}' is not an existing .oxproj file", project_file.string()));
+  if (!std::filesystem::is_regular_file(project_file, error)) {
+    OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", project_file);
+    editor.editor_cvar.remove_recent_project(project_file);
+    return std::unexpected(
+      fmt::format("'{}' no longer exists and was removed from the recent projects", project_file.string())
+    );
   }
 
-  if (editor.editor_panel_registry.get<LoadingPanel>().is_loading()) {
-    return std::unexpected("a project is still opening, wait for it with editor_wait");
+  if (project_file.extension() != ".oxproj") {
+    return std::unexpected(fmt::format("'{}' is not a .oxproj file", project_file.string()));
+  }
+
+  auto& loading_panel = editor.editor_panel_registry.get<LoadingPanel>();
+  if (loading_panel.is_loading()) {
+    return std::unexpected("a project is still opening");
   }
 
   if (editor.main_viewport_panel.is_any_scene_playing()) {
     return std::unexpected("stop the playing scene before opening a project");
   }
 
-  editor.editor_panel_registry.get<ProjectPanel>().load_project_for_editor(project_file);
+  // the loading panel paints before the directory walk starts
+  loading_panel.begin(project_file);
+
   return {};
 }
 
@@ -115,7 +114,7 @@ auto new_project(
   const auto project_dir = location / name;
   try {
     if (!active_project->new_project(project_dir, name, asset_dir)) {
-      return std::unexpected("the project could not be created, log_read has the reason");
+      return std::unexpected("the project could not be created, see the log");
     }
   } catch (const std::filesystem::filesystem_error& exception) {
     OX_LOG_ERROR("Couldn't create project at {}: {}", project_dir, exception.what());
@@ -163,23 +162,9 @@ auto set_project(Editor& editor, option<std::string_view> name, option<std::stri
 
   if (!project.save(project.get_project_file_path())) {
     config = previous;
-    return std::unexpected("the project file could not be written, log_read has the reason");
+    return std::unexpected("the project file could not be written, see the log");
   }
 
   return {};
-}
-
-auto cook_project(Editor& editor, const std::filesystem::path& folder)
-  -> std::expected<std::shared_ptr<CookStatus>, std::string> {
-  ZoneScoped;
-
-  auto status = std::make_shared<CookStatus>();
-  status->output = folder;
-  const auto started = editor.cook_assets_into(folder, status);
-  if (!started) {
-    return std::unexpected(started.error());
-  }
-
-  return status;
 }
 } // namespace ox

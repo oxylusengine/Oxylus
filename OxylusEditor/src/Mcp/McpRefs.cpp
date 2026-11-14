@@ -1,8 +1,6 @@
 #include "Mcp/McpRefs.hpp"
 
 #include <algorithm>
-#include <cctype>
-#include <charconv>
 #include <filesystem>
 #include <flecs/addons/meta.h>
 #include <fmt/format.h>
@@ -14,16 +12,11 @@
 #include "Memory/Stack.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Utils/SceneManager.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static usize NEAREST_COUNT = 3;
 constexpr static std::string_view COMPONENT_SUFFIX = "Component";
-
-static auto lower(std::string_view text) -> std::string {
-  std::string out(text);
-  std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return out;
-}
 
 static auto edit_distance(std::string_view a, std::string_view b) -> usize {
   std::vector<usize> previous(b.size() + 1);
@@ -46,12 +39,13 @@ static auto edit_distance(std::string_view a, std::string_view b) -> usize {
 }
 
 static auto nearest_names(std::string_view needle, std::span<const std::string> candidates) -> std::string {
-  const auto lowered_needle = lower(needle);
+  memory::ScopedStack stack;
+  const auto lowered_needle = stack.to_lower(needle);
 
   std::vector<std::pair<usize, const std::string*>> scored;
   scored.reserve(candidates.size());
   for (const auto& candidate : candidates) {
-    scored.emplace_back(edit_distance(lowered_needle, lower(candidate)), &candidate);
+    scored.emplace_back(edit_distance(lowered_needle, stack.to_lower(candidate)), &candidate);
   }
 
   const auto count = std::min(NEAREST_COUNT, scored.size());
@@ -69,20 +63,9 @@ static auto nearest_names(std::string_view needle, std::span<const std::string> 
   return out;
 }
 
-static auto entity_name(flecs::entity entity) -> std::string {
+auto entity_name(flecs::entity entity) -> std::string {
   const char* raw_name = entity.name().c_str();
   return raw_name != nullptr ? std::string(raw_name) : std::string();
-}
-
-static auto parse_decimal(std::string_view text) -> option<u64> {
-  u64 value = 0;
-  const auto* end = text.data() + text.size();
-  const auto result = std::from_chars(text.data(), end, value);
-  if (text.empty() || result.ec != std::errc() || result.ptr != end) {
-    return nullopt;
-  }
-
-  return value;
 }
 
 auto scene_arg(const McpArgs& args) -> std::expected<option<std::string>, std::string> {
@@ -107,9 +90,15 @@ auto scene_arg(const McpArgs& args) -> std::expected<option<std::string>, std::s
   return std::unexpected("argument 'scene': expected a scene id string or 'active'");
 }
 
-auto resolve_scene(Editor& editor, option<std::string_view> arg) -> std::expected<EditorScene*, std::string> {
+auto resolve_scene(Editor& editor, const McpArgs& args) -> std::expected<EditorScene*, std::string> {
   ZoneScoped;
 
+  const auto text = scene_arg(args);
+  if (!text) {
+    return std::unexpected(text.error());
+  }
+
+  const auto& arg = text.value();
   if (!arg.has_value() || *arg == "active") {
     auto* active = editor.editor_panel_registry.get<SceneHierarchyPanel>().get_scene();
     if (active == nullptr) {
@@ -119,18 +108,12 @@ auto resolve_scene(Editor& editor, option<std::string_view> arg) -> std::expecte
     return active;
   }
 
-  const auto id = parse_decimal(*arg);
+  const auto id = StringUtils::parse_integer<u64>(*arg);
   if (!id.has_value()) {
     return std::unexpected(fmt::format("argument 'scene': '{}' is not a scene id, use a number or 'active'", *arg));
   }
 
-  EditorScene* found = nullptr;
-  editor.scene_manager.for_each_scene([&](SceneID scene_id, EditorScene& scene) {
-    if (std::to_underlying(scene_id) == *id) {
-      found = &scene;
-    }
-  });
-
+  auto* found = editor.scene_manager.find_scene(static_cast<SceneID>(*id));
   if (found == nullptr) {
     return std::unexpected(fmt::format("no scene with id {}, editor_state lists the open scenes", *arg));
   }
@@ -173,14 +156,11 @@ auto scene_children(flecs::entity entity) -> std::vector<flecs::entity> {
 }
 
 auto entity_path(flecs::entity entity) -> std::string {
-  std::string path;
-  for (auto current = entity; current.is_valid() && current.is_alive(); current = current.parent()) {
-    const char* raw_name = current.name().c_str();
-    const std::string_view name = raw_name != nullptr ? raw_name : "";
-    path = path.empty() ? std::string(name) : fmt::format("{}/{}", name, path);
+  if (!entity.is_valid() || !entity.is_alive()) {
+    return {};
   }
 
-  return path;
+  return std::string(entity.path("/", "").c_str());
 }
 
 auto entity_ref_text(flecs::entity entity) -> std::string {
@@ -206,7 +186,7 @@ auto resolve_entity(Scene& scene, std::string_view ref) -> std::expected<flecs::
   }
 
   if (ref.front() == '#') {
-    const auto id = parse_decimal(ref.substr(1));
+    const auto id = StringUtils::parse_integer<u64>(ref.substr(1));
     if (!id.has_value()) {
       return std::unexpected(fmt::format("'{}' is not an entity id, expected '#' followed by digits", ref));
     }
@@ -312,7 +292,6 @@ auto resolve_component(Scene& scene, std::string_view name) -> std::expected<fle
   ZoneScoped;
 
   const auto components = known_components(scene);
-  const auto lowered = lower(name);
 
   std::vector<flecs::id> exact;
   std::vector<flecs::id> loose;
@@ -324,7 +303,10 @@ auto resolve_component(Scene& scene, std::string_view name) -> std::expected<fle
       continue;
     }
 
-    if (lower(short_name) == lowered || lower(component_display_name(component)) == lowered || lower(path) == lowered) {
+    const auto is_loose_match = StringUtils::iequals(short_name, name) ||
+                                StringUtils::iequals(component_display_name(component), name) ||
+                                StringUtils::iequals(path, name);
+    if (is_loose_match) {
       loose.push_back(component);
     }
   }

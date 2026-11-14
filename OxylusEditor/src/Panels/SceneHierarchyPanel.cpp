@@ -86,13 +86,12 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
     }
 
     if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D) && self.scene_) {
-      auto tx = begin_edit(editor, *self.scene_, "duplicate entity");
-      if (const auto clone = duplicate_entity(tx, self.selected_entity_.get())) {
+      const auto clone = edit_scene(editor, *self.scene_, "duplicate entity", [&](EditTransaction& tx) {
+        return duplicate_entity(tx, self.selected_entity_.get());
+      });
+      if (clone) {
         self.selected_entity_.set(clone.value());
-      } else {
-        OX_LOG_ERROR("{}", clone.error());
       }
-      tx.commit();
     }
     if (
       ImGui::IsKeyPressed(ImGuiKey_Delete) && (self.table_hovered_ || editor.main_viewport_panel.get_focused_viewport())
@@ -112,11 +111,9 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   }
 
   if (self.deleted_entity_ && self.scene_) {
-    auto tx = begin_edit(editor, *self.scene_, "delete entity");
-    if (const auto result = delete_entity(tx, self.deleted_entity_); !result) {
-      OX_LOG_ERROR("{}", result.error());
-    }
-    tx.commit();
+    edit_scene(editor, *self.scene_, "delete entity", [&](EditTransaction& tx) {
+      return delete_entity(tx, self.deleted_entity_);
+    });
 
     self.deleted_entity_ = flecs::entity::null();
     self.selected_entity_.reset();
@@ -341,11 +338,9 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       }
 
       if (self.dragged_entity_ != flecs::entity::null() && self.dragged_entity_target_ != flecs::entity::null()) {
-        auto tx = begin_edit(App::mod<Editor>(), *self.scene_, "reparent entity");
-        if (const auto result = reparent_entity(tx, self.dragged_entity_, self.dragged_entity_target_); !result) {
-          OX_LOG_ERROR("{}", result.error());
-        }
-        tx.commit();
+        edit_scene(App::mod<Editor>(), *self.scene_, "reparent entity", [&](EditTransaction& tx) {
+          return reparent_entity(tx, self.dragged_entity_, self.dragged_entity_target_);
+        });
 
         self.dragged_entity_ = flecs::entity::null();
         self.dragged_entity_target_ = flecs::entity::null();
@@ -498,9 +493,7 @@ auto SceneHierarchyPanel::draw_entity_node(
     }
 
     if (ImGui::InputText("##Tag", &self.rename_text_)) {
-      const auto is_applicable = !self.rename_text_.empty() && !self.rename_text_.contains('/') &&
-                                 is_entity_name_free(*self.scene_, entity, self.rename_text_);
-      if (is_applicable) {
+      if (entity_name_error(*self.scene_, entity, self.rename_text_).empty()) {
         entity.set_name(self.rename_text_.c_str());
       }
     }
@@ -714,11 +707,9 @@ auto SceneHierarchyPanel::finish_rename(this SceneHierarchyPanel& self, flecs::e
   // the typing was applied live, so it goes back first and the action records the one change
   entity.set_name(self.rename_original_.c_str());
 
-  auto tx = begin_edit(App::mod<Editor>(), *self.scene_, "rename entity");
-  if (const auto result = rename_entity(tx, entity, self.rename_text_); !result) {
-    OX_LOG_ERROR("{}", result.error());
-  }
-  tx.commit();
+  edit_scene(App::mod<Editor>(), *self.scene_, "rename entity", [&](EditTransaction& tx) {
+    return rename_entity(tx, entity, self.rename_text_);
+  });
 }
 
 auto SceneHierarchyPanel::draw_scripts_context_menu(this SceneHierarchyPanel& self) -> void {

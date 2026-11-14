@@ -10,25 +10,10 @@
 #include "Mcp/McpSchema.hpp"
 #include "Mcp/McpServer.hpp"
 #include "Mcp/McpTools.hpp"
+#include "Utils/AsyncResult.hpp"
 
 namespace ox {
 constexpr static f32 RAYCAST_DEFAULT_DISTANCE = 1000.0f;
-
-static auto scene_exists(Editor& editor, SceneID id) -> bool {
-  auto is_found = false;
-  editor.scene_manager.for_each_scene([&](SceneID scene_id, EditorScene&) { is_found = is_found || scene_id == id; });
-  return is_found;
-}
-
-static auto target_scene(Editor& editor, const McpArgs& args) -> std::expected<EditorScene*, std::string> {
-  const auto arg = scene_arg(args);
-  if (!arg) {
-    return std::unexpected(arg.error());
-  }
-
-  const auto text = arg->has_value() ? option<std::string_view>(std::string_view(arg->value())) : nullopt;
-  return resolve_scene(editor, text);
-}
 
 static auto scene_label(Editor& editor, EditorScene& scene) -> std::string {
   const auto& path = scene.get_path();
@@ -85,7 +70,7 @@ static auto scene_list(Editor& editor, const McpArgs&) -> McpResult {
 static auto scene_new(Editor& editor, const McpArgs&) -> McpResult {
   ZoneScoped;
 
-  auto* scene = new_scene(editor);
+  auto* scene = editor.new_scene();
   return McpResult::ok(fmt::format("created scene {}", std::to_underlying(scene->get_id())));
 }
 
@@ -106,12 +91,12 @@ static auto scene_open(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(fmt::format("'{}' is not an .oxscene file", *path_arg));
   }
 
-  if (auto* open = find_scene_by_path(editor, *path)) {
+  if (auto* open = editor.scene_manager.find_edit_scene(*path)) {
     std::ignore = focus_scene(editor, *open);
     return McpResult::ok(fmt::format("scene {} was already open, focused it", std::to_underlying(open->get_id())));
   }
 
-  const auto opened = open_scene(editor, *path);
+  const auto opened = editor.open_scene(*path);
   if (!opened) {
     return McpResult::error(opened.error());
   }
@@ -128,7 +113,7 @@ static auto scene_save(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(path_arg.error());
   }
 
-  const auto scene = target_scene(editor, args);
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return McpResult::error(scene.error());
   }
@@ -143,21 +128,21 @@ static auto scene_save(Editor& editor, const McpArgs& args) -> McpResult {
     path = resolved.value();
   }
 
-  const auto status = save_scene(editor, **scene, path);
+  const auto status = editor.save_scene_to(**scene, path);
   if (!status) {
     return McpResult::error(status.error());
   }
 
   return McpResult::pending([&editor, save_status = status.value()]() -> option<McpResult> {
-    if (!save_status->is_done.load(std::memory_order_acquire)) {
+    if (!save_status->is_ready()) {
       return nullopt;
     }
 
-    if (!save_status->is_ok.load(std::memory_order_relaxed)) {
-      return McpResult::error(save_status->error);
+    if (!save_status->result) {
+      return McpResult::error(save_status->result.error());
     }
 
-    return McpResult::ok(fmt::format("saved {}", project_relative_text(editor, save_status->path)));
+    return McpResult::ok(fmt::format("saved {}", project_relative_text(editor, *save_status->result)));
   });
 }
 
@@ -168,7 +153,7 @@ static auto scene_close(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error("argument 'scene' is required");
   }
 
-  const auto scene = target_scene(editor, args);
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return McpResult::error(scene.error());
   }
@@ -181,7 +166,7 @@ static auto scene_close(Editor& editor, const McpArgs& args) -> McpResult {
   }
 
   return McpResult::pending([&editor, id, was_playing]() -> option<McpResult> {
-    if (scene_exists(editor, id)) {
+    if (editor.scene_manager.find_scene(id) != nullptr) {
       return nullopt;
     }
 
@@ -202,7 +187,7 @@ static auto scene_focus(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error("argument 'scene' is required");
   }
 
-  const auto scene = target_scene(editor, args);
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return McpResult::error(scene.error());
   }
@@ -226,22 +211,24 @@ static auto scene_focus(Editor& editor, const McpArgs& args) -> McpResult {
 static auto scene_play(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto scene = target_scene(editor, args);
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return McpResult::error(scene.error());
   }
 
-  const auto request = play_scene(editor, **scene);
-  if (!request) {
-    return McpResult::error(request.error());
+  const auto start = play_scene(editor, **scene, false);
+  if (!start) {
+    return McpResult::error(start.error());
   }
 
-  return McpResult::pending([&editor, play_request = request.value()]() -> option<McpResult> {
-    if (!scene_exists(editor, play_request.source)) {
+  const auto source = (*scene)->get_id();
+  const auto is_debugger_skipped = start.value() == PlayStart::StartedWithoutDebugger;
+  return McpResult::pending([&editor, source, is_debugger_skipped]() -> option<McpResult> {
+    if (editor.scene_manager.find_scene(source) == nullptr) {
       return McpResult::error("the scene was closed before the play scene started");
     }
 
-    const auto* play = find_play_scene(editor, play_request.source);
+    const auto* play = editor.scene_manager.find_play_scene(source);
     if (play == nullptr) {
       return nullopt;
     }
@@ -250,8 +237,8 @@ static auto scene_play(Editor& editor, const McpArgs& args) -> McpResult {
       fmt::format(
         "play scene {} started from scene {}. Edits there are not undoable and vanish at Stop{}",
         std::to_underlying(play->get_id()),
-        std::to_underlying(play_request.source),
-        play_request.is_debugger_skipped ? ". 'Wait for Debugger on Play' is on and was ignored for this call" : ""
+        std::to_underlying(source),
+        is_debugger_skipped ? ". 'Wait for Debugger on Play' is on and was ignored for this call" : ""
       )
     );
   });
@@ -260,7 +247,7 @@ static auto scene_play(Editor& editor, const McpArgs& args) -> McpResult {
 static auto scene_stop(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto scene = target_scene(editor, args);
+  const auto scene = resolve_scene(editor, args);
   if (!scene) {
     return McpResult::error(scene.error());
   }
@@ -271,37 +258,12 @@ static auto scene_stop(Editor& editor, const McpArgs& args) -> McpResult {
   }
 
   return McpResult::pending([&editor, id = stopped.value()]() -> option<McpResult> {
-    if (scene_exists(editor, id)) {
+    if (editor.scene_manager.find_scene(id) != nullptr) {
       return nullopt;
     }
 
     return McpResult::ok(fmt::format("stopped play scene {}", std::to_underlying(id)));
   });
-}
-
-static auto vec3_arg(const McpArgs& args, std::string_view key) -> std::expected<glm::vec3, std::string> {
-  const auto array = args.array(key);
-  if (!array) {
-    return std::unexpected(array.error());
-  }
-
-  glm::vec3 out = {};
-  usize index = 0;
-  for (const auto& element : *array) {
-    double value = 0.0;
-    if (index >= 3 || element.get(value)) {
-      return std::unexpected(fmt::format("argument '{}': expected [x, y, z] numbers", key));
-    }
-
-    out[static_cast<glm::length_t>(index)] = static_cast<f32>(value);
-    index += 1;
-  }
-
-  if (index != 3) {
-    return std::unexpected(fmt::format("argument '{}': expected [x, y, z] numbers", key));
-  }
-
-  return out;
 }
 
 static auto vec3_text(glm::vec3 value) -> std::string {
@@ -311,12 +273,12 @@ static auto vec3_text(glm::vec3 value) -> std::string {
 static auto scene_raycast(Editor& editor, const McpArgs& args) -> McpResult {
   ZoneScoped;
 
-  const auto origin = vec3_arg(args, "origin");
+  const auto origin = args.vec3("origin");
   if (!origin) {
     return McpResult::error(origin.error());
   }
 
-  const auto direction = vec3_arg(args, "direction");
+  const auto direction = args.vec3("direction");
   if (!direction) {
     return McpResult::error(direction.error());
   }
@@ -326,7 +288,7 @@ static auto scene_raycast(Editor& editor, const McpArgs& args) -> McpResult {
     return McpResult::error(max_distance.error());
   }
 
-  const auto target = target_scene(editor, args);
+  const auto target = resolve_scene(editor, args);
   if (!target) {
     return McpResult::error(target.error());
   }
@@ -337,24 +299,22 @@ static auto scene_raycast(Editor& editor, const McpArgs& args) -> McpResult {
   }
 
   const auto scene = (*target)->get_scene();
-  const auto hit = raycast_scene(*scene, *origin, *direction, distance);
+  const auto hit = scene->raycast(*origin, *direction, distance);
   if (!hit.has_value()) {
     return McpResult::ok("no hit");
   }
 
+  const auto entity = hit->entity != 0 && scene->world.is_alive(hit->entity) ? scene->world.entity(hit->entity)
+                                                                             : flecs::entity::null();
   return McpResult::ok(
     fmt::format(
       "hit {} point {} normal {} distance {:.3f}",
-      hit->entity.id() != 0 ? entity_ref_text(hit->entity) : std::string("a body without an entity"),
+      entity.id() != 0 ? entity_ref_text(entity) : std::string("a body without an entity"),
       vec3_text(hit->point),
       vec3_text(hit->normal),
       hit->distance
     )
   );
-}
-
-static auto scene_property(SchemaBuilder builder) -> SchemaBuilder {
-  return builder.string("scene", "scene id from scene_list or 'active', default active", false);
 }
 
 auto register_scene_tools(McpServer& server) -> void {
@@ -400,9 +360,8 @@ auto register_scene_tools(McpServer& server) -> void {
       .title = "Save scene",
       .description = "Saves a scene and waits for the file to be written. Give a project-relative .oxscene path to "
                      "save as, it is required for a scene that has no file yet. Play scenes cannot be saved.",
-      .input_schema = scene_property(SchemaBuilder{})
-                        .string("path", "project-relative .oxscene path to save as", false)
-                        .build(),
+      .input_schema =
+        SchemaBuilder{}.scene().string("path", "project-relative .oxscene path to save as", false).build(),
       .is_idempotent = true,
       .timeout_ms = 60000,
       .handler = scene_save,
@@ -438,7 +397,7 @@ auto register_scene_tools(McpServer& server) -> void {
       .title = "Play scene",
       .description = "Starts play mode. The runtime runs in a copy of the scene with its own id, which is returned. "
                      "A C# build may run first. Waits until the play scene exists.",
-      .input_schema = scene_property(SchemaBuilder{}).build(),
+      .input_schema = SchemaBuilder{}.scene().build(),
       .timeout_ms = 120000,
       .handler = scene_play,
     }
@@ -450,7 +409,7 @@ auto register_scene_tools(McpServer& server) -> void {
       .title = "Stop scene",
       .description = "Stops play mode and discards the play scene. Takes the play scene or the edit scene it came "
                      "from. Waits until the play scene is gone.",
-      .input_schema = scene_property(SchemaBuilder{}).build(),
+      .input_schema = SchemaBuilder{}.scene().build(),
       .timeout_ms = 60000,
       .handler = scene_stop,
     }
@@ -464,7 +423,8 @@ auto register_scene_tools(McpServer& server) -> void {
                      "terrain. Returns the first hit entity, point, normal and distance, or no hit. Play scenes have "
                      "the live physics state.",
       .input_schema =
-        scene_property(SchemaBuilder{})
+        SchemaBuilder{}
+          .scene()
           .array("origin", "ray start [x, y, z] in world space", R"({"type":"number"})", true)
           .array("direction", "ray direction [x, y, z], need not be normalized", R"({"type":"number"})", true)
           .number("max_distance", "ray length, default 1000", false)

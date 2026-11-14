@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <glm/gtc/color_space.hpp>
+#include <glm/gtc/packing.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -15,6 +17,8 @@
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Actions/EntityActions.hpp"
+#include "Actions/SceneActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -42,15 +46,10 @@
 #include "Utils/EditorGrid.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
+#include "Utils/Png.hpp"
 #include "Utils/ThumbnailManager.hpp"
 
 namespace ox {
-struct CaptureImage {
-  std::vector<u8> pixels = {};
-  u32 width = 0;
-  u32 height = 0;
-};
-
 static auto capture_bytes_per_pixel(vir::Format format) -> u32 {
   switch (format) {
     case vir::Format::RGBA8Unorm  :
@@ -62,97 +61,35 @@ static auto capture_bytes_per_pixel(vir::Format format) -> u32 {
   }
 }
 
-static auto half_to_float(u16 half) -> f32 {
-  const auto exponent = static_cast<i32>((half >> 10) & 0x1f);
-  const auto mantissa = static_cast<f32>(half & 0x3ff);
-  auto value = 0.0f;
-  if (exponent == 0) {
-    value = std::ldexp(mantissa, -24);
-  } else if (exponent == 31) {
-    value = mantissa == 0.0f ? std::numeric_limits<f32>::infinity() : std::numeric_limits<f32>::quiet_NaN();
-  } else {
-    value = std::ldexp(mantissa + 1024.0f, exponent - 25);
-  }
-
-  return (half & 0x8000) != 0 ? -value : value;
-}
-
-static auto linear_to_srgb_byte(f32 linear) -> u8 {
-  const auto clamped = linear > 0.0f ? std::min(linear, 1.0f) : 0.0f;
-  const auto encoded = clamped <= 0.0031308f ? clamped * 12.92f : 1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f;
-  return static_cast<u8>(std::lround(encoded * 255.0f));
-}
-
 // RGBA8 with alpha forced opaque, scRGB is read as linear with 1.0 as paper white
-static auto convert_capture_pixels(std::span<const u8> source, vir::Format format, u32 width, u32 height)
-  -> std::vector<u8> {
+static auto convert_capture_pixels(std::span<const u8> source, vir::Format format, u32 width, u32 height) -> RgbaImage {
   const auto count = static_cast<usize>(width) * height;
-  auto out = std::vector<u8>(count * 4);
+  auto out = RgbaImage{.pixels = std::vector<u8>(count * 4), .width = width, .height = height};
   const auto is_bgra = format == vir::Format::BGRA8Unorm || format == vir::Format::BGRA8Srgb;
-  if (format == vir::Format::RGBA16Sfloat) {
-    for (usize index = 0; index < count; index++) {
-      for (usize channel = 0; channel < 3; channel++) {
-        u16 half = 0;
-        std::memcpy(&half, source.data() + (index * 4 + channel) * sizeof(u16), sizeof(u16));
-        out[index * 4 + channel] = linear_to_srgb_byte(half_to_float(half));
-      }
-    }
-  } else {
-    for (usize index = 0; index < count; index++) {
-      out[index * 4 + 0] = source[index * 4 + (is_bgra ? 2 : 0)];
-      out[index * 4 + 1] = source[index * 4 + 1];
-      out[index * 4 + 2] = source[index * 4 + (is_bgra ? 0 : 2)];
-    }
-  }
-
   for (usize index = 0; index < count; index++) {
-    out[index * 4 + 3] = 255;
+    auto* texel = &out.pixels[index * 4];
+    if (format == vir::Format::RGBA16Sfloat) {
+      u16 halves[3] = {};
+      std::memcpy(halves, source.data() + index * 4 * sizeof(u16), sizeof(halves));
+      const auto linear = glm::clamp(
+        glm::vec3(glm::unpackHalf1x16(halves[0]), glm::unpackHalf1x16(halves[1]), glm::unpackHalf1x16(halves[2])),
+        0.0f,
+        1.0f
+      );
+      const auto encoded = glm::round(glm::convertLinearToSRGB(linear) * 255.0f);
+      texel[0] = static_cast<u8>(encoded.r);
+      texel[1] = static_cast<u8>(encoded.g);
+      texel[2] = static_cast<u8>(encoded.b);
+    } else {
+      texel[0] = source[index * 4 + (is_bgra ? 2 : 0)];
+      texel[1] = source[index * 4 + 1];
+      texel[2] = source[index * 4 + (is_bgra ? 0 : 2)];
+    }
+
+    texel[3] = 255;
   }
 
   return out;
-}
-
-static auto downscale_capture(std::vector<u8> rgba, u32 width, u32 height, u32 max_size) -> CaptureImage {
-  const auto longest = std::max(width, height);
-  if (longest <= max_size) {
-    return {.pixels = std::move(rgba), .width = width, .height = height};
-  }
-
-  const auto scale = static_cast<f64>(max_size) / static_cast<f64>(longest);
-  const auto out_width = std::max(1u, static_cast<u32>(std::lround(width * scale)));
-  const auto out_height = std::max(1u, static_cast<u32>(std::lround(height * scale)));
-  auto out = std::vector<u8>(static_cast<usize>(out_width) * out_height * 4);
-  for (u32 y = 0; y < out_height; y++) {
-    const auto y_begin = static_cast<u32>(static_cast<u64>(y) * height / out_height);
-    const auto y_end = std::max(y_begin + 1, static_cast<u32>(static_cast<u64>(y + 1) * height / out_height));
-    for (u32 x = 0; x < out_width; x++) {
-      const auto x_begin = static_cast<u32>(static_cast<u64>(x) * width / out_width);
-      const auto x_end = std::max(x_begin + 1, static_cast<u32>(static_cast<u64>(x + 1) * width / out_width));
-      u64 sum[3] = {};
-      for (u32 source_y = y_begin; source_y < y_end; source_y++) {
-        for (u32 source_x = x_begin; source_x < x_end; source_x++) {
-          const auto* texel = &rgba[(static_cast<usize>(source_y) * width + source_x) * 4];
-          sum[0] += texel[0];
-          sum[1] += texel[1];
-          sum[2] += texel[2];
-        }
-      }
-
-      const auto samples = static_cast<u64>(y_end - y_begin) * (x_end - x_begin);
-      auto* texel = &out[(static_cast<usize>(y) * out_width + x) * 4];
-      texel[0] = static_cast<u8>((sum[0] + samples / 2) / samples);
-      texel[1] = static_cast<u8>((sum[1] + samples / 2) / samples);
-      texel[2] = static_cast<u8>((sum[2] + samples / 2) / samples);
-      texel[3] = 255;
-    }
-  }
-
-  return {.pixels = std::move(out), .width = out_width, .height = out_height};
-}
-
-static auto fail_capture(ViewCapture& capture, std::string message) -> void {
-  capture.error = std::move(message);
-  capture.is_done.store(true, std::memory_order_release);
 }
 
 static auto dump_frame_ir(const RendererInstance& renderer_instance) -> void {
@@ -514,17 +451,16 @@ ViewportPanel::~ViewportPanel() {
   for (const auto& readback : capture_readbacks) {
     App::get_rendercontext().destroy_buffer(readback.buffer);
     for (const auto& request : readback.requests) {
-      fail_capture(*request.capture, "the viewport was closed");
+      request.capture->fail("the viewport was closed");
     }
   }
 
   for (const auto& request : capture_requests) {
-    fail_capture(*request.capture, "the viewport was closed");
+    request.capture->fail("the viewport was closed");
   }
 
   for (const auto& request : pick_requests) {
-    request.pick->error = "the viewport was closed";
-    request.pick->is_done.store(true, std::memory_order_release);
+    request.pick->fail("the viewport was closed");
   }
 
   for (const auto* pick : {&pending_pick_2d, &pending_pick_3d}) {
@@ -1052,12 +988,16 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
         }));
         job_man.pop_job_name();
       } else if (path.extension() == ".oxparticle") {
-        auto asset = import_asset(App::mod<AssetManager>(), path);
-        if (asset) {
-          auto entity = self.editor_scene->get_scene()->create_particle_system_entity(asset);
-          if (entity != flecs::entity::null()) {
-            auto& editor_context = App::mod<Editor>().get_context();
-            editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
+        if (const auto asset = import_asset(App::mod<AssetManager>(), path)) {
+          auto& editor = App::mod<Editor>();
+          const auto entity = edit_scene(
+            editor,
+            *self.editor_scene->get_scene(),
+            "create entity",
+            [&](EditTransaction& tx) { return create_entity_from_asset(tx, asset, flecs::entity::null()); }
+          );
+          if (entity) {
+            editor.get_context().reset(EditorContext::Type::Entity, nullopt, entity.value());
           }
         }
       }
@@ -2411,17 +2351,17 @@ auto ViewportPanel::finish_view_pick(this ViewportPanel& self, option<u32> texel
   self.is_view_pick_issued = false;
 
   if (!texel_3d.has_value() && !texel_2d.has_value()) {
-    pick->error = "the pick was dropped, the scene changed or the frame failed to render";
-  } else {
-    const auto is_2d_hit = texel_2d.has_value() && *texel_2d != ~0_u32;
-    const auto texel = is_2d_hit ? *texel_2d : texel_3d.value_or(~0_u32);
-    const auto& entities = self.editor_scene->get_scene()->transform_index_entities_map;
-    if (texel != ~0_u32 && entities.contains(texel)) {
-      pick->entity = entities.at(texel).id();
-    }
+    return pick->fail("the pick was dropped, the scene changed or the frame failed to render");
   }
 
-  pick->is_done.store(true, std::memory_order_release);
+  const auto is_2d_hit = texel_2d.has_value() && *texel_2d != ~0_u32;
+  const auto texel = is_2d_hit ? *texel_2d : texel_3d.value_or(~0_u32);
+  const auto& entities = self.editor_scene->get_scene()->transform_index_entities_map;
+  if (texel != ~0_u32 && entities.contains(texel)) {
+    return pick->finish(entities.at(texel).id());
+  }
+
+  pick->finish(nullopt);
 }
 
 auto ViewportPanel::mouse_picking_stages(
@@ -2806,8 +2746,7 @@ static auto draw_debugger_wait_popup(bool& is_waiting) -> bool {
 
   ImGui::EndPopup();
 
-  // the scripts may have changed since Play was pressed
-  return should_play && scripts.prepare_for_play();
+  return should_play;
 }
 #endif
 
@@ -2824,24 +2763,16 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI::scale(1.0f));
 
-    auto& event_system = App::get_event_system();
-
     auto is_scene_playing = self.editor_scene->is_playing();
 
-    auto should_play = false;
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
-#ifdef OX_DOTNET
-      auto& editor = App::mod<Editor>();
-      // waits for the build when the C# scripts changed, and stays in edit mode while they don't compile
-      const auto is_ready = editor.csharp_scripts.prepare_for_play();
-      const auto is_debugger_wanted = editor.editor_cvar.cvar_wait_for_debugger.as_bool() &&
-                                      editor.csharp_scripts.can_attach_debugger();
-      self.is_waiting_for_debugger = is_ready && is_debugger_wanted;
-      should_play = is_ready && !is_debugger_wanted;
-#else
-      should_play = true;
-#endif
+      const auto started = play_scene(App::mod<Editor>(), *self.editor_scene, true);
+      if (!started) {
+        OX_LOG_ERROR("{}", started.error());
+      }
+
+      self.is_waiting_for_debugger = started == PlayStart::WaitingForDebugger;
     }
     ImGui::EndDisabled();
 
@@ -2849,27 +2780,27 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
 
     ImGui::BeginDisabled(!is_scene_playing);
     if (ImGui::Button(ICON_MDI_STOP, button_size)) {
-      std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(self.editor_scene->get_id()));
+      std::ignore = stop_scene(App::mod<Editor>(), *self.editor_scene);
     }
     ImGui::EndDisabled();
 
     ImGui::PopStyleVar(3);
 
 #ifdef OX_DOTNET
-    should_play = draw_debugger_wait_popup(self.is_waiting_for_debugger) || should_play;
-#endif
-
-    if (should_play) {
-      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+    if (draw_debugger_wait_popup(self.is_waiting_for_debugger)) {
+      if (const auto started = play_scene(App::mod<Editor>(), *self.editor_scene, false); !started) {
+        OX_LOG_ERROR("{}", started.error());
+      }
     }
+#endif
   }
   ImGui::EndGroup();
 }
 
-auto ViewportPanel::capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<ViewCapture> {
+auto ViewportPanel::capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<AsyncResult<ViewCapture>> {
   ZoneScoped;
 
-  auto capture = std::make_shared<ViewCapture>();
+  auto capture = std::make_shared<AsyncResult<ViewCapture>>();
   self.capture_requests.push_back({.capture = capture, .max_size = max_size});
 
   return capture;
@@ -2885,7 +2816,7 @@ auto ViewportPanel::record_captures(this ViewportPanel& self) -> void {
 
   const auto fail_all = [&self](const std::string& message) {
     for (const auto& request : self.capture_requests) {
-      fail_capture(*request.capture, message);
+      request.capture->fail(message);
     }
 
     self.capture_requests.clear();
@@ -2967,7 +2898,7 @@ auto ViewportPanel::poll_captures(this ViewportPanel& self) -> void {
 
     for (const auto& request : readback.requests) {
       if (!invalidated) {
-        fail_capture(*request.capture, "failed to read the capture back from the GPU");
+        request.capture->fail("failed to read the capture back from the GPU");
         continue;
       }
 
@@ -2982,17 +2913,13 @@ auto ViewportPanel::poll_captures(this ViewportPanel& self) -> void {
                      height = readback.height]() {
           ZoneScopedN("encode viewport capture");
 
-          auto rgba = convert_capture_pixels(*pixels, format, width, height);
-          const auto image = downscale_capture(std::move(rgba), width, height, max_size);
-          auto png = App::mod<Editor>().thumbnail_manager.encode_capture_png(image.pixels, image.width, image.height);
+          const auto image = downscale_rgba(convert_capture_pixels(*pixels, format, width, height), max_size);
+          auto png = encode_png(image.pixels, image.width, image.height);
           if (png.empty()) {
-            return fail_capture(*capture, "the PNG could not be encoded");
+            return capture->fail("the PNG could not be encoded");
           }
 
-          capture->png = std::move(png);
-          capture->width = image.width;
-          capture->height = image.height;
-          capture->is_done.store(true, std::memory_order_release);
+          capture->finish({.png = std::move(png), .width = image.width, .height = image.height});
         })
       );
       job_manager.pop_job_name();

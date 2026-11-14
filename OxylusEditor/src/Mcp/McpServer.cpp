@@ -1,19 +1,12 @@
 #include "Mcp/McpServer.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <mutex>
 #include <simdjson.h>
 #include <tracy/Tracy.hpp>
-
-#ifdef _WIN32
-  #include <process.h>
-#else
-  #include <unistd.h>
-#endif
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
@@ -22,7 +15,9 @@
 #include "Mcp/McpArgs.hpp"
 #include "Mcp/McpHttp.hpp"
 #include "Mcp/McpProtocol.hpp"
+#include "OS/OS.hpp"
 #include "Utils/JsonWriter.hpp"
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 struct McpPendingCall {
@@ -53,14 +48,6 @@ struct McpServer::State {
 constexpr static std::string_view DISCOVERY_FILE = "mcp.json";
 constexpr static std::string_view DISCOVERY_DIR = ".oxeditor";
 
-static auto current_pid() -> i64 {
-#ifdef _WIN32
-  return _getpid();
-#else
-  return getpid();
-#endif
-}
-
 static auto fulfil(McpPendingCall& call, const McpResult& result) -> void {
   call.promise.set_value(mcp_tool_response(call.request, result));
 }
@@ -82,14 +69,12 @@ static auto port_override() -> option<u16> {
     return nullopt;
   }
 
-  u32 parsed = 0;
-  const auto& text = value->arg_str;
-  const auto parse_result = std::from_chars(text.data(), text.data() + text.size(), parsed);
-  if (parse_result.ec != std::errc{} || parsed == 0 || parsed > 65535) {
+  const auto parsed = StringUtils::parse_integer<u16>(value->arg_str);
+  if (!parsed.has_value() || parsed.value() == 0) {
     return nullopt;
   }
 
-  return static_cast<u16>(parsed);
+  return parsed;
 }
 
 static auto remove_discovery(McpServer::State& state) -> void {
@@ -112,7 +97,7 @@ static auto write_discovery(const std::filesystem::path& path, u16 port, bool is
   writer.key("url");
   writer.str(fmt::format("http://127.0.0.1:{}/mcp", port));
   writer["port"] = static_cast<u32>(port);
-  writer["pid"] = current_pid();
+  writer["pid"] = os::process_id();
   writer["token_required"] = is_token_required;
   writer.key("editor_version");
   writer.str(engine_build_info().full_version);

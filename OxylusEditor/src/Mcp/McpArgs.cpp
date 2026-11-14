@@ -1,6 +1,9 @@
 #include "Mcp/McpArgs.hpp"
 
 #include <fmt/format.h>
+#include <span>
+
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 static auto type_name(simdjson::dom::element_type type) -> std::string_view {
@@ -50,6 +53,32 @@ static auto find_field(const McpArgs& args, std::string_view key) -> option<simd
   return value;
 }
 
+// false when the key is absent
+static auto read_floats(const McpArgs& args, std::string_view key, std::span<f32> out)
+  -> std::expected<bool, std::string> {
+  const auto field = find_field(args, key);
+  if (!field.has_value()) {
+    return false;
+  }
+
+  const auto mismatch = fmt::format("{}: expected an array of {} numbers", field_path(args, key), out.size());
+  simdjson::dom::array array;
+  if (field->get(array) || array.size() != out.size()) {
+    return std::unexpected(mismatch);
+  }
+
+  for (usize i = 0; i < out.size(); i++) {
+    auto value = 0.0;
+    if (array.at(i).get(value)) {
+      return std::unexpected(mismatch);
+    }
+
+    out[i] = static_cast<f32>(value);
+  }
+
+  return true;
+}
+
 static auto required_error(const McpArgs& args, std::string_view key, std::string_view expected) -> std::string {
   return fmt::format("argument '{}': required {} is missing", field_path(args, key), expected);
 }
@@ -79,6 +108,59 @@ auto McpArgs::opt_str(this const McpArgs& self, std::string_view key)
   }
 
   return option<std::string_view>(value);
+}
+
+auto McpArgs::opt_vec2(this const McpArgs& self, std::string_view key)
+  -> std::expected<option<glm::vec2>, std::string> {
+  auto value = glm::vec2();
+  const auto is_present = read_floats(self, key, std::span(&value.x, 2));
+  if (!is_present) {
+    return std::unexpected(is_present.error());
+  }
+
+  return is_present.value() ? option<glm::vec2>(value) : nullopt;
+}
+
+auto McpArgs::opt_vec3(this const McpArgs& self, std::string_view key)
+  -> std::expected<option<glm::vec3>, std::string> {
+  auto value = glm::vec3();
+  const auto is_present = read_floats(self, key, std::span(&value.x, 3));
+  if (!is_present) {
+    return std::unexpected(is_present.error());
+  }
+
+  return is_present.value() ? option<glm::vec3>(value) : nullopt;
+}
+
+auto McpArgs::vec3(this const McpArgs& self, std::string_view key) -> std::expected<glm::vec3, std::string> {
+  const auto value = self.opt_vec3(key);
+  if (!value) {
+    return std::unexpected(value.error());
+  }
+
+  if (!value->has_value()) {
+    return std::unexpected(required_error(self, key, "array of 3 numbers"));
+  }
+
+  return value->value();
+}
+
+auto McpArgs::cursor(this const McpArgs& self) -> std::expected<usize, std::string> {
+  const auto text = self.opt_str("cursor");
+  if (!text) {
+    return std::unexpected(text.error());
+  }
+
+  if (!text->has_value()) {
+    return usize{0};
+  }
+
+  const auto value = StringUtils::parse_integer<usize>(text->value());
+  if (!value.has_value()) {
+    return std::unexpected("argument 'cursor': not a cursor returned by this tool");
+  }
+
+  return value.value();
 }
 
 auto McpArgs::str(this const McpArgs& self, std::string_view key) -> std::expected<std::string_view, std::string> {

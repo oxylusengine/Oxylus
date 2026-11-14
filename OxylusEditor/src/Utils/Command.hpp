@@ -309,6 +309,13 @@ private:
   std::string id_;
 };
 
+struct ComponentSnapshot {
+  bool is_present = false;
+  ComponentBytes bytes = {};
+
+  static auto of(flecs::entity entity, flecs::id_t component) -> ComponentSnapshot;
+};
+
 class ComponentSnapshotCommand : public Command {
 public:
   ComponentSnapshotCommand(
@@ -316,8 +323,8 @@ public:
     EntityRemap* remap,
     flecs::entity entity,
     flecs::id_t component,
-    ComponentBytes before,
-    ComponentBytes after,
+    ComponentSnapshot before,
+    ComponentSnapshot after,
     std::string id
   );
 
@@ -330,42 +337,8 @@ private:
   EntityRemap* remap_;
   flecs::entity_t entity_;
   flecs::id_t component_;
-  ComponentBytes before_;
-  ComponentBytes after_;
-  std::string id_;
-};
-
-class ComponentAddCommand : public Command {
-public:
-  ComponentAddCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id);
-
-  auto execute() -> void override;
-  auto undo() -> void override;
-  auto get_id() const -> std::string_view override { return id_; }
-
-private:
-  Scene* scene_;
-  EntityRemap* remap_;
-  flecs::entity_t entity_;
-  flecs::id_t component_;
-  ComponentBytes bytes_;
-  std::string id_;
-};
-
-class ComponentRemoveCommand : public Command {
-public:
-  ComponentRemoveCommand(Scene* scene, EntityRemap* remap, flecs::entity entity, flecs::id_t component, std::string id);
-
-  auto execute() -> void override;
-  auto undo() -> void override;
-  auto get_id() const -> std::string_view override { return id_; }
-
-private:
-  Scene* scene_;
-  EntityRemap* remap_;
-  flecs::entity_t entity_;
-  flecs::id_t component_;
-  ComponentBytes bytes_;
+  ComponentSnapshot before_;
+  ComponentSnapshot after_;
   std::string id_;
 };
 

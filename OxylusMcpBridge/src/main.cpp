@@ -18,7 +18,7 @@
 #include <tuple>
 #include <vector>
 
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
   #include <fcntl.h>
   #include <io.h>
   #include <process.h>
@@ -28,10 +28,12 @@
   #include <sys/stat.h>
   #include <sys/types.h>
   #include <unistd.h>
-  #ifdef __APPLE__
+  #ifdef OX_PLATFORM_MACOSX
     #include <mach-o/dyld.h>
   #endif
 #endif
+
+#include "Utils/StringUtils.hpp"
 
 namespace ox {
 constexpr static std::string_view BRIDGE_VERSION = "0.1.0";
@@ -102,32 +104,7 @@ struct Reply {
 
 static auto log_line(std::string_view text) -> void { std::cerr << "oxmcp: " << text << std::endl; }
 
-static auto json_quote(std::string_view text) -> std::string {
-  constexpr std::string_view hex = "0123456789abcdef";
-
-  std::string out = "\"";
-  for (const char c : text) {
-    switch (c) {
-      case '"' : out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(c) < 0x20) {
-          out += "\\u00";
-          out += hex[(static_cast<unsigned char>(c) >> 4) & 0xf];
-          out += hex[static_cast<unsigned char>(c) & 0xf];
-        } else {
-          out += c;
-        }
-        break;
-    }
-  }
-
-  out += '"';
-  return out;
-}
+static auto json_quote(std::string_view text) -> std::string { return "\"" + StringUtils::escape_str(text) + "\""; }
 
 static auto parse_int(std::string_view text) -> std::optional<int> {
   if (text.empty() || text.size() > 9 || !std::ranges::all_of(text, [](char c) -> bool {
@@ -305,14 +282,14 @@ static auto unreachable_message(const Endpoint& endpoint) -> std::string {
 
 static auto self_directory(const char* argv0) -> std::filesystem::path {
   std::error_code error;
-#if defined(_WIN32)
+#if defined(OX_PLATFORM_WINDOWS)
   std::wstring buffer(32768, L'\0');
   const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
   if (length > 0) {
     buffer.resize(length);
     return std::filesystem::path(buffer).parent_path();
   }
-#elif defined(__APPLE__)
+#elif defined(OX_PLATFORM_MACOSX)
   uint32_t size = 0;
   _NSGetExecutablePath(nullptr, &size);
   std::string buffer(size, '\0');
@@ -331,7 +308,7 @@ static auto self_directory(const char* argv0) -> std::filesystem::path {
 static auto spawn_detached(
   const std::filesystem::path& executable, const std::vector<std::string>& arguments, const std::filesystem::path& cwd
 ) -> bool {
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
   std::wstring command = L"\"" + executable.wstring() + L"\"";
   for (const auto& argument : arguments) {
     command += L" \"" + std::filesystem::path(argument).wstring() + L"\"";
@@ -399,7 +376,7 @@ static auto spawn_detached(
 
 static auto launch_editor(const Options& options, const char* argv0, Endpoint& endpoint) -> bool {
   const auto directory = self_directory(argv0);
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
   const auto editor = directory / "OxylusEditor.exe";
 #else
   const auto editor = directory / "OxylusEditor";
@@ -804,7 +781,7 @@ struct SelfTest {
     }
 
     const auto name = "mcp_selftest_" + std::to_string(
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
                                           _getpid()
 #else
                                           getpid()
@@ -950,7 +927,7 @@ static auto run(int argc, char** argv) -> int {
     return test.run();
   }
 
-#ifdef _WIN32
+#ifdef OX_PLATFORM_WINDOWS
   _setmode(_fileno(stdin), _O_BINARY);
   _setmode(_fileno(stdout), _O_BINARY);
 #endif
