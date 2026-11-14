@@ -30,9 +30,7 @@ func fs_main(
     let mapped_smooth_normal = normal_image.Load(pixel_pos);
     let flat_N = normalize(com::oct_to_vec3(mapped_smooth_normal.ba));
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
-    let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
+    let world_position = camera.unproject_uv(input.tex_coord, depth);
 
     let clipmap_index = i32(vsm_ctx.get_clipmap_index(camera, input.tex_coord, depth, flat_N));
     let clipmap = clipmaps[clipmap_index];

@@ -207,7 +207,9 @@ public extension Camera {
   }
 
   public func unproject_uv(f32x2 uv, f32 depth) -> f32x3 {
-    let ndc = f32x4(uv * 2.0 - 1.0, depth, 1.0);
+    // depth was rasterized with jitter, while the inverse matrix deliberately has none
+    let sample_uv = uv - this.temporalaa_jitter / this.resolution;
+    let ndc = f32x4(sample_uv * 2.0 - 1.0, depth, 1.0);
     let world_pos_h = mul(this.inv_projection_view, ndc);
     return world_pos_h.xyz / world_pos_h.w;
   }

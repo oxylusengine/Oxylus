@@ -126,7 +126,9 @@ func fs_main(VertexOutput input) -> FragmentOutput {
 
     let material = params.materials[tri.material_index];
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
+    // evaluate attributes at the same subpixel position used by visibility rasterization
+    let sample_uv = input.tex_coord - params.camera.temporalaa_jitter / params.camera.resolution;
+    let NDC = f32x3(sample_uv * 2.0 - 1.0, 1.0);
     let deriv = compute_partial_derivatives(tri.world_positions, NDC.xy, params.camera.resolution);
     var tex_coord_grad = deriv.gradient_of(tri.tex_coords);
     material.transform_uv(tex_coord_grad);

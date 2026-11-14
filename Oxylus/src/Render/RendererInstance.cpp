@@ -980,10 +980,13 @@ auto RendererInstance::render(
       self.fsr3_history_valid = true;
       self.fsr3_previous_render_size = shape.render_size;
       self.fsr3_previous_display_size = shape.display_size;
+      self.fsr3_previous_jitter = self.current_jitter;
       self.fsr3_frame_index += 1;
     } else {
       self.fsr3_history_valid = false;
     }
+  } else {
+    self.fsr3_history_valid = false;
   }
   return ticket;
 }
@@ -1137,7 +1140,7 @@ auto RendererInstance::prepare_frame_params(
       .max_render_size = glm::ivec2(self.fsr3_render_size),
       .max_upscale_size = glm::ivec2(self.fsr3_display_size),
       .jitter_offset = self.current_jitter,
-      .previous_frame_jitter_offset = is_reset ? self.current_jitter : self.previous_jitter,
+      .previous_frame_jitter_offset = is_reset ? self.current_jitter : self.fsr3_previous_jitter,
       // velocity is written in render resolution pixels, fsr reprojects in uv
       .motion_vector_scale = 1.0f / glm::vec2(render_size),
       .downscale_factor = glm::vec2(render_size) / glm::vec2(display_size),

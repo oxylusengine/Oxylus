@@ -61,7 +61,9 @@ func compute_minimum_difference(SampleSet set0_in, SampleSet set1_in) -> f32 {
     let max_value = min(set0.samples[SHADING_CHANGE_SET_SIZE - 1], set1.samples[SHADING_CHANGE_SET_SIZE - 1]);
 
     if (max_value > FSR3_FP32_MIN) {
-        for (i32 i = 0; i < SHADING_CHANGE_SET_SIZE && (min_diff < FSR3_FP16_MAX); i++) {
+        for (i32 i = 0;
+             i < 2 * SHADING_CHANGE_SET_SIZE - 1 && a < SHADING_CHANGE_SET_SIZE && b < SHADING_CHANGE_SET_SIZE;
+             i++) {
             var diff = set0.samples[a] - set1.samples[b];
 
             if (abs(diff) > FSR3_FP16_MIN) {
@@ -69,10 +71,12 @@ func compute_minimum_difference(SampleSet set0_in, SampleSet set1_in) -> f32 {
 
                 min_diff = (abs(diff) < abs(min_diff)) ? diff : min_diff;
 
-                a += i32(set0.samples[a] < set1.samples[b]);
-                b += i32(set0.samples[a] >= set1.samples[b]);
+                // both decisions must use the same pair, before either index advances
+                let advance_a = set0.samples[a] < set1.samples[b];
+                a += i32(advance_a);
+                b += i32(!advance_a);
             } else {
-                min_diff = FSR3_FP16_MAX;
+                return 0.0;
             }
         }
     }

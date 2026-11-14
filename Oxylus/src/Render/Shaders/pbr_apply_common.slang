@@ -36,18 +36,21 @@ func contact_shadow_visibility(f32x2 uv, in PBRLighting lighting) -> f32 {
     f32 depth_sample = depth_image.SampleLevel(nearest_clamp_sampler, uv, 0);
 
     const f32x3 cs = f32x3(uv * 2.0 - 1.0, depth_sample);
-    const f32x4 world_position_h = mul(camera.inv_projection_view, f32x4(cs, 1.0));
-    const f32x3 ws = world_position_h.xyz / world_position_h.w;
+    const f32x3 ws = camera.unproject_uv(uv, depth_sample);
 
     f32 rcp_near_plane_distance = 1.0f / camera.near_clip;
 
     f32x3 shadow_direction = normalize(lighting.sun_direction);
     f32x3 shadow_end = ws + shadow_direction * lighting.contact_shadow_length;
+    // march in the jittered grid that the depth texture was rasterized into
+    var jittered_projection = camera.projection;
+    jittered_projection[0] += (2.0 * camera.temporalaa_jitter.x / camera.resolution.x) * camera.projection[3];
+    jittered_projection[1] += (2.0 * camera.temporalaa_jitter.y / camera.resolution.y) * camera.projection[3];
 
     DepthRayMarchResult raymarch_result = DepthRayMarch
       ::new_from_depth(image_size)
       .from_cs(cs)
-      .to_ws(shadow_end, camera.view, camera.projection)
+      .to_ws(shadow_end, camera.view, jittered_projection)
       .with_linear_steps(lighting.contact_shadow_steps)
       .with_depth_thickness(lighting.contact_shadow_thickness)
       .with_jitter(raymarch_jitter)

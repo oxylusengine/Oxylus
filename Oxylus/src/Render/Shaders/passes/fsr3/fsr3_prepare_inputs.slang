@@ -34,7 +34,7 @@ func find_depth_extents(i32x2 px_pos) -> DepthExtents {
     f32 depth[9];
     [ForceUnroll]
     for (i32 i = 0; i < 9; i++) {
-        let pos = px_pos + sample_offsets[i];
+        let pos = fsr3_clamp_load(px_pos, sample_offsets[i], params.constants.render_size);
         depth[i] = params.input_depth.Load(i32x3(pos, 0));
     }
 
@@ -48,8 +48,8 @@ func find_depth_extents(i32x2 px_pos) -> DepthExtents {
         let pos = px_pos + sample_offsets[i];
         if (fsr3_is_on_screen(pos, params.constants.render_size)) {
             let nd_depth = depth[i];
+            extents.farthest = min(extents.farthest, nd_depth);
             if (nd_depth > extents.nearest) {
-                extents.farthest = min(extents.farthest, nd_depth);
                 extents.nearest_coord = pos;
                 extents.nearest = nd_depth;
             }
@@ -88,6 +88,9 @@ func reconstruct_prev_depth(i32x2 px_pos, f32 depth, f32x2 motion_vector) -> voi
 [[numthreads(8, 8, 1)]]
 func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
     let px_pos = i32x2(thread_id.xy);
+    if (!fsr3_is_on_screen(px_pos, params.constants.render_size)) {
+        return;
+    }
 
     let extents = find_depth_extents(px_pos);
     // render resolution motion vectors, so the dilated fetch is a direct load

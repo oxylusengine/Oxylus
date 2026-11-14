@@ -45,9 +45,7 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
-    let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
+    let world_position = camera.unproject_uv(input.tex_coord, depth);
 
     let L = lighting.sun_direction;
     let Li = lighting.sun_intensity;
