@@ -102,6 +102,12 @@ auto LoadingPanel::begin(this LoadingPanel& self, std::filesystem::path project_
   self.visible = true;
 }
 
+auto LoadingPanel::dismiss_failure(this LoadingPanel& self) -> void {
+  App::mod<Editor>().thumbnail_manager.cancel_prewarm();
+  App::mod<Editor>().editor_panel_registry.get<ProjectPanel>().show_error(self.failure);
+  self.close_requested = true;
+}
+
 auto LoadingPanel::load_project(this LoadingPanel& self) -> void {
   ZoneScoped;
 
@@ -271,9 +277,7 @@ auto LoadingPanel::on_render(this LoadingPanel& self, const SwapchainInfo&) -> v
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s  %s", ICON_MDI_ALERT_CIRCLE, self.failure.c_str());
         UI::spacing(2);
         if (ImGui::Button(ICON_MDI_ARROW_LEFT "  Back", {-1.0f, UI::scale(34.0f)})) {
-          App::mod<Editor>().thumbnail_manager.cancel_prewarm();
-          App::mod<Editor>().editor_panel_registry.get<ProjectPanel>().show_error(self.failure);
-          self.close_requested = true;
+          self.dismiss_failure();
         }
       } else {
         ImGui::SeparatorText(self.project_name.c_str());

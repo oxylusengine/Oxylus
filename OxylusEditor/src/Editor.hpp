@@ -4,6 +4,7 @@
 #include <vir/Fwd.hpp>
 
 #include "Core/EventSystem.hpp"
+#include "Mcp/McpServer.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
@@ -22,6 +23,9 @@
 #endif
 
 namespace ox {
+struct SaveStatus;
+struct CookStatus;
+
 class Editor {
 public:
   constexpr static auto MODULE_NAME = "Editor";
@@ -56,6 +60,8 @@ public:
   std::unique_ptr<Project> active_project = nullptr;
   // Set when a project opens, consumed once its asset scan has registered everything the scene names.
   option<std::filesystem::path> pending_start_scene = nullopt;
+  // from `--project`, opened on the first update
+  option<std::filesystem::path> startup_project = nullopt;
 
   EditorTheme editor_theme;
 
@@ -64,10 +70,14 @@ public:
   // Layout
   ImGuiID dockspace_id;
   EditorLayout current_layout = EditorLayout::Classic;
+  // applied at the start of the next drawn frame, the dock builder needs an ImGui frame
+  option<EditorLayout> pending_layout = nullopt;
 
   std::unique_ptr<UndoRedoSystem> undo_redo_system = nullptr;
 
   NotificationSystem notification_system = {};
+
+  McpServer mcp_server = {};
 
 #ifdef OX_DOTNET
   CSharpScripts csharp_scripts;
@@ -108,6 +118,14 @@ public:
   auto set_docking_layout(this Editor& self, EditorLayout layout) -> void;
   auto reset_current_docking_layout() -> void;
 
+  // the status is finished once the file is written, nullptr when nobody waits for it
+  static auto submit_scene_save(EditorScene* scene, std::filesystem::path path, std::shared_ptr<SaveStatus> status)
+    -> void;
+
+  // refuses when a cook is already running or no assets are mounted, the status finishes when the cook does
+  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder, std::shared_ptr<CookStatus> status)
+    -> std::expected<void, std::string>;
+
 private:
   // Context
   EditorContext editor_context = {};
@@ -121,16 +139,11 @@ private:
 
   auto save_project(const std::string& path) -> void;
 
-  // Terrain brush edits have to come back off the GPU before the save job can write them, so the
-  // whole save is deferred to the main thread and only the file write runs on a worker.
-  static auto submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void;
-
   // Points the terrain at an edits asset (creating one next to the scene the first time it is
   // painted) and refreshes its payload from the GPU. Returns the file the asset exports to.
   static auto sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path;
 
   auto draw_menubar(this Editor& self) -> void;
-  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder) -> void;
   void draw_bottom_toolbar(this Editor& self, float height);
 
   auto undo() const -> void;

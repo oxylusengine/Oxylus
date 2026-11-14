@@ -8,6 +8,8 @@
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include "Actions/AssetActions.hpp"
+#include "Actions/EntityActions.hpp"
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetImporter.hpp"
@@ -34,38 +36,6 @@
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
-
-// Components only carry a UUID, and nothing in the reflection says which kind of asset a field
-// points at, so an empty field is matched by the name the component gave it. A field that already
-// holds something uses the type of what it holds instead.
-static auto expected_asset_type(const std::string_view field_name) -> AssetType {
-  const auto has = [field_name](const std::string_view needle) {
-    return field_name.find(needle) != std::string_view::npos;
-  };
-
-  if (has("skeleton"))
-    return AssetType::Skeleton;
-  if (has("clip") || has("animation"))
-    return AssetType::Animation;
-  if (has("cinematic"))
-    return AssetType::Cinematic;
-  if (has("model"))
-    return AssetType::Model;
-  if (has("material"))
-    return AssetType::Material;
-  if (has("texture") || has("layer_") || has("lut"))
-    return AssetType::Texture;
-  if (has("audio") || has("sound"))
-    return AssetType::Audio;
-  if (has("particle"))
-    return AssetType::ParticleSystem;
-  if (has("terrain"))
-    return AssetType::Terrain;
-  if (has("scene") || has("prefab"))
-    return AssetType::Scene;
-
-  return AssetType::None;
-}
 
 // strip layout the importer and the grading bake share, the entry for (r, g, b) at pixel (b * N + r, g)
 static auto save_neutral_lut() -> void {
@@ -343,7 +313,7 @@ struct EntityInspector : IEntitySerializer {
     UI::end_property_grid();
   }
 
-  auto on_entity(std::string_view name, flecs::entity* entity) -> void override {}
+  auto on_entity(std::string_view name, flecs::entity_t* entity) -> void override {}
 
   auto on_component(std::string_view name, flecs::id_t* component) -> void override {}
 
@@ -661,7 +631,7 @@ auto InspectorPanel::draw_material_properties(
   return dirty;
 }
 
-void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id fid) {
+void InspectorPanel::draw_component_context_menu(bool& is_remove_requested, flecs::entity entity, flecs::id fid) {
   ZoneScoped;
 
   memory::ScopedStack stack;
@@ -671,10 +641,14 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
   auto paste_component_txt = stack.format("{} Paste Component", ICON_MDI_CONTENT_PASTE);
 
   if (ImGui::MenuItem(remove_component_txt.data())) {
-    remove_component = true;
+    is_remove_requested = true;
   }
   if (ImGui::MenuItem(reset_component_txt.data())) {
-    entity.remove(fid).add(fid);
+    auto tx = begin_edit(App::mod<Editor>(), *scene_, "reset component");
+    if (const auto result = reset_component(tx, entity, fid); !result) {
+      OX_LOG_ERROR("{}", result.error());
+    }
+    tx.commit();
   }
   if (ImGui::MenuItem(copy_component_txt.data())) {
     component_clipboard.source_entity = entity;
@@ -682,14 +656,19 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
   }
   if (ImGui::MenuItem(paste_component_txt.data())) {
     if (component_clipboard.is_valid() && component_clipboard.source_entity != entity) {
-      auto& editor = App::mod<Editor>();
-      auto& undo_redo_system = editor.undo_redo_system;
-      undo_redo_system->execute_command<ComponentCopyCommand>(
-        component_clipboard.source_entity,
-        entity,
-        component_clipboard.component_id,
-        "Paste Component"
-      );
+      auto tx = begin_edit(App::mod<Editor>(), *scene_, "paste component");
+      if (
+        const auto result = paste_component(
+          tx,
+          component_clipboard.source_entity,
+          entity,
+          flecs::id(entity.world(), component_clipboard.component_id)
+        );
+        !result
+      ) {
+        OX_LOG_ERROR("{}", result.error());
+      }
+      tx.commit();
     }
   }
 }
@@ -709,7 +688,11 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     ImGui::SetKeyboardFocusHere();
   UI::push_frame_style();
   if (ImGui::InputText("##Tag", &new_name, ImGuiInputTextFlags_EnterReturnsTrue)) {
-    entity.set_name(new_name.c_str());
+    auto tx = begin_edit(editor, *self.scene_, "rename entity");
+    if (const auto result = rename_entity(tx, entity, new_name); !result) {
+      OX_LOG_ERROR("{}", result.error());
+    }
+    tx.commit();
   }
   UI::pop_frame_style();
   ImGui::PopItemWidth();
@@ -745,10 +728,11 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       }
 
       if (ImGui::MenuItem(component_name)) {
-        if (entity.has(component))
-          OX_LOG_WARN("Entity already has same component!");
-        else
-          entity.add(component);
+        auto tx = begin_edit(editor, *self.scene_, "add component");
+        if (const auto result = add_component(tx, entity, component); !result) {
+          OX_LOG_WARN("{}", result.error());
+        }
+        tx.commit();
         ImGui::CloseCurrentPopup();
       }
     }
@@ -770,13 +754,13 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + line_height * 0.25f);
 
-    bool remove_component = false;
+    bool is_remove_requested = false;
 
     auto component_name = ty.name();
     auto name_cstr = stack.format_char("{} {}:{}", ICON_MDI_VIEW_GRID, component_name.c_str(), fid.raw_id());
     const bool open = ImGui::TreeNodeEx(name_cstr, TREE_FLAGS, "%s", name_cstr);
     if (ImGui::BeginPopupContextItem()) {
-      self.draw_component_context_menu(remove_component, entity, fid);
+      self.draw_component_context_menu(is_remove_requested, entity, fid);
       ImGui::EndPopup();
     }
 
@@ -788,7 +772,7 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     }
 
     if (ImGui::BeginPopup("ComponentSettings")) {
-      self.draw_component_context_menu(remove_component, entity, fid);
+      self.draw_component_context_menu(is_remove_requested, entity, fid);
       ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -826,12 +810,12 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       ImGui::TreePop();
     }
 
-    if (remove_component) {
-      if (fid == entity.world().component<TransformComponent>().type_id()) {
-        OX_LOG_ERROR("Can't remove TransformComponent!");
-      } else {
-        entity.remove(fid);
+    if (is_remove_requested) {
+      auto tx = begin_edit(editor, *self.scene_, "remove component");
+      if (const auto result = remove_component(tx, entity, fid); !result) {
+        OX_LOG_ERROR("{}", result.error());
       }
+      tx.commit();
     }
   });
 }

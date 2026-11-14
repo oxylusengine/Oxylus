@@ -23,7 +23,7 @@ on_config(function(target)
 end)
 
 rule("ox.install_resources")
-set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json",
+set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json", ".md",
   ".otf", ".ttf", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".oxcine", ".oxterrain", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""

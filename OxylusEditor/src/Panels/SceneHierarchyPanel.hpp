@@ -1,7 +1,11 @@
 #pragma once
 
+#include <functional>
 #include <imgui_internal.h>
+#include <string>
+#include <vector>
 
+#include "Actions/EntityActions.hpp"
 #include "EditorPanelState.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/SceneManager.hpp"
@@ -30,6 +34,10 @@ public:
   flecs::entity dragged_entity_target_ = {};
   flecs::entity deleted_entity_ = {};
 
+  std::string rename_text_ = {};
+  std::string rename_original_ = {};
+  bool is_rename_started_ = false;
+
   SceneHierarchyPanel();
 
   auto on_update(this SceneHierarchyPanel& self) -> void;
@@ -42,6 +50,14 @@ private:
   EditorScene* current_scene = nullptr;
   Scene* scene_ = nullptr;
 
+  struct DeferredEdit {
+    std::string label;
+    std::function<void(SceneHierarchyPanel&, EditTransaction&)> edit;
+  };
+
+  // edits raised while the tree is being walked run after it, so entities don't move under the walk
+  std::vector<DeferredEdit> deferred_edits_ = {};
+
   ImGuiTextFilter scripts_filter_;
   ImGuiTextFilter entities_filter_;
 
@@ -52,6 +68,13 @@ private:
     bool force_expand_tree = false,
     bool is_part_of_prefab = false
   ) -> ImRect;
+
+  auto queue_edit(
+    this SceneHierarchyPanel& self, std::string label, std::function<void(SceneHierarchyPanel&, EditTransaction&)> edit
+  ) -> void;
+  auto run_deferred_edits(this SceneHierarchyPanel& self) -> void;
+  auto queue_create_from_asset(this SceneHierarchyPanel& self, const UUID& asset, flecs::entity parent) -> void;
+  auto finish_rename(this SceneHierarchyPanel& self, flecs::entity entity) -> void;
 
   auto draw_entities_context_menu(this SceneHierarchyPanel& self) -> void;
   auto draw_scripts_context_menu(this SceneHierarchyPanel& self) -> void;

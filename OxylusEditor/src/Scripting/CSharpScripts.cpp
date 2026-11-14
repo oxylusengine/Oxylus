@@ -183,6 +183,8 @@ auto CSharpScripts::close(this CSharpScripts& self) -> void {
   self.dirty_since_ = nullopt;
   self.is_build_failed_ = false;
   self.is_reload_pending_ = false;
+  self.last_build_ = nullopt;
+  self.last_build_finish_time_ = nullopt;
 }
 
 auto CSharpScripts::is_open(this const CSharpScripts& self) -> bool { return !self.csproj_.empty(); }
@@ -290,7 +292,10 @@ auto CSharpScripts::start_build(this CSharpScripts& self) -> void {
 auto CSharpScripts::finish_build(this CSharpScripts& self) -> void {
   ZoneScoped;
 
-  const auto result = self.build_.get();
+  self.last_build_ = self.build_.get();
+  const auto& result = *self.last_build_;
+  self.last_build_finish_time_ = std::chrono::steady_clock::now();
+  self.build_generation_ += 1;
   // a machine without the SDK can still edit and play the scene, just without its C#
   if (result.is_dotnet_missing) {
     OX_LOG_WARN("C# scripts aren't built, dotnet couldn't be started: {}", result.diagnostics.front().message);
@@ -318,6 +323,7 @@ auto CSharpScripts::reload(this CSharpScripts& self) -> void {
   ZoneScoped;
 
   self.is_reload_pending_ = false;
+  self.load_generation_ += 1;
   const auto info = DotNetLoadInfo{
     .kind = DotNetHostKind::HostFxr,
     .path = scripts_assembly_path(self.csproj_, self.output_dir_),

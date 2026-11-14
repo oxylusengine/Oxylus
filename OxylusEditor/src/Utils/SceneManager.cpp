@@ -85,6 +85,7 @@ auto SceneManager::new_play_scene(this SceneManager& self, SceneID from) -> Scen
 
   auto copy_scene_id = self.scenes.create_slot(std::make_shared<EditorScene>(copy_scene));
   self.scenes.slot(copy_scene_id)->get()->id = copy_scene_id;
+  self.scenes.slot(copy_scene_id)->get()->source = from;
 
   self.get_scene(copy_scene_id)->play();
 

@@ -8,6 +8,8 @@
 #include <vir/Program.hpp>
 #include <vir/RenderGraph.hpp>
 
+#include "Actions/ProjectActions.hpp"
+#include "Actions/SceneActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
@@ -15,6 +17,8 @@
 #include "Core/Input.hpp"
 #include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
+#include "Mcp/McpInstall.hpp"
+#include "Mcp/McpTools.hpp"
 #include "Panels/AboutPanel.hpp"
 #include "Panels/ActivityLogPanel.hpp"
 #include "Panels/AnimationEditorPanel.hpp"
@@ -42,6 +46,26 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   ImPlot::CreateContext();
+
+  const auto& command_line_args = App::get()->get_command_line_args();
+  if (const auto project_index = command_line_args.get_index("--project"); project_index.has_value()) {
+    const auto project_arg = command_line_args.get(project_index.value() + 1);
+    if (project_arg.has_value()) {
+      self.startup_project = std::filesystem::path(project_arg->arg_str);
+    } else {
+      OX_LOG_ERROR("--project needs the path of a .oxproj file");
+    }
+  }
+
+  register_editor_tools(self.mcp_server);
+  register_entity_tools(self.mcp_server);
+  register_scene_tools(self.mcp_server);
+  register_project_tools(self.mcp_server);
+  register_settings_tools(self.mcp_server);
+  register_asset_tools(self.mcp_server);
+  register_file_tools(self.mcp_server);
+  register_script_tools(self.mcp_server);
+  register_view_tools(self.mcp_server);
 
   // the editor's own files are APP_DIR; game content only exists once a project mounts it
   auto& vfs = App::get_vfs();
@@ -179,6 +203,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
 auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  self.mcp_server.stop();
+
   // Modules tear down in reverse registration order, so the compiler and the asset manager an
   // in-flight scan is using are still alive here and will not be a frame later.
   wait_for_asset_scans();
@@ -197,6 +223,7 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 
   self.editor_panel_registry.get<SceneHierarchyPanel>().set_scene(nullptr);
   self.editor_context.reset();
+  self.undo_redo_system->clear();
   self.scene_manager.reset();
 
 #ifdef OX_DOTNET
@@ -212,6 +239,16 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
 
 auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   ZoneScoped;
+
+  self.mcp_server.pump(self);
+
+  if (self.startup_project.has_value()) {
+    const auto project_file = self.startup_project.value();
+    self.startup_project = nullopt;
+    if (const auto opened = open_project(self, project_file); !opened) {
+      OX_LOG_ERROR("--project {}: {}", project_file.string(), opened.error());
+    }
+  }
 
   poll_asset_scans();
 
@@ -357,6 +394,12 @@ auto Editor::render(this Editor& self, const SwapchainInfo& swapchain_info) -> v
       ImGui::DockSpace(self.dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
 
+    if (self.pending_layout.has_value()) {
+      self.set_docking_layout(self.pending_layout.value());
+      self.pending_layout = nullopt;
+      self.main_viewport_panel.update_dockspace();
+    }
+
     self.main_viewport_panel.on_render(swapchain_info);
 
     if (!self.main_viewport_panel.is_fullscreen()) {
@@ -385,6 +428,7 @@ void Editor::reset(this Editor& self) {
   auto& sh = self.editor_panel_registry.get<SceneHierarchyPanel>();
   sh.set_scene(nullptr);
 
+  self.undo_redo_system->clear();
   self.scene_manager.reset();
 }
 
@@ -393,24 +437,13 @@ void Editor::new_scene(this Editor& self) {
 
   App::get_rendercontext().wait();
 
-  auto new_scene_id = self.scene_manager.new_scene();
-  self.scene_manager.load_default_scene(new_scene_id);
-  auto scene = self.scene_manager.get_scene(new_scene_id);
-
-  self.main_viewport_panel.add_new_scene(scene);
+  ox::new_scene(self);
 }
 
 bool Editor::open_scene(const std::filesystem::path& path) {
   ZoneScoped;
 
-  auto loaded_scene = scene_manager.load_scene(path);
-
-  if (loaded_scene.has_value()) {
-    auto scene = scene_manager.get_scene(loaded_scene.value());
-    main_viewport_panel.add_new_scene(scene);
-  }
-
-  return loaded_scene.has_value();
+  return ox::open_scene(*this, path).has_value();
 }
 
 void Editor::open_scene_file_dialog() {
@@ -455,7 +488,9 @@ void Editor::save_scene() {
   }
 
   if (!scene->get_path().empty()) {
-    submit_scene_save(scene, scene->get_path());
+    if (const auto saved = ox::save_scene(*this, *scene, nullopt); !saved) {
+      OX_LOG_ERROR("Couldn't save the scene: {}", saved.error());
+    }
   } else {
     save_scene_as();
   }
@@ -491,8 +526,9 @@ auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path&
   return asset ? App::get_vfs().to_physical(asset->path) : std::filesystem::path{};
 }
 
-auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void {
-  App::defer_to_next_frame([scene, scene_path = std::move(path)] {
+auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path, std::shared_ptr<SaveStatus> status)
+  -> void {
+  App::defer_to_next_frame([scene, scene_path = std::move(path), save_status = std::move(status)] {
     // The readback records GPU work, so it has to finish here on the main thread; the job below
     // only writes files.
     auto edits_path = sync_terrain_edits_asset(*scene->get_scene(), scene_path);
@@ -506,8 +542,8 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
 
     auto& job_man = App::get_job_manager();
     job_man.push_job_name("Saving scene");
-    job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid] {
-      scene->get_scene()->save_to_file(scene_path);
+    job_man.submit(Job::create([scene, scene_path, edits_path, edits_uuid, save_status] {
+      const auto is_saved = scene->get_scene()->save_to_file(scene_path);
       // a scene saved for the first time gets its sidecar, and so its UUID, now rather than on the next scan. A warm
       // one is already registered and this only reads its sidecar
       import_asset(App::mod<AssetManager>(), scene_path);
@@ -515,6 +551,9 @@ auto Editor::submit_scene_save(EditorScene* scene, std::filesystem::path path) -
         export_asset(App::mod<AssetManager>(), edits_uuid, edits_path);
       }
       scene->set_path(scene_path);
+      if (save_status != nullptr) {
+        finish_save(*save_status, is_saved);
+      }
     }));
     job_man.pop_job_name();
   });
@@ -534,10 +573,11 @@ void Editor::save_scene_as() {
   const auto& window = App::get_window();
   FileDialogFilter dialog_filters[] = {{.name = "Oxylus Scene(.oxscene)", .pattern = "oxscene"}};
   struct UData {
+    Editor* editor = {};
     EditorScene* scene = {};
   };
 
-  const auto u_data = new UData{.scene = focused_viewport_scene};
+  const auto u_data = new UData{.editor = this, .scene = focused_viewport_scene};
 
   window.show_dialog({
     .kind = DialogKind::SaveFile,
@@ -557,7 +597,14 @@ void Editor::save_scene_as() {
         const auto path = std::string(first_path_cstr, first_path_len);
 
         if (!path.empty()) {
-          submit_scene_save(udata->scene, path);
+          auto scene_path = std::filesystem::path(path);
+          if (scene_path.extension() != ".oxscene") {
+            scene_path += ".oxscene";
+          }
+
+          if (const auto saved = ox::save_scene(*udata->editor, *udata->scene, scene_path); !saved) {
+            OX_LOG_ERROR("Couldn't save the scene: {}", saved.error());
+          }
         }
 
         delete udata;
@@ -619,17 +666,19 @@ void Editor::reset_current_docking_layout() {
   main_viewport_panel.update_dockspace();
 }
 
-auto Editor::cook_assets_into(this Editor& self, const std::filesystem::path& folder) -> void {
+auto Editor::cook_assets_into(
+  this Editor& self, const std::filesystem::path& folder, std::shared_ptr<CookStatus> status
+) -> std::expected<void, std::string> {
   ZoneScoped;
 
   if (self.cooking_assets.exchange(true, std::memory_order_acq_rel)) {
-    return;
+    return std::unexpected("a cook is already running");
   }
 
   auto& vfs = App::get_vfs();
   if (!vfs.is_mounted_dir(VFS::ASSETS_DIR)) {
     self.cooking_assets.store(false, std::memory_order_release);
-    return;
+    return std::unexpected("no project assets are mounted, open a project first");
   }
 
   // a .cooked subfolder, so the cook never prunes anything in the folder that was picked
@@ -639,15 +688,22 @@ auto Editor::cook_assets_into(this Editor& self, const std::filesystem::path& fo
   auto& job_man = App::get_job_manager();
   job_man.push_job_name("Cooking assets");
   job_man.submit(
-    Job::create([&self, source_directory = std::move(assets_dir), output_directory = std::move(output_dir)]() -> void {
-      if (!cook_project_assets(source_directory, output_directory)) {
-        OX_LOG_ERROR("Cooking assets into {} failed, see the errors above.", output_directory);
-      }
+    Job::create(
+      [&self, source_directory = std::move(assets_dir), output_directory = std::move(output_dir), status]() -> void {
+        const auto is_ok = cook_project_assets(source_directory, output_directory);
+        if (!is_ok) {
+          OX_LOG_ERROR("Cooking assets into {} failed, see the errors above.", output_directory);
+        }
 
-      self.cooking_assets.store(false, std::memory_order_release);
-    })
+        self.cooking_assets.store(false, std::memory_order_release);
+        if (status != nullptr) {
+          finish_cook(*status, is_ok, output_directory);
+        }
+      }
+    )
   );
   job_man.pop_job_name();
+  return {};
 }
 
 void Editor::draw_menubar(this Editor& self) {
@@ -738,7 +794,9 @@ void Editor::draw_menubar(this Editor& self) {
               }
 
               auto folder = std::filesystem::path(std::string(*files));
-              App::defer_to_next_frame([editor, f = std::move(folder)]() -> void { editor->cook_assets_into(f); });
+              App::defer_to_next_frame([editor, f = std::move(folder)]() -> void {
+                std::ignore = editor->cook_assets_into(f, nullptr);
+              });
             },
           .title = "Cook assets into (a game build's Assets folder works)",
           .default_path = vfs.resolve_physical_dir(VFS::ASSETS_DIR, "").parent_path(),
@@ -750,6 +808,52 @@ void Editor::draw_menubar(this Editor& self) {
         "Optional, for testing: runs the cook a game build does (rcli --cook-assets) into the chosen folder's "
         ".cooked subfolder, the layout a game reads. Editing and shipping never need it."
       );
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Tools")) {
+      if (ImGui::BeginMenu("MCP")) {
+        const auto& mcp = self.mcp_server;
+        if (mcp.is_running) {
+          ImGui::TextDisabled("listening on http://127.0.0.1:%u/mcp", static_cast<u32>(mcp.bound_port));
+        } else if (mcp.last_error.empty()) {
+          ImGui::TextDisabled("not running");
+        } else {
+          ImGui::TextDisabled("not running: %s", mcp.last_error.c_str());
+        }
+
+        auto is_mcp_enabled = self.editor_cvar.cvar_mcp_enabled.as_bool();
+        if (ImGui::MenuItem("Enabled", nullptr, &is_mcp_enabled)) {
+          self.editor_cvar.cvar_mcp_enabled.set(is_mcp_enabled);
+          self.editor_cvar.save();
+        }
+
+        ImGui::Separator();
+
+        const auto has_project = self.active_project && !self.active_project->get_project_directory().empty();
+        const auto project_dir = has_project ? self.active_project->get_project_directory() : std::filesystem::path();
+
+        ImGui::BeginDisabled(!mcp.is_running);
+        if (ImGui::MenuItem("Copy Claude Code command")) {
+          const auto command = mcp_claude_command(mcp.bound_port);
+          ImGui::SetClipboardText(command.c_str());
+          OX_LOG_INFO("Copied: {}", command);
+        }
+        ImGui::EndDisabled();
+
+        ImGui::BeginDisabled(!has_project);
+        if (ImGui::MenuItem("Copy stdio config")) {
+          const auto config = mcp_stdio_config(std::filesystem::absolute(project_dir));
+          ImGui::SetClipboardText(config.c_str());
+          OX_LOG_INFO("Copied: {}", config);
+        }
+
+        if (ImGui::MenuItem("Install agent files into project")) {
+          install_agent_files(std::filesystem::absolute(project_dir));
+        }
+        ImGui::EndDisabled();
+
+        ImGui::EndMenu();
+      }
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {

@@ -221,6 +221,30 @@ void RuntimeConsole::render(this RuntimeConsole& self) {
   }
 }
 
+auto RuntimeConsole::execute(this RuntimeConsole& self, std::string_view command) -> std::vector<std::string> {
+  ZoneScoped;
+
+  self.drain_pending();
+  self.process_command(std::string(command));
+
+  auto lines = std::vector<std::string>();
+  {
+    auto lock = std::unique_lock(self.pending_mutex);
+    for (const auto& entry : self.pending) {
+      if (entry.verbosity <= loguru::Verbosity_ERROR) {
+        lines.push_back("error: " + entry.text);
+      } else if (entry.verbosity == loguru::Verbosity_WARNING) {
+        lines.push_back("warn: " + entry.text);
+      } else {
+        lines.push_back(entry.text);
+      }
+    }
+  }
+
+  self.drain_pending();
+  return lines;
+}
+
 void RuntimeConsole::render_console_text(const std::string& text_, const int32_t id_, loguru::Verbosity verb_) {
   ImGui::PushStyleColor(ImGuiCol_Text, get_color(verb_));
   const auto level_icon = get_level_icon(verb_);

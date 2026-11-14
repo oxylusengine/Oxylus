@@ -1,11 +1,11 @@
 #pragma once
 
-#include "Render/Fwd.hpp"
-
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include "EditorPanelState.hpp"
+#include "Render/Fwd.hpp"
 
 namespace ox {
 class LoadingPanel : public EditorPanelState {
@@ -18,6 +18,18 @@ public:
   // Takes over from the project selector. The heavy part of the load runs a frame later, from
   // `on_update`, so the modal is already on screen before the directory walk blocks the thread.
   auto begin(this LoadingPanel& self, std::filesystem::path project_file) -> void;
+
+  auto is_failed(this const LoadingPanel& self) -> bool { return self.phase == Phase::Failed; }
+  auto failure_text(this const LoadingPanel& self) -> std::string_view { return self.failure; }
+  // past the asset scan, only the start scene and thumbnails are left
+  auto is_past_scan(this const LoadingPanel& self) -> bool {
+    return self.phase == Phase::OpeningScene || self.phase == Phase::Thumbnails;
+  }
+  auto is_loading(this const LoadingPanel& self) -> bool {
+    return self.visible && !self.is_failed() && self.phase != Phase::Thumbnails;
+  }
+  // what the Back button does
+  auto dismiss_failure(this LoadingPanel& self) -> void;
 
 private:
   enum class Phase : u8 { Discovering = 0, Cooking, OpeningScene, Thumbnails, Failed };

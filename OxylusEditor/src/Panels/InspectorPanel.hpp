@@ -68,7 +68,7 @@ private:
   std::filesystem::path resolved_asset_path = {};
   UUID resolved_asset_uuid = UUID(nullptr);
 
-  auto draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) -> void;
+  auto draw_component_context_menu(bool& is_remove_requested, flecs::entity entity, flecs::id id) -> void;
 
   Scene* scene_;
   bool rename_entity_ = false;

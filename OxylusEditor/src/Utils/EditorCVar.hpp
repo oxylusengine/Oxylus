@@ -46,6 +46,10 @@ public:
   AutoCVar_Int cvar_show_imgui_demo;
   AutoCVar_String cvar_external_editor;
   AutoCVar_Int cvar_wait_for_debugger;
+  AutoCVar_Int cvar_mcp_enabled;
+  AutoCVar_Int cvar_mcp_port;
+  AutoCVar_String cvar_mcp_token;
+  AutoCVar_Int cvar_mcp_follow;
 
 private:
   std::vector<std::filesystem::path> recent_projects{};

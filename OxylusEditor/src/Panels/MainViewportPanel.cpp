@@ -100,6 +100,20 @@ auto MainViewportPanel::get_focused_viewport(this const MainViewportPanel& self)
   return nullptr;
 }
 
+auto MainViewportPanel::find_viewport(this const MainViewportPanel& self, const EditorScene* scene) -> ViewportPanel* {
+  ZoneScoped;
+
+  for (const auto* list : {&self.viewport_panels, &self.pending_viewports}) {
+    for (const auto& viewport : *list) {
+      if (viewport != nullptr && viewport->get_scene() == scene) {
+        return viewport.get();
+      }
+    }
+  }
+
+  return nullptr;
+}
+
 auto MainViewportPanel::get_visible_viwports(this const MainViewportPanel& self) -> std::vector<ViewportPanel*> {
   ZoneScoped;
 
@@ -264,6 +278,14 @@ void MainViewportPanel::update(this MainViewportPanel& self, const Timestep& tim
     if (panel->visible) {
       panel->on_update();
     }
+  }
+
+  // history names entities of the scene a closing viewport shows
+  const auto is_closing_edit_scene = std::ranges::any_of(self.viewport_panels, [](const auto& panel) {
+    return panel != nullptr && !panel->visible && panel->get_scene() != nullptr && !panel->get_scene()->is_playing();
+  });
+  if (is_closing_edit_scene) {
+    App::mod<Editor>().undo_redo_system->clear();
   }
 
   std::erase_if(self.viewport_panels, [](const std::unique_ptr<ViewportPanel>& ptr) {

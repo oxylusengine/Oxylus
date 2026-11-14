@@ -1,5 +1,11 @@
 #pragma once
 
+#include <atomic>
+#include <expected>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <memory>
+#include <string>
 #include <vir/Resource.hpp>
 
 #include "EditorPanelState.hpp"
@@ -10,6 +16,42 @@
 #include "Utils/VertexSnap.hpp"
 
 namespace ox {
+struct ViewCapture {
+  std::atomic<bool> is_done = false;
+  // written before is_done is released
+  std::string png = {};
+  std::string error = {};
+  u32 width = 0;
+  u32 height = 0;
+};
+
+struct ViewPick {
+  std::atomic<bool> is_done = false;
+  option<flecs::entity_t> entity = nullopt;
+  std::string error = {};
+};
+
+struct ViewCameraPose {
+  glm::vec3 position = {};
+  glm::vec2 yaw_pitch = {};
+  f32 fov = 0.0f;
+  f32 near_clip = 0.0f;
+  f32 far_clip = 0.0f;
+  glm::vec2 viewport_size = {};
+};
+
+enum class ViewGizmoMode : u8 { None, Translate, Rotate, Scale, Universal, Bounds };
+
+enum class ViewGizmoSpace : u8 { Local, World };
+
+struct ViewGizmoState {
+  ViewGizmoMode mode = ViewGizmoMode::None;
+  ViewGizmoSpace space = ViewGizmoSpace::Local;
+  bool use_snap = false;
+  f32 snap_amount = 0.0f;
+  f32 rotate_snap_amount = 0.0f;
+};
+
 class ViewportPanel : public EditorPanelState {
 public:
   flecs::entity editor_camera = {};
@@ -22,6 +64,7 @@ public:
   bool is_viewport_hovered = {};
   bool is_ui_capturing_mouse = {};
   bool is_menubar_hovered = {};
+  bool is_focus_requested = false;
 
   ViewportPanel();
   ~ViewportPanel();
@@ -34,6 +77,39 @@ public:
 
   auto drag_drop(this const ViewportPanel& self) -> void;
 
+  // runs a runtime console command against this viewport's scene and returns the lines it logged
+  auto execute_console(this ViewportPanel& self, std::string_view command) -> std::vector<std::string>;
+
+  u64 rendered_frames = 0;
+
+  // the PNG lands once the viewport has rendered, copied back without stalling the GPU
+  auto capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<ViewCapture>;
+
+  // yaw and pitch in degrees
+  auto camera_pose(this const ViewportPanel& self) -> option<ViewCameraPose>;
+  auto set_camera_pose(
+    this ViewportPanel& self,
+    option<glm::vec3> position,
+    option<glm::vec2> yaw_pitch,
+    option<glm::vec3> look_at,
+    option<f32> fov
+  ) -> std::expected<void, std::string>;
+  auto focus_camera_on(this ViewportPanel& self, flecs::entity entity) -> std::expected<void, std::string>;
+  auto look_through(this ViewportPanel& self, option<flecs::entity> camera) -> std::expected<void, std::string>;
+
+  // uv covers the displayed image, (0, 0) is its top left
+  auto request_pick(this ViewportPanel& self, glm::vec2 uv) -> std::shared_ptr<ViewPick>;
+
+  auto gizmo_state(this const ViewportPanel& self) -> ViewGizmoState;
+  auto set_gizmo(
+    this ViewportPanel& self,
+    option<ViewGizmoMode> mode,
+    option<ViewGizmoSpace> space,
+    option<bool> use_snap,
+    option<f32> snap_amount,
+    option<f32> rotate_snap_amount
+  ) -> ViewGizmoState;
+
   // what the stages recorded into the scene's program read every frame
   glm::uvec2 picking_texel = {};
   bool is_picking = false;
@@ -43,7 +119,37 @@ public:
   vir::Buffer highlight_indices_buffer = {};
 
 private:
-  auto resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void;
+  auto resolve_pending_pick(this ViewportPanel& self, PendingPick& pick) -> option<u32>;
+  auto finish_view_pick(this ViewportPanel& self, option<u32> texel_3d, option<u32> texel_2d) -> void;
+  auto record_captures(this ViewportPanel& self) -> void;
+  auto poll_captures(this ViewportPanel& self) -> void;
+  auto place_camera(this ViewportPanel& self, glm::vec3 position, glm::vec2 yaw_pitch) -> void;
+
+  struct PickRequest {
+    std::shared_ptr<ViewPick> pick = {};
+    glm::vec2 uv = {};
+  };
+
+  struct CaptureRequest {
+    std::shared_ptr<ViewCapture> capture = {};
+    u32 max_size = 0;
+  };
+
+  struct CaptureReadback {
+    std::vector<CaptureRequest> requests = {};
+    BufferID buffer = BufferID::Invalid;
+    vir::SubmitTicket ticket = {};
+    vir::Format format = vir::Format::Undefined;
+    u32 width = 0;
+    u32 height = 0;
+  };
+
+  std::vector<PickRequest> pick_requests = {};
+  bool is_view_pick_issued = false;
+  std::vector<CaptureRequest> capture_requests = {};
+  std::vector<CaptureReadback> capture_readbacks = {};
+  // the editor camera before look_through took it over
+  option<ViewCameraPose> piloted_return_pose = nullopt;
 
   PendingPick pending_pick_2d;
   PendingPick pending_pick_3d;
