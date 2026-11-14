@@ -3,6 +3,7 @@ import gpu;
 import scene;
 import visbuffer;
 import hit;
+import pbr;
 
 #include <fullscreen.slang>
 
@@ -140,17 +141,38 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     };
 
     const f32x3 world_normal = tri.interpolate_normal(deriv.lambda);
-    const TangentFrame frame = build_tangent_frame(
-        world_normal,
-        mul(deriv.ddx, camera_relative_world_positions),
-        mul(deriv.ddy, camera_relative_world_positions),
-        tex_coord_grad.ddx,
-        tex_coord_grad.ddy
-    );
+    let position_dx = mul(deriv.ddx, camera_relative_world_positions);
+    let position_dy = mul(deriv.ddy, camera_relative_world_positions);
+    let uv_dx = tex_coord_grad.ddx;
+    let uv_dy = tex_coord_grad.ddy;
+    const TangentFrame frame = build_tangent_frame(world_normal, position_dx, position_dy, uv_dx, uv_dy);
 
     // biased after the tangent frame, which needs the true uv derivatives
     tex_coord_grad.apply_mip_bias(params.camera.texture_mip_bias);
-    let surface = shade_surface(material, frame, tex_coord_grad);
+    var surface = shade_surface(material, frame, tex_coord_grad);
+
+    if (surface.roughness < 1.0) {
+        // evaluate this triangle's footprint explicitly: screen quad derivatives can cross
+        // unrelated triangles or discarded pixels in a visibility buffer decoder
+        f32x3 normal_derivatives[2];
+        [ForceUnroll]
+        for (i32 axis = 0; axis < 2; axis++) {
+            let bary_offset = axis == 0 ? deriv.ddx : deriv.ddy;
+            let interpolated_normal = mul(deriv.lambda + bary_offset, tri.world_normals);
+            let normal_length_sq = dot(interpolated_normal, interpolated_normal);
+            let vertex_normal = normal_length_sq > 1e-8 ? interpolated_normal * rsqrt(normal_length_sq) : world_normal;
+            var sample_normal = vertex_normal;
+            if (material.flags & MaterialFlag::HasNormalImage) {
+                var normal_sample = tex_coord_grad;
+                // the footprint stays one pixel wide even when texture lod is biased
+                normal_sample.uv += axis == 0 ? uv_dx : uv_dy;
+                let sample_frame = build_tangent_frame(vertex_normal, position_dx, position_dy, uv_dx, uv_dy);
+                sample_normal = sample_frame.to_world(material.sample_tangent_normal(normal_sample));
+            }
+            normal_derivatives[axis] = sample_normal - surface.normal;
+        }
+        surface.roughness = filter_specular_roughness(surface.roughness, normal_derivatives[0], normal_derivatives[1]);
+    }
 
     output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);
     output.normal_color.xy = com::vec3_to_oct(surface.normal);

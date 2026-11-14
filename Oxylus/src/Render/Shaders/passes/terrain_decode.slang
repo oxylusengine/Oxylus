@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import visbuffer;
+import pbr;
 
 #include <fullscreen.slang>
 
@@ -47,7 +48,30 @@ struct TerrainSurface {
     f32x2 metallic_roughness;
     f32 occlusion;
     f32x3 tangent_normal;
+    f32x3 tangent_normal_x;
+    f32x3 tangent_normal_y;
 };
+
+func terrain_normal(f32x2 uv) -> f32x3 {
+    let normal_xz = params.terrain_normalmap.SampleLevel(params.terrain_sampler, uv, 0.0);
+    return normalize(f32x3(normal_xz.x, sqrt(saturate(1.0 - dot(normal_xz, normal_xz))), normal_xz.y));
+}
+
+func terrain_shading_normal(f32x3 tangent_normal, f32x3 geometric_normal, f32x3 tangent, f32x3 bitangent) -> f32x3 {
+    if (abs(dot(normalize(tangent), geometric_normal)) > 0.999) {
+        tangent = f32x3(0.0, 0.0, 1.0);
+    }
+    tangent = normalize(tangent - geometric_normal * dot(tangent, geometric_normal));
+
+    bitangent -= geometric_normal * dot(bitangent, geometric_normal);
+    bitangent -= tangent * dot(bitangent, tangent);
+    let bitangent_length = length(bitangent);
+    bitangent = bitangent_length > 1e-6 ? bitangent / bitangent_length : cross(geometric_normal, tangent);
+
+    let tangent_normal_length = length(tangent_normal);
+    tangent_normal = tangent_normal_length > 1e-6 ? tangent_normal / tangent_normal_length : f32x3(0.0, 0.0, 1.0);
+    return normalize(tangent_normal.x * tangent + tangent_normal.y * bitangent + tangent_normal.z * geometric_normal);
+}
 
 // blends the four splat layers at one projection
 func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) -> TerrainSurface {
@@ -56,6 +80,10 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
     grad.ddx = ddx_uv;
     grad.ddy = ddy_uv;
     grad.apply_mip_bias(params.camera.texture_mip_bias);
+    var normal_sample_x = grad;
+    var normal_sample_y = grad;
+    normal_sample_x.uv += ddx_uv;
+    normal_sample_y.uv += ddy_uv;
 
     TerrainSurface result = {};
     for (var i = 0; i < 4; i++) {
@@ -70,6 +98,8 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
             result.metallic_roughness += f32x2(0.0, 1.0) * weight;
             result.occlusion += weight;
             result.tangent_normal += f32x3(0.0, 0.0, 1.0) * weight;
+            result.tangent_normal_x += f32x3(0.0, 0.0, 1.0) * weight;
+            result.tangent_normal_y += f32x3(0.0, 0.0, 1.0) * weight;
             continue;
         }
 
@@ -80,6 +110,8 @@ func sample_terrain_layers(f32x2 uv, f32x2 ddx_uv, f32x2 ddy_uv, f32x4 weights) 
         result.occlusion += material.sample_occlusion_color(grad) * weight;
 
         result.tangent_normal += material.sample_tangent_normal(grad) * weight;
+        result.tangent_normal_x += material.sample_tangent_normal(normal_sample_x) * weight;
+        result.tangent_normal_y += material.sample_tangent_normal(normal_sample_y) * weight;
     }
 
     return result;
@@ -91,8 +123,7 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     let camera_position = params.camera.position.xyz;
 
     let terrain_uv = params.terrain.world_to_uv(world_position.xz);
-    let normal_xz = params.terrain_normalmap.SampleLevel(params.terrain_sampler, terrain_uv, 0.0);
-    let geometric_normal = normalize(f32x3(normal_xz.x, sqrt(saturate(1.0 - dot(normal_xz, normal_xz))), normal_xz.y));
+    let geometric_normal = terrain_normal(terrain_uv);
 
     let texel = 1.0 / params.camera.resolution;
     let plane_offset = dot(world_position - camera_position, geometric_normal);
@@ -140,6 +171,8 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         surface.metallic_roughness = lerp(surface.metallic_roughness, side.metallic_roughness, triplanar_amount);
         surface.occlusion = lerp(surface.occlusion, side.occlusion, triplanar_amount);
         surface.tangent_normal = lerp(surface.tangent_normal, side.tangent_normal, triplanar_amount);
+        surface.tangent_normal_x = lerp(surface.tangent_normal_x, side.tangent_normal_x, triplanar_amount);
+        surface.tangent_normal_y = lerp(surface.tangent_normal_y, side.tangent_normal_y, triplanar_amount);
 
         // Side projections are (z, y) and (x, y), so +u is +Z or +X and -v is -Y for both.
         let side_tangent = use_zy ? f32x3(0.0, 0.0, 1.0) : f32x3(1.0, 0.0, 0.0);
@@ -147,21 +180,23 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         bitangent = lerp(bitangent, f32x3(0.0, -1.0, 0.0), triplanar_amount);
     }
 
-    if (abs(dot(normalize(tangent), geometric_normal)) > 0.999) {
-        tangent = f32x3(0.0, 0.0, 1.0);
-    }
-    tangent = normalize(tangent - geometric_normal * dot(tangent, geometric_normal));
-
-    bitangent -= geometric_normal * dot(bitangent, geometric_normal);
-    bitangent -= tangent * dot(bitangent, tangent);
-    let bitangent_length = length(bitangent);
-    bitangent = bitangent_length > 1e-6 ? bitangent / bitangent_length : cross(geometric_normal, tangent);
-
-    let tangent_normal_length = length(surface.tangent_normal);
-    let tangent_normal = tangent_normal_length > 1e-6 ? surface.tangent_normal / tangent_normal_length
-                                                      : f32x3(0.0, 0.0, 1.0);
-    let shading_normal = normalize(
-        tangent_normal.x * tangent + tangent_normal.y * bitangent + tangent_normal.z * geometric_normal
+    let shading_normal = terrain_shading_normal(surface.tangent_normal, geometric_normal, tangent, bitangent);
+    let shading_normal_x = terrain_shading_normal(
+        surface.tangent_normal_x,
+        terrain_normal(params.terrain.world_to_uv(world_position.xz + ddx_world.xz)),
+        tangent,
+        bitangent
+    );
+    let shading_normal_y = terrain_shading_normal(
+        surface.tangent_normal_y,
+        terrain_normal(params.terrain.world_to_uv(world_position.xz + ddy_world.xz)),
+        tangent,
+        bitangent
+    );
+    surface.metallic_roughness.y = filter_specular_roughness(
+        surface.metallic_roughness.y,
+        shading_normal_x - shading_normal,
+        shading_normal_y - shading_normal
     );
 
     if (params.terrain.brush_radius > 0.0 && params.brush_hit[0].valid != 0u) {

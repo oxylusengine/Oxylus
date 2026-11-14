@@ -3,6 +3,19 @@ import scene;
 
 public static constexpr f32 MIN_ALPHA = 0.0025;
 
+// broaden the ggx lobe by the normal variation over a render pixel, before lighting or ssr
+public func filter_specular_roughness(f32 perceptual_roughness, f32x3 normal_dx, f32x3 normal_dy) -> f32 {
+    const f32 screen_variance = 0.15;
+    const f32 variance_threshold = 0.2;
+    let variance = screen_variance * (dot(normal_dx, normal_dx) + dot(normal_dy, normal_dy));
+    let kernel_variance = min(2.0 * variance, variance_threshold);
+    let roughness = saturate(perceptual_roughness);
+    let alpha = roughness * roughness;
+
+    // filtering happens in alpha squared, while the gbuffer stores perceptual roughness
+    return sqrt(sqrt(saturate(alpha * alpha + kernel_variance)));
+}
+
 public f32 perceptual_roughness_to_alpha(f32 perceptual_roughness) {
     let alpha = perceptual_roughness * perceptual_roughness;
     return max(alpha, MIN_ALPHA);
