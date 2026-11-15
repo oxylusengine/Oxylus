@@ -336,6 +336,7 @@ public sealed class RuntimeAssetProbe : SceneBehaviour
 
         var positions = new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY };
         var normals = new[] { Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ };
+        var texCoords = new[] { Vector2.Zero, Vector2.UnitX, Vector2.UnitY };
         var triangle = new uint[] { 0, 1, 2 };
         var outOfRange = new uint[] { 0, 1, 3 };
         var partial = new uint[] { 0, 1 };
@@ -344,7 +345,8 @@ public sealed class RuntimeAssetProbe : SceneBehaviour
                  $"partial {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = partial }))} " +
                  $"empty {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions }))} " +
                  $"material {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = triangle, Material = texture }))} " +
-                 $"normals {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals.AsSpan(0, 2), Indices = triangle }))}");
+                 $"normals {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals.AsSpan(0, 2), Indices = triangle }))} " +
+                 $"texcoords {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, TexCoords = texCoords.AsSpan(0, 2), Indices = triangle }))}");
         Log.Info($"runtime model without renderer: {Refusal(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals, Indices = triangle, Material = material }))}");
         Log.Info($"runtime model destroy refused material {Throws(() => Assets.DestroyModel(material))} unknown {Throws(() => Assets.DestroyModel(default))}");
     }

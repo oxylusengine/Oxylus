@@ -95,12 +95,13 @@ public sealed unsafe class AssetHandle : IDisposable
     }
 }
 
-// one mesh of a model made with Assets.CreateModel, a triangle list. Normals are empty or one per position, and the
-// spans are only read during the call
+// one mesh of a model made with Assets.CreateModel, a triangle list. Normals and texture coordinates are empty or one
+// per position, and the spans are only read during the call
 public readonly ref struct MeshSource
 {
     public ReadOnlySpan<Vector3> Positions { get; init; }
     public ReadOnlySpan<Vector3> Normals { get; init; }
+    public ReadOnlySpan<Vector2> TexCoords { get; init; }
     public ReadOnlySpan<uint> Indices { get; init; }
     public AssetId Material { get; init; }
 }
@@ -230,14 +231,16 @@ public static unsafe class Assets
         OxStatus status;
         fixed (Vector3* firstPositions = first.Positions)
         fixed (Vector3* firstNormals = first.Normals)
+        fixed (Vector2* firstTexCoords = first.TexCoords)
         fixed (uint* firstIndices = first.Indices)
         fixed (Vector3* secondPositions = second.Positions)
         fixed (Vector3* secondNormals = second.Normals)
+        fixed (Vector2* secondTexCoords = second.TexCoords)
         fixed (uint* secondIndices = second.Indices)
         fixed (MeshSourceData* data = meshes)
         {
-            meshes[0] = Describe(first, firstPositions, firstNormals, firstIndices);
-            meshes[1] = Describe(second, secondPositions, secondNormals, secondIndices);
+            meshes[0] = Describe(first, firstPositions, firstNormals, firstTexCoords, firstIndices);
+            meshes[1] = Describe(second, secondPositions, secondNormals, secondTexCoords, secondIndices);
             status = Runtime.Native.AssetCreateModel(data, 2, &model);
         }
 
@@ -245,8 +248,8 @@ public static unsafe class Assets
         {
             throw new InvalidOperationException(status == OxStatus.NotFound
                 ? "Couldn't create a model, it takes the renderer"
-                : "Couldn't create a model, are the indices whole triangles within the positions, are the normals one per "
-                  + "position, and is the material a loaded material?");
+                : "Couldn't create a model, are the indices whole triangles within the positions, are the normals and "
+                  + "texture coordinates one per position, and is the material a loaded material?");
         }
 
         return model;
@@ -260,17 +263,24 @@ public static unsafe class Assets
         }
     }
 
-    static MeshSourceData Describe(in MeshSource source, Vector3* positions, Vector3* normals, uint* indices)
+    static MeshSourceData Describe(in MeshSource source, Vector3* positions, Vector3* normals, Vector2* texCoords,
+        uint* indices)
     {
         if (source.Normals.Length != 0 && source.Normals.Length != source.Positions.Length)
         {
             throw new ArgumentException("a mesh needs no normals or one per position");
         }
 
+        if (source.TexCoords.Length != 0 && source.TexCoords.Length != source.Positions.Length)
+        {
+            throw new ArgumentException("a mesh needs no texture coordinates or one per position");
+        }
+
         return new MeshSourceData
         {
             Positions = positions,
             Normals = source.Normals.Length != 0 ? normals : null,
+            TexCoords = source.TexCoords.Length != 0 ? texCoords : null,
             Indices = indices,
             VertexCount = (uint)source.Positions.Length,
             IndexCount = (uint)source.Indices.Length,

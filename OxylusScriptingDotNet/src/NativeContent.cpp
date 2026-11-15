@@ -302,7 +302,7 @@ static auto asset_create_model(const OxMeshSource* meshes, i32 mesh_count, OxAss
     return OxStatus::InvalidArgument;
   }
 
-  static_assert(sizeof(OxVec3) == sizeof(glm::vec3));
+  static_assert(sizeof(OxVec3) == sizeof(glm::vec3) && sizeof(OxVec2) == sizeof(glm::vec2));
   auto sources = ankerl::svector<RuntimeMeshSource, 2>();
   auto triangle_count = 0_sz;
   for (const auto& mesh : std::span(meshes, static_cast<usize>(mesh_count))) {
@@ -325,9 +325,11 @@ static auto asset_create_model(const OxMeshSource* meshes, i32 mesh_count, OxAss
 
     const auto* positions = reinterpret_cast<const glm::vec3*>(mesh.positions);
     const auto* normals = reinterpret_cast<const glm::vec3*>(mesh.normals);
+    const auto* texcoords = reinterpret_cast<const glm::vec2*>(mesh.texcoords);
     sources.push_back(RuntimeMeshSource{
       .positions = std::span(positions, positions ? mesh.vertex_count : 0),
       .normals = std::span(normals, normals ? mesh.vertex_count : 0),
+      .texcoords = std::span(texcoords, texcoords ? mesh.vertex_count : 0),
       .indices = indices,
       .material = material,
     });

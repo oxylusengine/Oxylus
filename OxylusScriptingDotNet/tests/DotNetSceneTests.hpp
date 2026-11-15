@@ -1005,7 +1005,7 @@ TEST_F(DotNetSceneTest, CreatesMaterialsAndRefusesModelsWithoutARenderer) {
   };
   expect_log("runtime material Material loaded True refs 1 read True color 0.75 0.50 0.25 roughness 0.50");
   expect_log("runtime material refused mode True");
-  expect_log("runtime model refused range True partial True empty True material True normals True");
+  expect_log("runtime model refused range True partial True empty True material True normals True texcoords True");
   expect_log("runtime model without renderer: Couldn't create a model, it takes the renderer");
   expect_log("runtime model destroy refused material True unknown True");
 

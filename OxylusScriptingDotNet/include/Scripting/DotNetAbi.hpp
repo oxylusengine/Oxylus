@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 18u
+#define OX_DOTNET_ABI_VERSION 19u
 
 struct ecs_world_t;
 
@@ -290,11 +290,12 @@ struct OxMaterialData {
   OxAssetId occlusion_texture = {};
 };
 
-// one mesh of a model made at runtime: a triangle list, `normals` null or one per position, `material` a loaded
-// material asset or zero. Nothing is kept past the call
+// one mesh of a model made at runtime: a triangle list, `normals` and `texcoords` null or one per position,
+// `material` a loaded material asset or zero. Nothing is kept past the call
 struct OxMeshSource {
   const OxVec3* positions = nullptr;
   const OxVec3* normals = nullptr;
+  const OxVec2* texcoords = nullptr;
   const u32* indices = nullptr;
   u32 vertex_count = 0;
   u32 index_count = 0;
