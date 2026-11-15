@@ -85,6 +85,7 @@ auto SceneManager::new_play_scene(this SceneManager& self, SceneID from) -> Scen
 
   auto copy_scene_id = self.scenes.create_slot(std::make_shared<EditorScene>(copy_scene));
   self.scenes.slot(copy_scene_id)->get()->id = copy_scene_id;
+  self.scenes.slot(copy_scene_id)->get()->source = from;
 
   self.get_scene(copy_scene_id)->play();
 
@@ -161,5 +162,45 @@ auto SceneManager::get_scene(this const SceneManager& self, SceneID scene_id) ->
   auto scene_ptr = self.scenes.slotc(scene_id);
   OX_CHECK_NULL(scene_ptr);
   return *scene_ptr;
+}
+
+auto SceneManager::find_scene(this const SceneManager& self, const SceneID scene_id) -> EditorScene* {
+  ZoneScoped;
+
+  if (scene_id == SceneID::Invalid) {
+    return nullptr;
+  }
+
+  const auto* scene = self.scenes.slotc(scene_id);
+  return scene != nullptr ? scene->get() : nullptr;
+}
+
+auto SceneManager::find_play_scene(this SceneManager& self, const SceneID source) -> EditorScene* {
+  ZoneScoped;
+
+  EditorScene* found = nullptr;
+  self.for_each_scene([&found, source](SceneID, EditorScene& scene) {
+    if (scene.is_playing() && scene.source == source) {
+      found = &scene;
+    }
+  });
+
+  return found;
+}
+
+auto SceneManager::find_edit_scene(this SceneManager& self, const std::filesystem::path& path) -> EditorScene* {
+  ZoneScoped;
+
+  EditorScene* found = nullptr;
+  self.for_each_scene([&found, &path](SceneID, EditorScene& scene) {
+    std::error_code error;
+    const auto is_match = !scene.is_playing() && !scene.get_path().empty() &&
+                          std::filesystem::equivalent(scene.get_path(), path, error);
+    if (is_match) {
+      found = &scene;
+    }
+  });
+
+  return found;
 }
 } // namespace ox

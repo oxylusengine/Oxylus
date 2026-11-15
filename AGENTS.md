@@ -489,6 +489,29 @@ preference:
 - Always check the guard (`if (!guard) ...`) before dereferencing; a failed lookup yields a null
   guard, not an exception.
 
+## MCP server
+
+The editor hosts an MCP server (Streamable HTTP on 127.0.0.1, default port 7780) that lets agents drive it. The
+code lives in `OxylusEditor/src/Mcp/`: `McpHttp.cpp` is the only file that includes httplib, `McpProtocol.cpp` is
+JSON-RPC and the MCP methods, and tools sit in `Mcp/Tools/*.cpp`. `OxylusMcpBridge/` builds `oxmcp`, a stdio proxy
+to that endpoint with `--launch` and `--selftest`, and it must never link the engine.
+
+- **One copy of every operation, on the type that owns it.** Panels and tools call the same code. Scene lookups
+  belong on `SceneManager`, opening and saving scenes on `Editor`, camera, gizmo, pick and capture on
+  `ViewportPanel`, raycasts on `Scene`, serialization on the asset type. `OxylusEditor/src/Actions/` holds only
+  multi-step edits that no single type owns, such as undoable entity and component edits, file moves that carry
+  sidecars, project creation and play/stop. Never add a function that only forwards to another one. Before
+  writing a helper, look for an existing one in the engine and extend it.
+- Action errors are shown to the person in the editor too, so they never name MCP tools. Tools add MCP hints.
+- **Tools run on the main thread** in `McpServer::pump`, at the top of `Editor::update`. The HTTP thread only parses
+  and queues, never touches the scene. Work that outlasts a frame returns `McpResult::pending` with a poll.
+- **Scene mutations go through `EditTransaction`** so they land in the undo history as one step.
+- `StringUtils::escape_str` emits JSON escapes (`\u00xx`), not C ones, so it is safe for `JsonWriter` and the
+  discovery file.
+- Guides for `editor_guide` are markdown in `OxylusEditor/Assets/Mcp/guide/`, the thin agent skill is
+  `OxylusEditor/Assets/Mcp/skills/oxylus-editor/SKILL.md`. The `Tools > MCP` menu copies client config and installs
+  both into a project, only for files that are absent. `OxylusEditor --project <file.oxproj>` opens a project at start.
+
 ## CI
 
 `.github/workflows/xmake.yaml` builds Windows/msvc, Windows/clang-cl, Linux/clang-23, and

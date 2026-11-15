@@ -4,14 +4,21 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
+#include <glm/gtc/color_space.hpp>
+#include <glm/gtc/packing.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <limits>
 #include <vir/Allocator.hpp>
+#include <vir/Module.hpp>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Actions/EntityActions.hpp"
+#include "Actions/SceneActions.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -19,6 +26,7 @@
 #include "Core/App.hpp"
 #include "Core/Enum.hpp"
 #include "Core/Input.hpp"
+#include "Core/JobManager.hpp"
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "OS/File.hpp"
@@ -29,6 +37,7 @@
 #include "Render/Upscaler.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Render/Utils/TextureFormat.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -37,8 +46,52 @@
 #include "Utils/EditorGrid.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/OxMath.hpp"
+#include "Utils/Png.hpp"
+#include "Utils/ThumbnailManager.hpp"
 
 namespace ox {
+static auto capture_bytes_per_pixel(vir::Format format) -> u32 {
+  switch (format) {
+    case vir::Format::RGBA8Unorm  :
+    case vir::Format::RGBA8Srgb   :
+    case vir::Format::BGRA8Unorm  :
+    case vir::Format::BGRA8Srgb   : return 4;
+    case vir::Format::RGBA16Sfloat: return 8;
+    default                       : return 0;
+  }
+}
+
+// RGBA8 with alpha forced opaque, scRGB is read as linear with 1.0 as paper white
+static auto convert_capture_pixels(std::span<const u8> source, vir::Format format, u32 width, u32 height) -> RgbaImage {
+  const auto count = static_cast<usize>(width) * height;
+  auto out = RgbaImage{.pixels = std::vector<u8>(count * 4), .width = width, .height = height};
+  const auto is_bgra = format == vir::Format::BGRA8Unorm || format == vir::Format::BGRA8Srgb;
+  for (usize index = 0; index < count; index++) {
+    auto* texel = &out.pixels[index * 4];
+    if (format == vir::Format::RGBA16Sfloat) {
+      u16 halves[3] = {};
+      std::memcpy(halves, source.data() + index * 4 * sizeof(u16), sizeof(halves));
+      const auto linear = glm::clamp(
+        glm::vec3(glm::unpackHalf1x16(halves[0]), glm::unpackHalf1x16(halves[1]), glm::unpackHalf1x16(halves[2])),
+        0.0f,
+        1.0f
+      );
+      const auto encoded = glm::round(glm::convertLinearToSRGB(linear) * 255.0f);
+      texel[0] = static_cast<u8>(encoded.r);
+      texel[1] = static_cast<u8>(encoded.g);
+      texel[2] = static_cast<u8>(encoded.b);
+    } else {
+      texel[0] = source[index * 4 + (is_bgra ? 2 : 0)];
+      texel[1] = source[index * 4 + 1];
+      texel[2] = source[index * 4 + (is_bgra ? 0 : 2)];
+    }
+
+    texel[3] = 255;
+  }
+
+  return out;
+}
+
 static auto dump_frame_ir(const RendererInstance& renderer_instance) -> void {
   const auto ir = renderer_instance.dump_program();
   if (ir.empty()) {
@@ -395,6 +448,21 @@ ViewportPanel::ViewportPanel() : EditorPanelState("Viewport", ICON_MDI_TERRAIN, 
 }
 
 ViewportPanel::~ViewportPanel() {
+  for (const auto& readback : capture_readbacks) {
+    App::get_rendercontext().destroy_buffer(readback.buffer);
+    for (const auto& request : readback.requests) {
+      request.capture->fail("the viewport was closed");
+    }
+  }
+
+  for (const auto& request : capture_requests) {
+    request.capture->fail("the viewport was closed");
+  }
+
+  for (const auto& request : pick_requests) {
+    request.pick->fail("the viewport was closed");
+  }
+
   for (const auto* pick : {&pending_pick_2d, &pending_pick_3d}) {
     if (pick->buffer != BufferID::Invalid) {
       App::get_rendercontext().destroy_buffer(pick->buffer);
@@ -413,6 +481,13 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
   constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar;
 
   auto& editor = App::mod<Editor>();
+
+  self.poll_captures();
+
+  if (self.is_focus_requested) {
+    self.is_focus_requested = false;
+    ImGui::SetWindowFocus(self.get_id());
+  }
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
@@ -651,8 +726,16 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
         corrected_max_region,
         mouse_pos
       );
-      if (self.mouse_picking_enabled && !self.terrain_brush_enabled) {
-        self.mouse_picking_stages(renderer_instance, picking_texel);
+      auto pick_texel = picking_texel;
+      if (!self.pick_requests.empty() && !self.is_view_pick_issued) {
+        const auto target_size = glm::vec2(picking_target_size);
+        const auto texel = glm::clamp(self.pick_requests.front().uv * target_size, glm::vec2(0.0f), target_size - 1.0f);
+        pick_texel = glm::uvec2(texel);
+      }
+
+      const auto has_view_pick = !self.pick_requests.empty();
+      if ((self.mouse_picking_enabled && !self.terrain_brush_enabled) || has_view_pick) {
+        self.mouse_picking_stages(renderer_instance, pick_texel);
       }
 
       self.update_terrain_brush(
@@ -680,6 +763,9 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
       self.pending_pick_3d.submitted(rendered);
       if (!rendered) {
         OX_LOG_ERROR("failed to render the viewport ({})", std::to_underlying(rendered.error()));
+      } else {
+        self.rendered_frames += 1;
+        self.record_captures();
       }
 
       ImGui::SetCursorPos(
@@ -851,6 +937,17 @@ auto ViewportPanel::on_update(this ViewportPanel& self) -> void {
   cam.zoom = static_cast<float>(editor.editor_cvar.cvar_camera_zoom.get());
 }
 
+auto ViewportPanel::execute_console(this ViewportPanel& self, std::string_view command) -> std::vector<std::string> {
+  ZoneScoped;
+
+  if (self.editor_scene != nullptr && self.editor_scene->is_valid()) {
+    const auto scene = self.editor_scene->get_scene();
+    self.runtime_console.set_scene_cvar_system(&scene->renderer_cvar.system);
+  }
+
+  return self.runtime_console.execute(command);
+}
+
 auto ViewportPanel::set_context(this ViewportPanel& self, const std::shared_ptr<EditorScene>& scene) -> void {
   OX_CHECK_NULL(scene);
 
@@ -891,12 +988,16 @@ auto ViewportPanel::drag_drop(this const ViewportPanel& self) -> void {
         }));
         job_man.pop_job_name();
       } else if (path.extension() == ".oxparticle") {
-        auto asset = import_asset(App::mod<AssetManager>(), path);
-        if (asset) {
-          auto entity = self.editor_scene->get_scene()->create_particle_system_entity(asset);
-          if (entity != flecs::entity::null()) {
-            auto& editor_context = App::mod<Editor>().get_context();
-            editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
+        if (const auto asset = import_asset(App::mod<AssetManager>(), path)) {
+          auto& editor = App::mod<Editor>();
+          const auto entity = edit_scene(
+            editor,
+            *self.editor_scene->get_scene(),
+            "create entity",
+            [&](EditTransaction& tx) { return create_entity_from_asset(tx, asset, flecs::entity::null()); }
+          );
+          if (entity) {
+            editor.get_context().reset(EditorContext::Type::Entity, nullopt, entity.value());
           }
         }
       }
@@ -2215,36 +2316,52 @@ static auto highlight_composite_stage(RenderStageContext& ctx) -> void {
     .set_image_resource("result_attachment", result_attachment);
 }
 
-auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick, bool skip_invalid) -> void {
+auto ViewportPanel::resolve_pending_pick(this ViewportPanel& self, PendingPick& pick) -> option<u32> {
   ZoneScoped;
 
   auto& render_context = App::get_rendercontext();
   if (pick.buffer == BufferID::Invalid || !pick.is_ready(render_context)) {
-    return;
+    return nullopt;
   }
 
   const auto buffer = render_context.buffer(pick.buffer);
   if (const auto invalidated = render_context.persistent->invalidate_buffer(buffer); !invalidated) {
     OX_LOG_ERROR("failed to invalidate pick readback ({})", std::to_underlying(invalidated.error()));
     pick.pending = false;
-    return;
+    return nullopt;
   }
 
   pick.pending = false;
 
   if (!self.editor_scene || self.pending_pick_scene.lock() != self.editor_scene->get_scene()) {
-    return;
+    return nullopt;
   }
 
   u32 texel_data = ~0_u32;
   std::memcpy(&texel_data, buffer.mapped, sizeof(u32));
 
-  // a 2d miss must not clobber the entity picked by the 3d pass
-  if (skip_invalid && texel_data == ~0_u32) {
-    return;
+  return texel_data;
+}
+
+auto ViewportPanel::finish_view_pick(this ViewportPanel& self, option<u32> texel_3d, option<u32> texel_2d) -> void {
+  ZoneScoped;
+
+  const auto pick = self.pick_requests.front().pick;
+  self.pick_requests.erase(self.pick_requests.begin());
+  self.is_view_pick_issued = false;
+
+  if (!texel_3d.has_value() && !texel_2d.has_value()) {
+    return pick->fail("the pick was dropped, the scene changed or the frame failed to render");
   }
 
-  pick_entity(self.editor_scene.get(), texel_data);
+  const auto is_2d_hit = texel_2d.has_value() && *texel_2d != ~0_u32;
+  const auto texel = is_2d_hit ? *texel_2d : texel_3d.value_or(~0_u32);
+  const auto& entities = self.editor_scene->get_scene()->transform_index_entities_map;
+  if (texel != ~0_u32 && entities.contains(texel)) {
+    return pick->finish(entities.at(texel).id());
+  }
+
+  pick->finish(nullopt);
 }
 
 auto ViewportPanel::mouse_picking_stages(
@@ -2252,14 +2369,33 @@ auto ViewportPanel::mouse_picking_stages(
 ) -> void {
   ZoneScoped;
 
-  self.resolve_pending_pick(self.pending_pick_3d, false);
-  self.resolve_pending_pick(self.pending_pick_2d, true);
+  const auto texel_3d = self.resolve_pending_pick(self.pending_pick_3d);
+  const auto texel_2d = self.resolve_pending_pick(self.pending_pick_2d);
+
+  const auto is_pick_in_flight = self.pending_pick_2d.pending || self.pending_pick_3d.pending;
+  if (self.is_view_pick_issued && !is_pick_in_flight) {
+    self.finish_view_pick(texel_3d, texel_2d);
+  } else {
+    if (texel_3d.has_value()) {
+      pick_entity(self.editor_scene.get(), *texel_3d);
+    }
+
+    // a 2d miss must not clobber the entity picked by the 3d pass
+    if (texel_2d.has_value() && *texel_2d != ~0_u32) {
+      pick_entity(self.editor_scene.get(), *texel_2d);
+    }
+  }
+
+  if (!self.is_view_pick_issued) {
+    std::erase_if(self.pick_requests, [](const PickRequest& request) { return request.pick.use_count() == 1; });
+  }
 
   auto& render_context = App::get_rendercontext();
   const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing() || self.vertex_snap.is_active;
-  const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
-                           !self.is_ui_capturing_mouse && !self.is_menubar_hovered && !self.pending_pick_2d.pending &&
-                           !self.pending_pick_3d.pending;
+  const auto is_view_pick_requested = !self.pick_requests.empty() && !self.is_view_pick_issued && !is_pick_in_flight;
+  const bool is_click_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
+                             !self.is_ui_capturing_mouse && !self.is_menubar_hovered && !is_pick_in_flight;
+  const bool should_pick = is_click_pick || is_view_pick_requested;
 
   self.picking_texel = picking_texel;
   self.picking_terrain_index = get_terrain_transform_index(
@@ -2292,6 +2428,7 @@ auto ViewportPanel::mouse_picking_stages(
       self.pending_pick_2d.request();
       self.pending_pick_3d.request();
       self.pending_pick_scene = self.editor_scene->get_scene();
+      self.is_view_pick_issued = is_view_pick_requested;
     }
 
     renderer_instance->add_stage_after(
@@ -2609,8 +2746,7 @@ static auto draw_debugger_wait_popup(bool& is_waiting) -> bool {
 
   ImGui::EndPopup();
 
-  // the scripts may have changed since Play was pressed
-  return should_play && scripts.prepare_for_play();
+  return should_play;
 }
 #endif
 
@@ -2627,24 +2763,16 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, UI::scale(ImVec2(1.0f, 1.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI::scale(1.0f));
 
-    auto& event_system = App::get_event_system();
-
     auto is_scene_playing = self.editor_scene->is_playing();
 
-    auto should_play = false;
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
-#ifdef OX_DOTNET
-      auto& editor = App::mod<Editor>();
-      // waits for the build when the C# scripts changed, and stays in edit mode while they don't compile
-      const auto is_ready = editor.csharp_scripts.prepare_for_play();
-      const auto is_debugger_wanted = editor.editor_cvar.cvar_wait_for_debugger.as_bool() &&
-                                      editor.csharp_scripts.can_attach_debugger();
-      self.is_waiting_for_debugger = is_ready && is_debugger_wanted;
-      should_play = is_ready && !is_debugger_wanted;
-#else
-      should_play = true;
-#endif
+      const auto started = play_scene(App::mod<Editor>(), *self.editor_scene, true);
+      if (!started) {
+        OX_LOG_ERROR("{}", started.error());
+      }
+
+      self.is_waiting_for_debugger = started == PlayStart::WaitingForDebugger;
     }
     ImGui::EndDisabled();
 
@@ -2652,21 +2780,340 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
 
     ImGui::BeginDisabled(!is_scene_playing);
     if (ImGui::Button(ICON_MDI_STOP, button_size)) {
-      std::ignore = event_system.emit<Editor::SceneStopEvent>(Editor::SceneStopEvent(self.editor_scene->get_id()));
+      std::ignore = stop_scene(App::mod<Editor>(), *self.editor_scene);
     }
     ImGui::EndDisabled();
 
     ImGui::PopStyleVar(3);
 
 #ifdef OX_DOTNET
-    should_play = draw_debugger_wait_popup(self.is_waiting_for_debugger) || should_play;
-#endif
-
-    if (should_play) {
-      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+    if (draw_debugger_wait_popup(self.is_waiting_for_debugger)) {
+      if (const auto started = play_scene(App::mod<Editor>(), *self.editor_scene, false); !started) {
+        OX_LOG_ERROR("{}", started.error());
+      }
     }
+#endif
   }
   ImGui::EndGroup();
+}
+
+auto ViewportPanel::capture(this ViewportPanel& self, u32 max_size) -> std::shared_ptr<AsyncResult<ViewCapture>> {
+  ZoneScoped;
+
+  auto capture = std::make_shared<AsyncResult<ViewCapture>>();
+  self.capture_requests.push_back({.capture = capture, .max_size = max_size});
+
+  return capture;
+}
+
+auto ViewportPanel::record_captures(this ViewportPanel& self) -> void {
+  ZoneScoped;
+
+  std::erase_if(self.capture_requests, [](const CaptureRequest& request) { return request.capture.use_count() == 1; });
+  if (self.capture_requests.empty() || !self.scene_target.texture) {
+    return;
+  }
+
+  const auto fail_all = [&self](const std::string& message) {
+    for (const auto& request : self.capture_requests) {
+      request.capture->fail(message);
+    }
+
+    self.capture_requests.clear();
+  };
+
+  const auto format = self.scene_target.texture.get_format();
+  const auto extent = self.scene_target.texture.get_extent();
+  const auto bytes_per_pixel = capture_bytes_per_pixel(format);
+  if (bytes_per_pixel == 0) {
+    return fail_all(fmt::format("the viewport target format {} cannot be captured", format_name(format)));
+  }
+
+  auto& render_context = App::get_rendercontext();
+  const auto buffer = render_context.allocate_buffer({
+    .size = static_cast<u64>(extent.width) * extent.height * bytes_per_pixel,
+    .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    .location = vir::MemoryLocation::GpuToCpu,
+    .name = "viewport capture readback",
+  });
+  if (!buffer) {
+    return fail_all("failed to allocate the capture readback buffer");
+  }
+
+  auto module = vir::Module{};
+  const auto source = self.scene_target.texture.import(module, vir::Access::FragmentSampled);
+  const auto copied = module.copy_image_to_buffer(
+    source,
+    module.import_buffer(render_context.buffer(*buffer), vir::Access::None)
+  );
+  module.export_to(copied, vir::Access::HostRead);
+  module.export_to(source, vir::Access::FragmentSampled);
+
+  const auto program = render_context.compile(std::move(module));
+  if (!program) {
+    render_context.destroy_buffer(*buffer);
+    return fail_all(fmt::format("failed to compile the capture copy ({})", std::to_underlying(program.error())));
+  }
+
+  const auto ticket = render_context.execute(*program);
+  if (!ticket) {
+    render_context.destroy_buffer(*buffer);
+    return fail_all(fmt::format("failed to submit the capture copy ({})", std::to_underlying(ticket.error())));
+  }
+
+  self.capture_readbacks.push_back({
+    .requests = std::move(self.capture_requests),
+    .buffer = *buffer,
+    .ticket = *ticket,
+    .format = format,
+    .width = extent.width,
+    .height = extent.height,
+  });
+  self.capture_requests.clear();
+}
+
+auto ViewportPanel::poll_captures(this ViewportPanel& self) -> void {
+  ZoneScoped;
+
+  if (self.capture_readbacks.empty()) {
+    return;
+  }
+
+  auto& render_context = App::get_rendercontext();
+  std::erase_if(self.capture_readbacks, [&render_context](CaptureReadback& readback) {
+    if (!render_context.is_retired(readback.ticket)) {
+      return false;
+    }
+
+    const auto buffer = render_context.buffer(readback.buffer);
+    const auto invalidated = render_context.persistent->invalidate_buffer(buffer);
+    auto pixels = std::make_shared<std::vector<u8>>();
+    if (invalidated) {
+      const auto size = static_cast<usize>(readback.width) * readback.height * capture_bytes_per_pixel(readback.format);
+      pixels->resize(size);
+      std::memcpy(pixels->data(), buffer.mapped, size);
+    }
+
+    render_context.destroy_buffer(readback.buffer);
+
+    for (const auto& request : readback.requests) {
+      if (!invalidated) {
+        request.capture->fail("failed to read the capture back from the GPU");
+        continue;
+      }
+
+      auto& job_manager = App::get_job_manager();
+      job_manager.push_job_name("ViewportCapture");
+      job_manager.submit(
+        Job::create([capture = request.capture,
+                     max_size = request.max_size,
+                     pixels,
+                     format = readback.format,
+                     width = readback.width,
+                     height = readback.height]() {
+          ZoneScopedN("encode viewport capture");
+
+          const auto image = downscale_rgba(convert_capture_pixels(*pixels, format, width, height), max_size);
+          auto png = encode_png(image.pixels, image.width, image.height);
+          if (png.empty()) {
+            return capture->fail("the PNG could not be encoded");
+          }
+
+          capture->finish({.png = std::move(png), .width = image.width, .height = image.height});
+        })
+      );
+      job_manager.pop_job_name();
+    }
+
+    return true;
+  });
+}
+
+auto ViewportPanel::camera_pose(this const ViewportPanel& self) -> option<ViewCameraPose> {
+  if (!self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>()) {
+    return nullopt;
+  }
+
+  const auto& camera = self.editor_camera.get<CameraComponent>();
+  return ViewCameraPose{
+    .position = self.editor_camera.get<TransformComponent>().position,
+    .yaw_pitch = glm::degrees(self.camera_yaw_pitch),
+    .fov = camera.fov,
+    .near_clip = camera.near_clip,
+    .far_clip = camera.far_clip,
+    .viewport_size = {self.scaled_render_size.x, self.scaled_render_size.y},
+  };
+}
+
+auto ViewportPanel::place_camera(this ViewportPanel& self, glm::vec3 position, glm::vec2 new_yaw_pitch) -> void {
+  auto& transform = self.editor_camera.get_mut<TransformComponent>();
+  transform.position = position;
+  transform.rotation = glm::quat(glm::vec3(new_yaw_pitch.y, new_yaw_pitch.x, 0.0f));
+
+  self.camera_position_target = position;
+  self.camera_yaw_pitch = new_yaw_pitch;
+  self.camera_yaw_pitch_target = new_yaw_pitch;
+  self.translation_velocity = glm::vec3(0.0f);
+  self.rotation_velocity = glm::vec2(0.0f);
+
+  self.editor_camera.modified<TransformComponent>();
+}
+
+auto ViewportPanel::set_camera_pose(
+  this ViewportPanel& self,
+  option<glm::vec3> position,
+  option<glm::vec2> yaw_pitch,
+  option<glm::vec3> look_at,
+  option<f32> fov
+) -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  if (!self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>()) {
+    return std::unexpected("this viewport has no editor camera");
+  }
+
+  const auto new_position = position.value_or(self.editor_camera.get<TransformComponent>().position);
+  auto new_yaw_pitch = self.camera_yaw_pitch;
+  if (look_at.has_value()) {
+    const auto offset = *look_at - new_position;
+    if (glm::length(offset) < 1e-4f) {
+      return std::unexpected("look_at is at the camera position");
+    }
+
+    const auto direction = glm::normalize(offset);
+    new_yaw_pitch = {std::atan2(-direction.x, -direction.z), std::asin(glm::clamp(direction.y, -1.0f, 1.0f))};
+  } else if (yaw_pitch.has_value()) {
+    new_yaw_pitch = glm::radians(*yaw_pitch);
+  }
+
+  constexpr auto max_pitch = glm::radians(89.9f);
+  new_yaw_pitch.y = glm::clamp(new_yaw_pitch.y, -max_pitch, max_pitch);
+
+  if (self.piloted_camera) {
+    std::ignore = self.look_through(nullopt);
+  }
+
+  self.place_camera(new_position, new_yaw_pitch);
+
+  if (fov.has_value()) {
+    self.editor_camera.get_mut<CameraComponent>().fov = *fov;
+    self.editor_camera.modified<CameraComponent>();
+  }
+
+  return {};
+}
+
+auto ViewportPanel::focus_camera_on(this ViewportPanel& self, flecs::entity entity)
+  -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  if (!entity.is_alive() || !entity.has<TransformComponent>()) {
+    return std::unexpected("the entity has no transform to focus on");
+  }
+
+  if (!self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>()) {
+    return std::unexpected("this viewport has no editor camera");
+  }
+
+  // same offset as the F shortcut
+  const auto& forward = self.editor_camera.get<CameraComponent>().forward;
+  return self.set_camera_pose(entity.get<TransformComponent>().position - 4.0f * forward, nullopt, nullopt, nullopt);
+}
+
+auto ViewportPanel::look_through(this ViewportPanel& self, option<flecs::entity> camera)
+  -> std::expected<void, std::string> {
+  ZoneScoped;
+
+  if (!self.editor_camera.is_alive() || !self.editor_camera.has<CameraComponent>()) {
+    return std::unexpected("this viewport has no editor camera");
+  }
+
+  if (camera.has_value()) {
+    if (!camera->is_alive() || !camera->has<CameraComponent>() || !camera->has<TransformComponent>()) {
+      return std::unexpected("the entity is not a camera");
+    }
+
+    if (*camera == self.editor_camera) {
+      return std::unexpected("the editor camera cannot look through itself");
+    }
+
+    if (!self.piloted_camera) {
+      self.piloted_return_pose = self.camera_pose();
+    }
+
+    self.piloted_camera = *camera;
+    return {};
+  }
+
+  self.piloted_camera = {};
+  const auto pose = self.piloted_return_pose.value_or(*self.camera_pose());
+  self.piloted_return_pose = nullopt;
+  self.place_camera(pose.position, glm::radians(pose.yaw_pitch));
+  self.editor_camera.get_mut<CameraComponent>().fov = pose.fov;
+  self.editor_camera.modified<CameraComponent>();
+
+  return {};
+}
+
+auto ViewportPanel::request_pick(this ViewportPanel& self, glm::vec2 uv) -> std::shared_ptr<ViewPick> {
+  ZoneScoped;
+
+  auto pick = std::make_shared<ViewPick>();
+  self.pick_requests.push_back({.pick = pick, .uv = glm::clamp(uv, glm::vec2(0.0f), glm::vec2(1.0f))});
+
+  return pick;
+}
+
+auto ViewportPanel::gizmo_state(this const ViewportPanel& self) -> ViewGizmoState {
+  auto mode = ViewGizmoMode::None;
+  switch (self.gizmo_type) {
+    case ImGuizmo::TRANSLATE: mode = ViewGizmoMode::Translate; break;
+    case ImGuizmo::ROTATE   : mode = ViewGizmoMode::Rotate; break;
+    case ImGuizmo::SCALE    : mode = ViewGizmoMode::Scale; break;
+    case ImGuizmo::UNIVERSAL: mode = ViewGizmoMode::Universal; break;
+    case ImGuizmo::BOUNDS   : mode = ViewGizmoMode::Bounds; break;
+    default                 : break;
+  }
+
+  return {
+    .mode = mode,
+    .space = self.gizmo_mode == ImGuizmo::WORLD ? ViewGizmoSpace::World : ViewGizmoSpace::Local,
+    .use_snap = self.use_snap,
+    .snap_amount = self.snap_amount,
+    .rotate_snap_amount = self.rotate_snap_amount,
+  };
+}
+
+auto ViewportPanel::set_gizmo(
+  this ViewportPanel& self,
+  option<ViewGizmoMode> mode,
+  option<ViewGizmoSpace> space,
+  option<bool> use_snap,
+  option<f32> snap_amount,
+  option<f32> rotate_snap_amount
+) -> ViewGizmoState {
+  ZoneScoped;
+
+  if (mode.has_value()) {
+    switch (*mode) {
+      case ViewGizmoMode::None     : self.gizmo_type = -1; break;
+      case ViewGizmoMode::Translate: self.gizmo_type = ImGuizmo::TRANSLATE; break;
+      case ViewGizmoMode::Rotate   : self.gizmo_type = ImGuizmo::ROTATE; break;
+      case ViewGizmoMode::Scale    : self.gizmo_type = ImGuizmo::SCALE; break;
+      case ViewGizmoMode::Universal: self.gizmo_type = ImGuizmo::UNIVERSAL; break;
+      case ViewGizmoMode::Bounds   : self.gizmo_type = ImGuizmo::BOUNDS; break;
+    }
+  }
+
+  if (space.has_value()) {
+    self.gizmo_mode = *space == ViewGizmoSpace::World ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+  }
+
+  self.use_snap = use_snap.value_or(self.use_snap);
+  self.snap_amount = snap_amount.value_or(self.snap_amount);
+  self.rotate_snap_amount = rotate_snap_amount.value_or(self.rotate_snap_amount);
+
+  return self.gizmo_state();
 }
 
 } // namespace ox

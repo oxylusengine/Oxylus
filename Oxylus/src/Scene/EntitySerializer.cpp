@@ -3,9 +3,49 @@
 #include <flecs/addons/meta.h>
 
 namespace ox {
+struct UuidCollector : IEntitySerializer {
+  const u8* base = nullptr;
+  flecs::entity_t uuid_type = 0;
+  ankerl::svector<UuidField, 4> fields = {};
+
+  UuidCollector(flecs::world& world_, const void* base_)
+      : IEntitySerializer(world_),
+        base(static_cast<const u8*>(base_)),
+        uuid_type(world_.entity<UUID>().id()) {}
+
+  auto on_struct(std::string_view, flecs::meta::op_t* ops, i32 op_count, void* struct_base) -> void override {
+    serialize_ops(ops + 1, op_count - 1, struct_base);
+  }
+
+  auto on_opaque_value(std::string_view, flecs::entity_t field_type, void* field_ptr, flecs::entity_t, const void*)
+    -> void override {
+    if (field_type != uuid_type) {
+      return;
+    }
+
+    fields.push_back(
+      {.offset = static_cast<usize>(static_cast<const u8*>(field_ptr) - base), .uuid = *static_cast<UUID*>(field_ptr)}
+    );
+  }
+};
+
+auto collect_uuid_fields(flecs::world& world, const flecs::entity type, const void* value)
+  -> ankerl::svector<UuidField, 4> {
+  ZoneScoped;
+
+  if (value == nullptr || type.id() == 0) {
+    return {};
+  }
+
+  auto collector = UuidCollector(world, value);
+  collector.serialize(type, const_cast<void*>(value));
+  return std::move(collector.fields);
+}
+
 auto IEntitySerializer::serialize(flecs::entity type, void* component) -> void {
   ZoneScoped;
 
+  component_type = type;
   if (type.has<flecs::TypeSerializer>()) {
     const auto& ts = type.get<flecs::TypeSerializer>();
     auto* ops = ecs_vec_first_t(&ts.ops, flecs::meta::op_t);
@@ -39,7 +79,7 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       case EcsOpChar: {
         on_primitive(name, static_cast<c8*>(ptr));
       } break;
-      case EcsOpU8:
+      case EcsOpU8  :
       case EcsOpByte: {
         on_primitive(name, static_cast<u8*>(ptr));
       } break;
@@ -74,7 +114,8 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       } break;
 
       case EcsOpEntity: {
-        on_entity(name, static_cast<flecs::entity*>(ptr));
+        // reflection stores entity members as a bare id, not the world-carrying flecs::entity
+        on_entity(name, static_cast<flecs::entity_t*>(ptr));
       } break;
 
       case EcsOpForward: {
@@ -108,8 +149,8 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
       } break;
 
       // these cannot be serialized
-      case EcsOpPop:
-      case EcsOpScope:
+      case EcsOpPop      :
+      case EcsOpScope    :
       case EcsOpPrimitive: {
       } break;
 
@@ -117,11 +158,11 @@ auto IEntitySerializer::serialize_ops(flecs::meta::op_t* ops, i32 op_count, void
         on_enum(name, op.underlying_kind, op.type, ptr);
       } break;
 
-      case EcsOpBitmask:
-      case EcsOpPushArray:
-      case EcsOpPushVector:
+      case EcsOpBitmask     :
+      case EcsOpPushArray   :
+      case EcsOpPushVector  :
       case EcsOpOpaqueStruct:
-      case EcsOpOpaqueArray:
+      case EcsOpOpaqueArray :
       case EcsOpOpaqueVector: {
       } break;
     }
@@ -166,11 +207,11 @@ auto JsonEntitySerializer::on_string(std::string_view name, const c8** str) -> v
   }
 }
 
-auto JsonEntitySerializer::on_entity(std::string_view name, flecs::entity* entity) -> void {
+auto JsonEntitySerializer::on_entity(std::string_view name, flecs::entity_t* entity) -> void {
   ZoneScoped;
 
-  if (entity && entity->is_valid()) {
-    writer[name] = entity->name().c_str();
+  if (entity && *entity != 0 && ecs_is_alive(world, *entity)) {
+    writer[name] = flecs::entity(world, *entity).name().c_str();
   }
 }
 

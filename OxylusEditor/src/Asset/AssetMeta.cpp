@@ -131,6 +131,14 @@ auto export_asset(AssetManager& asset_man, const UUID& uuid, const std::filesyst
   if (!asset)
     return false;
 
+  const auto asset_type = asset->type;
+  asset.reset();
+
+  if (!is_exportable(asset_type)) {
+    OX_LOG_ERROR("Cannot export unsupported asset type {}.", AssetManager::to_asset_type_sv(asset_type));
+    return false;
+  }
+
   const auto meta_path = meta_file_path(path);
   if (std::filesystem::exists(meta_path)) {
     if (auto existing_meta = read_meta_file(meta_path)) {
@@ -142,18 +150,10 @@ auto export_asset(AssetManager& asset_man, const UUID& uuid, const std::filesyst
     }
   }
 
-  const auto asset_type = asset->type;
-  asset.reset();
-
   JsonWriter writer{};
   begin_asset_meta(writer, uuid, asset_type);
 
   switch (asset_type) {
-    case AssetType::Texture:
-    case AssetType::Model  : {
-      OX_LOG_ERROR("Cannot export unsupported asset type {}.", AssetManager::to_asset_type_sv(asset_type));
-      return false;
-    }
     case AssetType::Scene: {
       if (!export_scene(asset_man, uuid, writer, path))
         return false;

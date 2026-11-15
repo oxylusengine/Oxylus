@@ -49,6 +49,7 @@ enum class FileType {
 // Resolves what a file on disk is, including the meta-file case where a standalone `.oxasset`
 // stands in for the asset itself rather than describing a sibling source.
 auto classify_file_type(const std::filesystem::path& path) -> FileType;
+auto file_type_label(FileType type) -> const char*;
 
 class ContentPanel : public EditorPanelState {
 public:
@@ -120,8 +121,6 @@ private:
   std::filesystem::path directory_to_delete;
 
   std::unique_ptr<filewatch::FileWatch<std::string>> filewatch;
-
-  auto create_csharp_script(this ContentPanel& self) -> void;
 
   auto draw_context_menu_items(this ContentPanel& self, const std::filesystem::path& context, bool isDir)
     -> std::filesystem::path;

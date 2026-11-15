@@ -54,6 +54,17 @@ auto os::thread_id() -> i64 {
   return GetCurrentThreadId();
 }
 
+auto os::process_id() -> i64 { return GetCurrentProcessId(); }
+
+auto os::local_time(const std::time_t time) -> option<std::tm> {
+  auto local = std::tm{};
+  if (localtime_s(&local, &time) != 0) {
+    return nullopt;
+  }
+
+  return local;
+}
+
 auto os::set_thread_name(std::string_view name) -> void {
   ZoneScoped;
 

@@ -9,6 +9,9 @@ class EditorScene {
 public:
   enum class SceneState { Edit, Play } scene_state = SceneState::Edit;
 
+  // the edit scene a play scene was copied from
+  SceneID source = SceneID::Invalid;
+
   EditorScene() : scene(std::make_shared<Scene>()) {}
   EditorScene(const std::shared_ptr<Scene>& s) : scene(s) {}
 
@@ -47,6 +50,20 @@ public:
   auto load_default_scene(this SceneManager& self, SceneID scene_id) -> void;
 
   auto get_scene(this const SceneManager& self, SceneID scene_id) -> std::shared_ptr<EditorScene>;
+  auto find_scene(this const SceneManager& self, SceneID scene_id) -> EditorScene*;
+  auto find_play_scene(this SceneManager& self, SceneID source) -> EditorScene*;
+  auto find_edit_scene(this SceneManager& self, const std::filesystem::path& path) -> EditorScene*;
+
+  template <typename Fn>
+  auto for_each_scene(this SceneManager& self, Fn&& fn) -> void {
+    ZoneScoped;
+
+    self.scenes.for_each_active_id([&](SceneID id, const std::shared_ptr<EditorScene>& scene) {
+      if (scene != nullptr) {
+        fn(id, *scene);
+      }
+    });
+  }
 
 private:
   SlotMap<std::shared_ptr<EditorScene>, SceneID> scenes = {};

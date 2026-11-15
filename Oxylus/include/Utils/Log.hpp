@@ -57,7 +57,7 @@ public:
   #elif defined(OX_PLATFORM_LINUX)
     #include <signal.h>
     #define OX_DEBUGBREAK() raise(SIGTRAP)
-  #elif defined(OX_PLATFORM_MACOS)
+  #elif defined(OX_PLATFORM_MACOSX)
     #define OX_DEBUGBREAK()
   #else
     #define OX_DEBUGBREAK()

@@ -108,6 +108,48 @@ auto EditorSettingsPanel::draw_general_tab(this EditorSettingsPanel& self) -> vo
     ImGui::TextWrapped("{root} is the project directory, empty uses the system default");
     ImGui::TextWrapped("VS Code: code {root} --goto {file}:{line}:{column}");
     ImGui::PopStyleColor();
+
+    ImGui::SeparatorText("MCP");
+
+    auto& cvar = editor.editor_cvar;
+    auto is_mcp_enabled = cvar.cvar_mcp_enabled.as_bool();
+    if (ImGui::Checkbox("Enabled##mcp", &is_mcp_enabled)) {
+      cvar.cvar_mcp_enabled.set(is_mcp_enabled ? 1 : 0);
+      cvar.save();
+    }
+
+    if (!self.is_mcp_port_active) {
+      self.mcp_port_edit = cvar.cvar_mcp_port.get();
+    }
+    ImGui::InputInt("Port##mcp", &self.mcp_port_edit, 0);
+    self.is_mcp_port_active = ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      cvar.cvar_mcp_port.set(std::clamp(self.mcp_port_edit, 1, 65535));
+      cvar.save();
+    }
+
+    if (!self.is_mcp_token_active) {
+      self.mcp_token_edit = cvar.cvar_mcp_token.get();
+    }
+    ImGui::InputTextWithHint(
+      "##mcp_token",
+      "token, empty for none",
+      &self.mcp_token_edit,
+      ImGuiInputTextFlags_Password
+    );
+    self.is_mcp_token_active = ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      cvar.cvar_mcp_token.set(std::string(self.mcp_token_edit));
+      cvar.save();
+    }
+
+    if (editor.mcp_server.is_running) {
+      ImGui::TextWrapped("listening on http://127.0.0.1:%u/mcp", static_cast<u32>(editor.mcp_server.bound_port));
+    } else if (!editor.mcp_server.last_error.empty()) {
+      ImGui::TextWrapped("%s", editor.mcp_server.last_error.c_str());
+    } else {
+      ImGui::TextUnformatted("not running");
+    }
   }
   ImGui::EndChild();
 }

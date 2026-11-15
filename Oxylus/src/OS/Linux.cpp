@@ -68,6 +68,17 @@ auto os::thread_id() -> i64 {
   return syscall(__NR_gettid);
 }
 
+auto os::process_id() -> i64 { return getpid(); }
+
+auto os::local_time(const std::time_t time) -> option<std::tm> {
+  auto local = std::tm{};
+  if (localtime_r(&time, &local) == nullptr) {
+    return nullopt;
+  }
+
+  return local;
+}
+
 auto os::set_thread_name(std::string_view name) -> void {
   ZoneScoped;
   memory::ScopedStack stack;

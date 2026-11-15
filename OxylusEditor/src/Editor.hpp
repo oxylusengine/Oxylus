@@ -4,6 +4,7 @@
 #include <vir/Fwd.hpp>
 
 #include "Core/EventSystem.hpp"
+#include "Mcp/McpServer.hpp"
 #include "Panels/EditorPanelRegistry.hpp"
 #include "Panels/MainViewportPanel.hpp"
 #include "Panels/SceneHierarchyPanel.hpp"
@@ -22,6 +23,9 @@
 #endif
 
 namespace ox {
+template <typename T>
+struct AsyncResult;
+
 class Editor {
 public:
   constexpr static auto MODULE_NAME = "Editor";
@@ -56,6 +60,8 @@ public:
   std::unique_ptr<Project> active_project = nullptr;
   // Set when a project opens, consumed once its asset scan has registered everything the scene names.
   option<std::filesystem::path> pending_start_scene = nullopt;
+  // from `--project`, opened on the first update
+  option<std::filesystem::path> startup_project = nullopt;
 
   EditorTheme editor_theme;
 
@@ -64,10 +70,14 @@ public:
   // Layout
   ImGuiID dockspace_id;
   EditorLayout current_layout = EditorLayout::Classic;
+  // applied at the start of the next drawn frame, the dock builder needs an ImGui frame
+  option<EditorLayout> pending_layout = nullopt;
 
   std::unique_ptr<UndoRedoSystem> undo_redo_system = nullptr;
 
   NotificationSystem notification_system = {};
+
+  McpServer mcp_server = {};
 
 #ifdef OX_DOTNET
   CSharpScripts csharp_scripts;
@@ -85,14 +95,16 @@ public:
   // Removes all viewports then adds one and resets the SceneManager
   auto reset(this Editor& self) -> void;
 
-  auto new_scene(this Editor& self) -> void;
+  auto new_scene(this Editor& self) -> EditorScene*;
 
   // Loads the scene from the path and appends the scene to the first viewport panel
-  auto open_scene(const std::filesystem::path& path) -> bool;
+  auto open_scene(this Editor& self, const std::filesystem::path& path) -> std::expected<EditorScene*, std::string>;
 
   auto open_scene_file_dialog() -> void;
   auto save_scene() -> void;
   auto save_scene_as() -> void;
+  auto save_scene_to(this Editor& self, EditorScene& scene, option<std::filesystem::path> path)
+    -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string>;
 
   auto get_context() -> EditorContext& { return editor_context; }
 
@@ -108,6 +120,11 @@ public:
   auto set_docking_layout(this Editor& self, EditorLayout layout) -> void;
   auto reset_current_docking_layout() -> void;
 
+  // refuses when a cook is already running or no assets are mounted, the result is the output folder once the cook
+  // finishes
+  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder)
+    -> std::expected<std::shared_ptr<AsyncResult<std::filesystem::path>>, std::string>;
+
 private:
   // Context
   EditorContext editor_context = {};
@@ -121,16 +138,11 @@ private:
 
   auto save_project(const std::string& path) -> void;
 
-  // Terrain brush edits have to come back off the GPU before the save job can write them, so the
-  // whole save is deferred to the main thread and only the file write runs on a worker.
-  static auto submit_scene_save(EditorScene* scene, std::filesystem::path path) -> void;
-
   // Points the terrain at an edits asset (creating one next to the scene the first time it is
   // painted) and refreshes its payload from the GPU. Returns the file the asset exports to.
   static auto sync_terrain_edits_asset(Scene& scene, const std::filesystem::path& scene_path) -> std::filesystem::path;
 
   auto draw_menubar(this Editor& self) -> void;
-  auto cook_assets_into(this Editor& self, const std::filesystem::path& folder) -> void;
   void draw_bottom_toolbar(this Editor& self, float height);
 
   auto undo() const -> void;

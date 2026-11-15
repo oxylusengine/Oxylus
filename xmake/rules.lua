@@ -22,8 +22,21 @@ on_config(function(target)
   end
 end)
 
+-- OX_PLATFORM_*, public so the engine's consumers see them too
+rule("ox.platform_defines")
+  on_load(function (target)
+    if target:is_plat("windows") then
+      target:add("defines", "OX_PLATFORM_WINDOWS", { public = true })
+    elseif target:is_plat("linux") then
+      target:add("defines", "OX_PLATFORM_LINUX", { public = true })
+    elseif target:is_plat("macosx") then
+      target:add("defines", "OX_PLATFORM_MACOSX", { public = true })
+    end
+  end)
+rule_end()
+
 rule("ox.install_resources")
-set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json",
+set_extensions(".png", ".ktx", ".ktx2", ".dds", ".jpg", ".jpeg", ".mp3", ".wav", ".ogg", ".flac", ".json", ".md",
   ".otf", ".ttf", ".txt", ".glb", ".gltf", ".oxasset", ".oxscene", ".oxparticle", ".oxcine", ".oxterrain", ".rml", ".rcss")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
   local output_dir = target:extraconf("rules", "ox.install_resources", "output_dir") or ""

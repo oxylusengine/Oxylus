@@ -38,7 +38,7 @@ public:
 
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.
-  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid) -> bool;
+  auto draw_asset_field(this InspectorPanel& self, std::string_view label, AssetType field_type, UUID& uuid) -> bool;
 
   // switches an animation field between the clips imported from the same model
   auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool;
@@ -68,7 +68,7 @@ private:
   std::filesystem::path resolved_asset_path = {};
   UUID resolved_asset_uuid = UUID(nullptr);
 
-  auto draw_component_context_menu(bool& remove_component, flecs::entity entity, flecs::id id) -> void;
+  auto draw_component_context_menu(bool& is_remove_requested, flecs::entity entity, flecs::id id) -> void;
 
   Scene* scene_;
   bool rename_entity_ = false;

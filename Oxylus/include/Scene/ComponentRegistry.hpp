@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <ankerl/svector.h>
 #include <array>
 #include <cstring>
 #include <flecs.h>
@@ -85,12 +86,32 @@ auto short_type_name() -> const c8* {
   return last_scope != nullptr ? last_scope + 1 : full_name;
 }
 
+enum class AssetType : u32;
+
+struct AssetField {
+  const c8* member = nullptr;
+  AssetType type = {};
+};
+
+// on a component's entity, the asset type each of its uuid members names
+struct AssetFields {
+  ankerl::svector<AssetField, 4> fields = {};
+};
+
+auto asset_field_type(flecs::entity component, std::string_view member) -> AssetType;
+
 struct ComponentBuilder {
   flecs::untyped_component component;
 
   template <typename... Tags>
   auto tags(this ComponentBuilder self) -> ComponentBuilder {
     (self.component.add<Tags>(), ...);
+    return self;
+  }
+
+  template <auto Member>
+  auto asset(this ComponentBuilder self, AssetType type) -> ComponentBuilder {
+    self.component.ensure<AssetFields>().fields.push_back({.member = refl::member_cstr<Member>(), .type = type});
     return self;
   }
 

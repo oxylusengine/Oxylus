@@ -1,11 +1,13 @@
 #pragma once
 
+#include <expected>
 #include <filesystem>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Cinematic/Easing.hpp"
@@ -14,6 +16,8 @@
 #include "Core/Types.hpp"
 
 namespace ox {
+struct JsonWriter;
+
 auto value_kind_name(CinematicValueKind kind) -> std::string_view;
 auto value_kind_size(CinematicValueKind kind) -> u32;
 auto value_kind_component_count(CinematicValueKind kind) -> u32;
@@ -78,7 +82,9 @@ struct Cinematic {
   static auto make_default() -> Cinematic;
 
   static auto read(const std::filesystem::path& path) -> option<Cinematic>;
+  static auto from_json(std::string_view json) -> std::expected<Cinematic, std::string>;
   auto write(this const Cinematic& self, const std::filesystem::path& path) -> bool;
+  auto to_json(this const Cinematic& self, JsonWriter& writer) -> void;
 
   // longest keyed time across every track, so the editor can grow `duration` to fit what was recorded
   auto keyed_extent(this const Cinematic& self) -> f32;

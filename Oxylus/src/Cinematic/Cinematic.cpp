@@ -189,10 +189,9 @@ auto Cinematic::keyed_extent(this const Cinematic& self) -> f32 {
   return extent;
 }
 
-auto Cinematic::write(this const Cinematic& self, const std::filesystem::path& path) -> bool {
+auto Cinematic::to_json(this const Cinematic& self, JsonWriter& writer) -> void {
   ZoneScoped;
 
-  JsonWriter writer{};
   writer.begin_obj();
 
   writer["name"] = self.name;
@@ -247,6 +246,13 @@ auto Cinematic::write(this const Cinematic& self, const std::filesystem::path& p
   writer.end_array();
 
   writer.end_obj();
+}
+
+auto Cinematic::write(this const Cinematic& self, const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  JsonWriter writer{};
+  self.to_json(writer);
 
   auto file = File(path, FileAccess::Write);
   if (!file) {
@@ -262,18 +268,29 @@ auto Cinematic::write(this const Cinematic& self, const std::filesystem::path& p
 auto Cinematic::read(const std::filesystem::path& path) -> option<Cinematic> {
   ZoneScoped;
 
-  auto contents = File::to_string(path);
+  const auto contents = File::to_string(path);
   if (contents.empty()) {
     OX_LOG_ERROR("Failed to read cinematic '{}'.", path);
     return nullopt;
   }
 
-  auto padded = simdjson::padded_string(contents);
+  auto parsed = from_json(contents);
+  if (!parsed) {
+    OX_LOG_ERROR("Failed to parse cinematic '{}': {}", path, parsed.error());
+    return nullopt;
+  }
+
+  return std::move(parsed.value());
+}
+
+auto Cinematic::from_json(const std::string_view json) -> std::expected<Cinematic, std::string> {
+  ZoneScoped;
+
+  auto padded = simdjson::padded_string(json);
   simdjson::ondemand::parser parser;
   auto doc = parser.iterate(padded);
   if (doc.error()) {
-    OX_LOG_ERROR("Failed to parse cinematic '{}': {}", path, simdjson::error_message(doc.error()));
-    return nullopt;
+    return std::unexpected(std::string(simdjson::error_message(doc.error())));
   }
 
   auto cinematic = Cinematic{};

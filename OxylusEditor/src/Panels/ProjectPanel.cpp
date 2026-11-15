@@ -9,6 +9,7 @@
 #include <tracy/Tracy.hpp>
 #include <utility>
 
+#include "Actions/ProjectActions.hpp"
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Version.hpp"
@@ -21,58 +22,6 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
-static auto validate_new_project_form(
-  const std::string_view location, const std::string_view name, const std::string_view asset_directory
-) -> std::string_view {
-  ZoneScoped;
-
-  if (name.empty() || name.find_first_not_of(" \t\r\n") == std::string_view::npos) {
-    return "Enter a project name";
-  }
-
-  if (
-    name == "." || name == ".." || name.find_first_of("<>:\"/\\|?*") != std::string_view::npos || name.ends_with('.') ||
-    name.ends_with(' ')
-  ) {
-    return "The project name contains characters that cannot be used in a folder name";
-  }
-
-  if (location.empty()) {
-    return "Choose where the project should be created";
-  }
-
-  const auto location_path = std::filesystem::path(location);
-  std::error_code error;
-  if (!std::filesystem::exists(location_path, error) || !std::filesystem::is_directory(location_path, error)) {
-    return "The selected location is not an existing folder";
-  }
-  if (error) {
-    return "The selected location could not be accessed";
-  }
-
-  if (asset_directory.empty()) {
-    return "Enter an asset folder";
-  }
-
-  const auto asset_path = std::filesystem::path(asset_directory);
-  if (
-    asset_path == "." || asset_path.is_absolute() || asset_path.has_root_path() ||
-    std::ranges::any_of(asset_path, [](const auto& component) -> bool { return component == ".."; })
-  ) {
-    return "The asset folder must stay inside the project";
-  }
-
-  const auto project_path = location_path / name;
-  if (std::filesystem::exists(project_path, error)) {
-    return "A folder with this project name already exists at the selected location";
-  }
-  if (error) {
-    return "The project location could not be checked";
-  }
-
-  return {};
-}
-
 static auto draw_project_message(const std::string_view message) -> void {
   if (message.empty()) {
     return;
@@ -124,18 +73,12 @@ ProjectPanel::ProjectPanel() : EditorPanelState("Projects", ICON_MDI_FOLDER_OPEN
 auto ProjectPanel::load_project_for_editor(this ProjectPanel& self, const std::filesystem::path& filepath) -> void {
   ZoneScoped;
 
-  auto& editor = App::mod<Editor>();
-
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(filepath, error)) {
-    OX_LOG_WARN("Couldn't find project. Removing from recent projects: {}", filepath);
-    editor.editor_cvar.remove_recent_project(filepath);
-    self.panel_error = "That project file no longer exists and was removed from the recent list";
-    return;
+  if (const auto opened = open_project(App::mod<Editor>(), filepath); !opened) {
+    self.panel_error = opened.error();
   }
+}
 
-  // let the loading panel paint before the directory walk starts
-  editor.editor_panel_registry.get<LoadingPanel>().begin(filepath);
+auto ProjectPanel::close_launcher(this ProjectPanel& self) -> void {
   self.panel_error.clear();
   self.creating_project = false;
   self.close_requested = true;
@@ -151,40 +94,21 @@ auto ProjectPanel::show_error(this ProjectPanel& self, std::string message) -> v
 
 auto ProjectPanel::new_project(
   this ProjectPanel& self,
-  const std::filesystem::path& project_dir,
+  const std::filesystem::path& project_location,
   const std::string_view project_name,
   const std::filesystem::path& project_asset_dir
 ) -> bool {
   ZoneScoped;
 
-  auto& editor = App::mod<Editor>();
-  const auto& active_project = editor.active_project;
-
-  try {
-    if (!active_project->new_project(project_dir, project_name, project_asset_dir)) {
-      return false;
-    }
-  } catch (const std::filesystem::filesystem_error& exception) {
-    OX_LOG_ERROR("Couldn't create project at {}: {}", project_dir, exception.what());
+  if (
+    const auto created = ox::new_project(App::mod<Editor>(), project_location, project_name, project_asset_dir);
+    !created
+  ) {
+    self.panel_error = created.error();
     return false;
   }
 
-  editor.reset();
-  editor.new_scene();
-  editor.reset_current_docking_layout();
-  editor.editor_cvar.add_recent_project(active_project.get());
-  editor.editor_panel_registry.get<ContentPanel>().init();
-#ifdef OX_DOTNET
-  if (auto created = CSharpScripts::create_project(*active_project); !created) {
-    OX_LOG_ERROR("Couldn't create the project's C# scripts: {}", created.error());
-  }
-
-  editor.csharp_scripts.open(*active_project);
-#endif
-
-  self.panel_error.clear();
-  self.creating_project = false;
-  self.close_requested = true;
+  self.close_launcher();
   return true;
 }
 
@@ -513,7 +437,7 @@ auto ProjectPanel::draw_new_project(this ProjectPanel& self) -> void {
   ImGui::BeginDisabled(!validation_error.empty());
   if (ImGui::Button(ICON_MDI_PLUS "  Create Project", {create_button_width, UI::scale(38.0f)})) {
     const auto asset_path = std::filesystem::path(self.new_project_asset_dir).lexically_normal();
-    if (!self.new_project(project_path, self.new_project_name, asset_path)) {
+    if (!self.new_project(self.new_project_location, self.new_project_name, asset_path)) {
       self.panel_error = "The project could not be created. Check the log for details";
     }
   }

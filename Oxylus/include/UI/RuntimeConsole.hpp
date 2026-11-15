@@ -74,6 +74,9 @@ public:
 
   auto render(this RuntimeConsole& self) -> void;
 
+  // runs one command and returns the lines it logged, errors and warnings prefixed
+  auto execute(this RuntimeConsole& self, std::string_view command) -> std::vector<std::string>;
+
 private:
   struct ConsoleText {
     std::string text = {};

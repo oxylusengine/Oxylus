@@ -15,6 +15,7 @@
 #include "Asset/TerrainEdits.hpp"
 #include "Asset/Texture.hpp"
 #include "Cinematic/Cinematic.hpp"
+#include "Core/Option.hpp"
 #include "Core/UUID.hpp"
 #include "Memory/ReadGuard.hpp"
 #include "Memory/SlotMap.hpp"
@@ -68,6 +69,7 @@ public:
   using LoadInfo = std::variant<std::monostate, TextureLoadInfo, Material, ModelData, TextureData>;
 
   static auto to_asset_type_sv(AssetType type) -> std::string_view;
+  static auto from_asset_type_sv(std::string_view name) -> option<AssetType>;
 
   auto init(this AssetManager& self) -> std::expected<void, std::string>;
   auto deinit(this AssetManager& self) -> std::expected<void, std::string>;

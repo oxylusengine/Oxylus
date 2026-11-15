@@ -360,10 +360,9 @@ auto ParticleSystem::find_parameter(this const ParticleSystem& self, const std::
   return nullopt;
 }
 
-auto ParticleSystem::write(this const ParticleSystem& self, const std::filesystem::path& path) -> bool {
+auto ParticleSystem::to_json(this const ParticleSystem& self, JsonWriter& writer) -> void {
   ZoneScoped;
 
-  JsonWriter writer{};
   writer.begin_obj();
 
   writer["emitter"].begin_obj();
@@ -440,6 +439,13 @@ auto ParticleSystem::write(this const ParticleSystem& self, const std::filesyste
   write_particle_graph(writer, self.update_graph);
 
   writer.end_obj();
+}
+
+auto ParticleSystem::write(this const ParticleSystem& self, const std::filesystem::path& path) -> bool {
+  ZoneScoped;
+
+  JsonWriter writer{};
+  self.to_json(writer);
 
   auto file = File(path, FileAccess::Write);
   if (!file) {
@@ -455,18 +461,29 @@ auto ParticleSystem::write(this const ParticleSystem& self, const std::filesyste
 auto ParticleSystem::read(const std::filesystem::path& path) -> option<ParticleSystem> {
   ZoneScoped;
 
-  auto contents = File::to_string(path);
+  const auto contents = File::to_string(path);
   if (contents.empty()) {
     OX_LOG_ERROR("Failed to read particle system '{}'.", path);
     return nullopt;
   }
 
-  auto padded = simdjson::padded_string(contents);
+  auto parsed = from_json(contents);
+  if (!parsed) {
+    OX_LOG_ERROR("Failed to parse particle system '{}': {}", path, parsed.error());
+    return nullopt;
+  }
+
+  return std::move(parsed.value());
+}
+
+auto ParticleSystem::from_json(const std::string_view json) -> std::expected<ParticleSystem, std::string> {
+  ZoneScoped;
+
+  auto padded = simdjson::padded_string(json);
   simdjson::ondemand::parser parser;
   auto doc = parser.iterate(padded);
   if (doc.error()) {
-    OX_LOG_ERROR("Failed to parse particle system '{}': {}", path, simdjson::error_message(doc.error()));
-    return nullopt;
+    return std::unexpected(std::string(simdjson::error_message(doc.error())));
   }
 
   auto system = ParticleSystem{};

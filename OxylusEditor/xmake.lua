@@ -21,6 +21,7 @@ target("OxylusEditor")
     add_deps("Oxylus")
     add_deps("ResourceCompiler")
     add_deps("rcli")
+    add_deps("oxmcp")
     if has_config("csharp") then
         -- OxylusManaged puts the Oxylus.Scripting a project references, and the generator it runs, in managed/
         add_deps("OxylusDotNet", "OxylusManaged")
@@ -30,6 +31,7 @@ target("OxylusEditor")
     add_packages("imguizmo-ox")
     add_packages("imgui-node-editor-ox")
     add_packages("implot-ox")
+    add_packages("cpp-httplib")
 
     add_includedirs("./src")
     add_sysincludedirs("./vendor", { public = true })

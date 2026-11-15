@@ -52,6 +52,10 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
     .init(self.system, "editor.external_editor", "command that opens scripts, empty uses the system default", "");
   self.cvar_wait_for_debugger
     .init(self.system, "editor.wait_for_debugger", "Play waits for a debugger to attach to the C# scripts", 0);
+  self.cvar_mcp_enabled.init(self.system, "editor.mcp_enabled", "run the MCP server inside the editor", 1);
+  self.cvar_mcp_port.init(self.system, "editor.mcp_port", "first port the MCP server tries to listen on", 7780);
+  self.cvar_mcp_token.init(self.system, "editor.mcp_token", "bearer token MCP clients must send, empty for none", "");
+  self.cvar_mcp_follow.init(self.system, "editor.mcp_follow", "mutating MCP tools select what they touched", 1);
 }
 
 auto EditorCVar::load(this EditorCVar& self) -> void {
@@ -104,6 +108,14 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
     self.cvar_external_editor.set(std::string(v->get()));
   if (auto v = config["wait_for_debugger"].as_boolean())
     self.cvar_wait_for_debugger.set(v->get());
+  if (auto v = config["mcp_enabled"].as_boolean())
+    self.cvar_mcp_enabled.set(v->get());
+  if (auto v = config["mcp_port"].as_integer())
+    self.cvar_mcp_port.set(static_cast<i32>(v->get()));
+  if (auto v = config["mcp_token"].as_string())
+    self.cvar_mcp_token.set(std::string(v->get()));
+  if (auto v = config["mcp_follow"].as_boolean())
+    self.cvar_mcp_follow.set(v->get());
 
   return;
 }
@@ -136,6 +148,10 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"content_type_filter", self.cvar_content_type_filter.get()},
        {"external_editor", self.cvar_external_editor.get()},
        {"wait_for_debugger", self.cvar_wait_for_debugger.as_bool()},
+       {"mcp_enabled", self.cvar_mcp_enabled.as_bool()},
+       {"mcp_port", self.cvar_mcp_port.get()},
+       {"mcp_token", self.cvar_mcp_token.get()},
+       {"mcp_follow", self.cvar_mcp_follow.as_bool()},
      }}
   };
 

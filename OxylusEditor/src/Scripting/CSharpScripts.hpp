@@ -45,6 +45,15 @@ public:
   // until a build is loaded or has failed, a scene naming C# components would drop the entities holding them
   auto is_loading(this const CSharpScripts& self) -> bool;
 
+  auto last_build_result(this const CSharpScripts& self) -> const option<DotNetBuildResult>& {
+    return self.last_build_;
+  }
+  auto build_generation(this const CSharpScripts& self) -> u64 { return self.build_generation_; }
+  auto load_generation(this const CSharpScripts& self) -> u64 { return self.load_generation_; }
+  auto last_build_finish_time(this const CSharpScripts& self) -> option<std::chrono::steady_clock::time_point> {
+    return self.last_build_finish_time_;
+  }
+
   auto is_debugger_attached(this const CSharpScripts& self) -> bool;
   // nothing is hosting C# to attach to until a build has loaded
   auto can_attach_debugger(this const CSharpScripts& self) -> bool;
@@ -65,6 +74,10 @@ private:
   std::future<DotNetBuildResult> build_ = {};
   bool is_build_failed_ = false;
   bool is_reload_pending_ = false;
+  option<DotNetBuildResult> last_build_ = nullopt;
+  option<std::chrono::steady_clock::time_point> last_build_finish_time_ = nullopt;
+  u64 build_generation_ = 0;
+  u64 load_generation_ = 0;
 
   auto start_build(this CSharpScripts& self) -> void;
   auto finish_build(this CSharpScripts& self) -> void;

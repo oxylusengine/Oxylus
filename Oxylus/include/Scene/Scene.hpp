@@ -57,6 +57,15 @@ namespace ox {
 struct JsonWriter;
 class RmlView;
 
+constexpr static f32 MAX_RAY_DISTANCE = 100'000.0f;
+
+struct RayHit {
+  flecs::entity_t entity = 0;
+  glm::vec3 point = {};
+  glm::vec3 normal = {};
+  f32 distance = 0.0f;
+};
+
 struct ComponentDB {
   std::vector<flecs::id> components = {};
   std::vector<flecs::entity> imported_modules = {};
@@ -358,8 +367,15 @@ public:
 
   // Physics
   auto get_physics_system(this const Scene& self) -> JPH::PhysicsSystem*;
-  auto cast_ray(this const Scene& self, const RayCast& ray_cast)
-    -> JPH::AllHitCollisionCollector<JPH::RayCastBodyCollector>;
+  // an unbounded or non-positive `max_distance` reaches MAX_RAY_DISTANCE
+  auto raycast(
+    this const Scene& self,
+    glm::vec3 origin,
+    glm::vec3 direction,
+    f32 max_distance,
+    u32 layer_mask = ~0_u32,
+    flecs::entity_t ignore_entity = 0
+  ) -> option<RayHit>;
   auto on_contact_added(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold) -> void;
   auto on_contact_persisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold)
     -> void;
