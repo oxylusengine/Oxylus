@@ -268,7 +268,8 @@ struct OxAssetInfo {
   u64 ref_count = 0;
 };
 
-// Asset/Material.hpp's Material. `alpha_mode` and `sampling_mode` are its enums' values, `flip_normal_y` is 0 or 1
+// Asset/Material.hpp's Material. `alpha_mode` and `sampling_mode` are its enums' values, `flip_normal_y` and
+// `double_sided` are 0 or 1, `shading_model` is a ShadingModel
 struct OxMaterialData {
   OxVec4 albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
   OxVec2 uv_size = {1.0f, 1.0f};
@@ -283,11 +284,24 @@ struct OxMaterialData {
   u32 sampling_mode = 0;
   u32 flip_normal_y = 0;
   u32 padding = 0;
+  u32 double_sided = 0;
+  f32 transmission_factor = 0.0f;
+  f32 ior = 1.5f;
+  f32 thickness_factor = 0.0f;
+  OxVec3 attenuation_color = {1.0f, 1.0f, 1.0f};
+  f32 attenuation_distance = 0.0f;
+  u32 shading_model = 0;
+  OxVec3 water_scatter_color = {0.02f, 0.09f, 0.08f};
+  OxVec2 water_flow = {0.03f, 0.01f};
+  f32 water_detail_scale = 0.37f;
+  f32 water_shore_fade = 0.5f;
   OxAssetId albedo_texture = {};
   OxAssetId normal_texture = {};
   OxAssetId emissive_texture = {};
   OxAssetId metallic_roughness_texture = {};
   OxAssetId occlusion_texture = {};
+  OxAssetId transmission_texture = {};
+  OxAssetId thickness_texture = {};
 };
 
 // one mesh of a model made at runtime: a triangle list, `normals` and `texcoords` null or one per position,

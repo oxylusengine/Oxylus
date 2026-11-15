@@ -130,6 +130,10 @@ enum class DebugView : i32 {
   SSSRConfidence,
   SSSRVariance,
   SSSRSampleCount,
+  TransparencyCoverage,
+  Refractors,
+  RefractorDepth,
+  ReactiveMask,
 
   Count,
 };
@@ -149,8 +153,18 @@ enum class MaterialFlag : u32 {
   AlphaOpaque = 1 << 7,
   AlphaMask = 1 << 8,
   AlphaBlend = 1 << 9,
+  DoubleSided = 1 << 10,
+  HasTransmissionImage = 1 << 11,
+  HasThicknessImage = 1 << 12,
+  Water = 1 << 13,
 };
 OX_BITMASK(MaterialFlag)
+
+enum class MaterialClass : u32 {
+  Opaque = 0,
+  Blend = 1,
+  Refractor = 2,
+};
 
 struct Material {
   u16x4 albedo_color = {};
@@ -169,6 +183,17 @@ struct Material {
   u32 occlusion_image_index = 0;
   u16x2 uv_size = {};
   u16x2 uv_offset = {};
+  u16 transmission_factor = 0;
+  u16 ior = 0;
+  u16 thickness_factor = 0;
+  u16 attenuation_distance = 0;
+  u16x3 attenuation_color = {};
+  u16 water_detail_scale = 0;
+  u16x3 water_scatter_color = {};
+  u16 water_shore_fade = 0;
+  u16x2 water_flow = {};
+  u32 transmission_image_index = 0;
+  u32 thickness_image_index = 0;
 };
 
 struct MeshletInstanceVisibility {
@@ -178,6 +203,10 @@ struct MeshletInstanceVisibility {
   u32 early_visible_meshlet_instances = 0;
   // Same as above, but if requested (used for two pass occlusion tests)
   u32 late_visible_meshlet_instances = 0;
+  u32 total_blend_meshlet_instances = 0;
+  u32 total_refractor_meshlet_instances = 0;
+  u32 visible_blend_meshlet_instances = 0;
+  u32 visible_refractor_meshlet_instances = 0;
 };
 
 struct MeshletInstance {
@@ -305,6 +334,7 @@ struct CullCamera {
   // only the main geometry pass sets this, culling and shadow users leave it zero
   f32x2 jitter = {};
   f32 texture_mip_bias = {};
+  u32 meshlet_instance_capacity = {};
 };
 
 // --- Lights ---
@@ -627,6 +657,8 @@ struct PBRLighting {
   f32 contact_shadow_thickness = 0.0f;
   f32 contact_shadow_length = 0.0f;
   u32 frame_index = 0;
+  // seconds, wrapped hourly so f32 keeps sub-millisecond precision
+  f32 time = 0.0f;
 };
 
 struct VirtualClipmap {
@@ -643,6 +675,12 @@ enum class CullFlag : u32 {
   LatePass = 1 << 3,
   // drops instances without `MeshInstanceFlag::CastShadows`, for the shadow map passes
   ShadowCastersOnly = 1 << 4,
+  RouteBlend = 1 << 5,
+  RouteRefractors = 1 << 6,
+  // the cull pass processes a transparent list instead of the opaque one
+  Transparent = 1 << 7,
+  // with `Transparent`, selects the refractor list, otherwise the blend list
+  RefractorList = 1 << 8,
 
   TestAll = (1 << 0) | (1 << 1) | (1 << 2),
 };

@@ -15,6 +15,7 @@ import rmvsm;
 [[vk::binding(5)]] StructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(6)]] RWStructuredBuffer<u32> reordered_indices;
 [[vk::binding(7)]] RWStructuredBuffer<DrawIndexedIndirectCommand> draw_cmd;
+[[vk::binding(8)]] StructuredBuffer<Material> materials;
 
 groupshared u32 base_index_shared;
 groupshared u32 triangles_passed_shared;
@@ -23,6 +24,7 @@ groupshared Mesh mesh_shared;
 groupshared MeshLOD mesh_lod_shared;
 groupshared Meshlet meshlet_shared;
 groupshared mat4 model_view_proj_shared;
+groupshared bool is_double_sided_shared;
 
 [[shader("compute")]]
 [[numthreads(CULLING_TRIANGLE_COUNT, 1, 1)]]
@@ -47,6 +49,7 @@ func cs_main(
         mesh_shared.apply_skin(mesh_instance);
         mesh_lod_shared = mesh_shared.lods[mesh_instance.lod_index];
         meshlet_shared = mesh_lod_shared.meshlets[vsm_meshlet_instance.meshlet_index];
+        is_double_sided_shared = materials[mesh_instance.material_index].is_double_sided();
 
         let transform = transforms[mesh_instance.transform_index];
         model_view_proj_shared = mul(views[vsm_meshlet_instance.layer].projection_view, transform.world);
@@ -68,7 +71,7 @@ func cs_main(
         // reject only fully hidden triangles, the determinant requires positive w
         triangle_passed = clip_pos[0].w > 0.0 || clip_pos[1].w > 0.0 || clip_pos[2].w > 0.0;
         let all_in_front = clip_pos[0].w > 0.0 && clip_pos[1].w > 0.0 && clip_pos[2].w > 0.0;
-        triangle_passed = triangle_passed && (!all_in_front || !test_triangle_backface(clip_pos));
+        triangle_passed = triangle_passed && (!all_in_front || is_double_sided_shared || !test_triangle_backface(clip_pos));
         if (triangle_passed) {
             active_triangle_index = __atomic_add(triangles_passed_shared, 1, MemoryOrder::Relaxed);
         }

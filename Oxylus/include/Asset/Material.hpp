@@ -12,6 +12,11 @@ enum class AlphaMode : u32 {
   Blend,
 };
 
+enum class ShadingModel : u32 {
+  Standard = 0,
+  Water = 1,
+};
+
 enum class SamplingMode : u32 {
   LinearRepeated = 0,
   LinearClamped = 1,
@@ -37,11 +42,27 @@ struct Material {
   f32 alpha_cutoff = 0.1f;
   SamplingMode sampling_mode = SamplingMode::LinearRepeated;
   bool flip_normal_y = false;
+  bool double_sided = false;
+  f32 transmission_factor = 0.0f;
+  f32 ior = 1.5f;
+  f32 thickness_factor = 0.0f;
+  glm::vec3 attenuation_color = {1.0f, 1.0f, 1.0f};
+  // 0 is infinite
+  f32 attenuation_distance = 0.0f;
+  ShadingModel shading_model = ShadingModel::Standard;
+  glm::vec3 water_scatter_color = {0.02f, 0.09f, 0.08f};
+  glm::vec2 water_flow = {0.03f, 0.01f};
+  f32 water_detail_scale = 0.37f;
+  f32 water_shore_fade = 0.5f;
   UUID albedo_texture = {};
   UUID normal_texture = {};
   UUID emissive_texture = {};
   UUID metallic_roughness_texture = {};
   UUID occlusion_texture = {};
+  // factor multiplies the R channel, linear
+  UUID transmission_texture = {};
+  // factor multiplies the G channel, linear
+  UUID thickness_texture = {};
 };
 
 } // namespace ox

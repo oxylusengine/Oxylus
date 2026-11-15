@@ -7,7 +7,7 @@
 #include "Render/RendererInstance.hpp"
 
 namespace ox {
-static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_BACK_BIT};
+static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_NONE};
 static constexpr auto VISBUFFER_DEPTH = vir::DepthState{
   .is_test_enabled = true,
   .is_write_enabled = true,
@@ -28,7 +28,8 @@ auto RendererInstance::draw_for_visbuffer_ms(
 
   auto& render_context = *self.renderer.render_context;
   const auto is_late = static_cast<bool>(context.cull_flags & GPU::CullFlag::LatePass);
-  const auto name = stack.format("vis encode ms {}", is_late ? "late" : "early");
+  const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
+  const auto name = stack.format("vis encode ms {}", is_refractor ? "refractor" : (is_late ? "late" : "early"));
   static constexpr auto scene_access = vir::Access::TaskRead | vir::Access::MeshRead;
 
   std::tie(
@@ -55,7 +56,7 @@ auto RendererInstance::draw_for_visbuffer_ms(
          {values.transforms_world, scene_access},
          {context.visibility_buffer, vir::Access::TaskRead},
          {values.meshlet_instance_visibility_mask, vir::Access::TaskRW},
-         {values.materials, vir::Access::FragmentRead},
+         {values.materials, scene_access | vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::ColorRW},
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}
@@ -96,6 +97,7 @@ auto RendererInstance::draw_for_visbuffer(
   }
 
   auto& render_context = *self.renderer.render_context;
+  const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
   std::tie(
     std::ignore,
     values.reordered_indices,
@@ -123,7 +125,7 @@ auto RendererInstance::draw_for_visbuffer(
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}
       )
-      .with_name("vis encode")
+      .with_name(is_refractor ? "vis encode refractor" : "vis encode")
       .bind_graphics_pipeline(render_context.pipeline("visbuffer_encode"))
       .set_rasterization(VISBUFFER_RASTERIZATION)
       .set_depth(VISBUFFER_DEPTH)
@@ -141,6 +143,57 @@ auto RendererInstance::draw_for_visbuffer(
       .draw_indexed_indirect(context.draw_geometry_cmd_buffer, 1)
       .end_rendering()
   );
+}
+
+auto RendererInstance::draw_refractor_visbuffer(
+  this RendererInstance& self,
+  vir::Module& module,
+  FrameRecording& recording,
+  CullGeometryContext& cull_context,
+  MainGeometryContext& main_context
+) -> std::pair<vir::ValueID, vir::ValueID> {
+  ZoneScoped;
+  auto& values = recording.values;
+  auto& render_context = *self.renderer.render_context;
+  const auto render_extent = vir::Extent3D{recording.shape.render_size.x, recording.shape.render_size.y, 1};
+
+  cull_context.hiz_attachment = main_context.hiz_attachment;
+  cull_context.visibility_buffer = main_context.visibility_buffer;
+  const auto draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_context, true);
+
+  auto refractor_depth = module.transient_image(
+    {.extent = render_extent, .format = vir::Format::D32Sfloat, .name = "refractor depth"}
+  );
+  refractor_depth = module.copy_image(main_context.depth_attachment, refractor_depth);
+  auto refractor_visbuffer = module.transient_image(
+    {.extent = render_extent, .format = vir::Format::R32Uint, .name = "refractor visbuffer"}
+  );
+  refractor_visbuffer = module.clear(refractor_visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
+
+  auto refractor_context = MainGeometryContext{
+    .draw_overdraw = false,
+    .cull_flags = GPU::CullFlag::Transparent | GPU::CullFlag::TestFrustum | GPU::CullFlag::RefractorList,
+    .depth_attachment = refractor_depth,
+    .hiz_attachment = cull_context.hiz_attachment,
+    .visbuffer_attachment = refractor_visbuffer,
+    .overdraw_attachment = main_context.overdraw_attachment,
+    .draw_geometry_cmd_buffer = draw_cmd_buffer,
+    .visibility_buffer = cull_context.visibility_buffer,
+  };
+
+  // the encoders read their meshlets from the opaque list's slot
+  std::swap(values.meshlet_instances, cull_context.transparent_meshlet_instances);
+  self.draw_for_visbuffer(module, recording, refractor_context);
+  std::swap(values.meshlet_instances, cull_context.transparent_meshlet_instances);
+  values.transparent_meshlet_instances = cull_context.transparent_meshlet_instances;
+
+  main_context.hiz_attachment = refractor_context.hiz_attachment;
+  main_context.overdraw_attachment = refractor_context.overdraw_attachment;
+  main_context.visibility_buffer = refractor_context.visibility_buffer;
+  cull_context.hiz_attachment = refractor_context.hiz_attachment;
+  cull_context.visibility_buffer = refractor_context.visibility_buffer;
+
+  return {refractor_context.visbuffer_attachment, refractor_context.depth_attachment};
 }
 
 auto RendererInstance::decode_visbuffer(

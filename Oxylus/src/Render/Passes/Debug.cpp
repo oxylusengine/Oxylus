@@ -93,6 +93,85 @@ auto RendererInstance::apply_debug_view(
 
       return dst;
     }
+    case GPU::DebugView::TransparencyCoverage:
+    case GPU::DebugView::Refractors          :
+    case GPU::DebugView::RefractorDepth      :
+    case GPU::DebugView::ReactiveMask        : {
+      // 1x1 stand-ins for what the frame didn't draw, read as no coverage and no refractor
+      if (context.wboit_revealage_attachment == vir::ValueID::Invalid) {
+        context.wboit_revealage_attachment = module.clear(
+          module.transient_image({.extent = {1, 1, 1}, .format = vir::Format::R8Unorm, .name = "no revealage"}),
+          vir::ClearValue::rgba_f32(1.0f, 1.0f, 1.0f, 1.0f)
+        );
+      }
+
+      if (context.wboit_revealage_front_attachment == vir::ValueID::Invalid) {
+        context.wboit_revealage_front_attachment = module.clear(
+          module.transient_image({.extent = {1, 1, 1}, .format = vir::Format::R8Unorm, .name = "no front revealage"}),
+          vir::ClearValue::rgba_f32(1.0f, 1.0f, 1.0f, 1.0f)
+        );
+      }
+
+      auto transparent_meshlet_instances = values.transparent_meshlet_instances;
+      if (context.refractor_visbuffer_attachment == vir::ValueID::Invalid) {
+        context.refractor_visbuffer_attachment = module.clear(
+          module.transient_image(
+            {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "no refractor visbuffer"}
+          ),
+          vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32)
+        );
+        context.refractor_depth_attachment = module.clear(
+          module.transient_image({.extent = {1, 1, 1}, .format = vir::Format::R32Sfloat, .name = "no refractor depth"}),
+          vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
+        );
+        transparent_meshlet_instances = values.meshlet_instances;
+      }
+
+      std::tie(
+        dst,
+        values.camera,
+        context.wboit_revealage_attachment,
+        context.wboit_revealage_front_attachment,
+        context.refractor_visbuffer_attachment,
+        context.refractor_depth_attachment,
+        context.reactive_mask_attachment,
+        transparent_meshlet_instances
+      ) = std::tuple_cat( //
+        module
+          .begin_rendering(
+            {{dst, vir::Access::ColorWrite},
+             {values.camera, vir::Access::FragmentUniformRead},
+             {context.wboit_revealage_attachment, vir::Access::FragmentSampled},
+             {context.wboit_revealage_front_attachment, vir::Access::FragmentSampled},
+             {context.refractor_visbuffer_attachment, vir::Access::FragmentSampled},
+             {context.refractor_depth_attachment, vir::Access::FragmentSampled},
+             {context.reactive_mask_attachment, vir::Access::FragmentSampled},
+             {transparent_meshlet_instances, vir::Access::FragmentRead}}
+          )
+          .with_name("transparency debug pass")
+          .bind_graphics_pipeline(render_context.pipeline("transparency_debug"))
+          .set_viewport(0, vir::Rect2D::framebuffer())
+          .set_scissor(0, vir::Rect2D::framebuffer())
+          .bind_buffer(0, 0, values.camera)
+          .bind_image(0, 1, context.wboit_revealage_attachment)
+          .bind_image(0, 2, context.wboit_revealage_front_attachment)
+          .bind_image(0, 3, context.refractor_visbuffer_attachment)
+          .bind_image(0, 4, context.refractor_depth_attachment)
+          .bind_image(0, 5, context.reactive_mask_attachment)
+          .bind_buffer(0, 6, transparent_meshlet_instances)
+          .push_constants(PushConstants(std::to_underlying(debug_view)))
+          .draw(3, 1)
+          .end_rendering()
+      );
+
+      if (shape.has_refractors) {
+        values.transparent_meshlet_instances = transparent_meshlet_instances;
+      } else {
+        values.meshlet_instances = transparent_meshlet_instances;
+      }
+
+      return dst;
+    }
     default: break;
   }
 

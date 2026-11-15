@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <ankerl/svector.h>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <ranges>
@@ -477,6 +478,8 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
   const auto flags = std::array{
     shape.is_debugging,
     shape.has_meshes,
+    shape.has_blend_meshes,
+    shape.has_refractors,
     shape.has_terrain,
     shape.has_sprites,
     shape.has_particles,
@@ -1005,6 +1008,8 @@ auto RendererInstance::frame_shape(
   const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
                             (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
+  const auto has_blend_meshes = has_meshes && self.renderer.blend_material_count > 0;
+  const auto has_refractors = has_meshes && self.renderer.refractor_material_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
   const auto has_rtao = cvar.cvar_rtao_enable.as_bool() && has_tlas;
@@ -1062,6 +1067,8 @@ auto RendererInstance::frame_shape(
     .tlas = has_tlas ? self.tlas_handle() : VK_NULL_HANDLE,
     .is_debugging = is_debugging,
     .has_meshes = has_meshes,
+    .has_blend_meshes = has_blend_meshes,
+    .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
@@ -1104,6 +1111,11 @@ auto RendererInstance::prepare_frame_params(
   params.shape = shape;
   params.cvar = &cvar;
   params.delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+  // a running scene animates on its gameplay clock so materials pause with it, the editor previews in real time
+  const auto shading_step = self.scene.is_running() ? static_cast<f64>(self.scene.last_step_delta)
+                                                    : static_cast<f64>(params.delta_time);
+  self.shading_time = std::fmod(self.shading_time + shading_step, 3600.0);
+  params.time = static_cast<f32>(self.shading_time);
   params.frame_index = static_cast<u32>(self.renderer.render_context->num_frames);
   params.is_upscaling = shape.upscaler != UpscalerBackend::None;
   params.render_size = shape.render_size;
@@ -1118,6 +1130,7 @@ auto RendererInstance::prepare_frame_params(
     .mesh_instance_count = self.frame_data.mesh_instance_count,
     .jitter = self.current_jitter,
     .texture_mip_bias = self.camera_data.texture_mip_bias,
+    .meshlet_instance_capacity = self.frame_data.max_meshlet_instance_count,
   };
 
   if (params.is_upscaling) {
@@ -1387,6 +1400,24 @@ auto RendererInstance::bind_frame(
     }
     program.set(prepared.meshlet_instances, buffer.value_or(vir::Buffer{}));
   }
+  if (
+    prepared.transparent_meshlet_instances != vir::ValueID::Invalid &&
+    program.has_variable(prepared.transparent_meshlet_instances)
+  ) {
+    auto buffer = render_context.allocate_frame_buffer({
+      .size = std::max<u64>(data.meshlet_instances_size, 16),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+               VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .location = vir::MemoryLocation::GpuOnly,
+      .alignment = 16,
+      .name = "transparent meshlet instances",
+    });
+    if (!buffer) {
+      OX_LOG_ERROR("failed to allocate {}", "transparent meshlet instances");
+    }
+    program.set(prepared.transparent_meshlet_instances, buffer.value_or(vir::Buffer{}));
+  }
   if (program.has_variable(prepared.visible_meshlet_instances_indices)) {
     auto buffer = render_context.allocate_frame_buffer({
       .size = std::max<u64>(data.visible_meshlet_instances_size, 16),
@@ -1555,7 +1586,8 @@ auto RendererInstance::record_acceleration_structures(
     values.mesh_instances,
     values.transforms_world,
     values.blas_addresses,
-    values.skinned_blas_addresses
+    values.skinned_blas_addresses,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -1563,7 +1595,8 @@ auto RendererInstance::record_acceleration_structures(
          {values.mesh_instances, vir::Access::ComputeRead},
          {values.transforms_world, vir::Access::ComputeRead},
          {values.blas_addresses, vir::Access::ComputeRead},
-         {values.skinned_blas_addresses, vir::Access::ComputeRead}}
+         {values.skinned_blas_addresses, vir::Access::ComputeRead},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("tlas write instances")
       .bind_compute_pipeline(render_context.pipeline("tlas_write_instances"))
@@ -1572,6 +1605,7 @@ auto RendererInstance::record_acceleration_structures(
       .bind_buffer(0, 2, values.blas_addresses)
       .bind_buffer(0, 3, instances)
       .bind_buffer(0, 4, values.skinned_blas_addresses)
+      .bind_buffer(0, 5, values.materials)
       .push_constants_from(prepared.tlas_instance_counts)
       .dispatch_invocations(prepared.tlas_instance_count, 1, 1)
       .end_compute()
@@ -1735,6 +1769,12 @@ auto RendererInstance::record_frame(
   prepared.dirty_mesh_instances = module.declare_buffer_var("dirty mesh instances", vir::Access::None);
   prepared.removed_mesh_bounds = module.declare_buffer_var("removed mesh bounds", vir::Access::None);
   prepared.meshlet_instances = module.declare_buffer_var("meshlet instances", vir::Access::None);
+  if (shape.has_blend_meshes || shape.has_refractors) {
+    prepared.transparent_meshlet_instances = module.declare_buffer_var(
+      "transparent meshlet instances",
+      vir::Access::None
+    );
+  }
   prepared.visible_meshlet_instances_indices = module.declare_buffer_var(
     "visible meshlet instances",
     vir::Access::None
@@ -1745,6 +1785,7 @@ auto RendererInstance::record_frame(
   values.dirty_mesh_instances = prepared.dirty_mesh_instances;
   values.removed_mesh_bounds = prepared.removed_mesh_bounds;
   values.meshlet_instances = prepared.meshlet_instances;
+  values.transparent_meshlet_instances = prepared.transparent_meshlet_instances;
   values.visible_meshlet_instances_indices = prepared.visible_meshlet_instances_indices;
   values.reordered_indices = prepared.reordered_indices;
 
@@ -1886,19 +1927,52 @@ auto RendererInstance::record_frame(
     self.record_acceleration_structures(module, recording);
   }
 
-  const auto record_visbuffer_stages =
-    [&](vir::ValueID visbuffer, vir::ValueID depth) -> std::pair<vir::ValueID, vir::ValueID> {
+  // the refractor visbuffer and its meshlet list are only handed over when the shape has refractors
+  const auto record_visbuffer_stages = [&](vir::ValueID visbuffer, vir::ValueID depth, vir::ValueID refractor_visbuffer)
+    -> std::tuple<vir::ValueID, vir::ValueID, vir::ValueID> {
     auto resources = SharedResources{};
     resources.image_resources = {{"visbuffer_attachment", visbuffer}, {"depth_attachment", depth}};
     resources.buffer_resources = {
       {"meshlet_instances_buffer", values.meshlet_instances},
       {"mesh_instances_buffer", values.mesh_instances},
     };
+    const auto has_refractor_visbuffer = refractor_visbuffer != vir::ValueID::Invalid;
+    if (has_refractor_visbuffer) {
+      resources.image_resources["refractor_visbuffer_attachment"] = refractor_visbuffer;
+      resources.buffer_resources["transparent_meshlet_instances_buffer"] = values.transparent_meshlet_instances;
+    }
+
     self.execute_stages_after(RenderStage::VisBufferEncode, module, resources, prepared);
     values.meshlet_instances = resources.buffer_resources.at("meshlet_instances_buffer");
     values.mesh_instances = resources.buffer_resources.at("mesh_instances_buffer");
-    return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
+    if (has_refractor_visbuffer) {
+      refractor_visbuffer = resources.image_resources.at("refractor_visbuffer_attachment");
+      values.transparent_meshlet_instances = resources.buffer_resources.at("transparent_meshlet_instances_buffer");
+    }
+
+    return {
+      resources.image_resources.at("visbuffer_attachment"),
+      resources.image_resources.at("depth_attachment"),
+      refractor_visbuffer
+    };
   };
+
+  // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
+  // allocates carry into the late pass, and into the transparency cull after lighting
+  auto cull_geometry_context = CullGeometryContext{
+    .use_hiz = true,
+    .init_cull_meshes = true,
+  };
+  if (shape.has_blend_meshes) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteBlend;
+  }
+
+  if (shape.has_refractors) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteRefractors;
+  }
+
+  auto refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  auto refractor_depth_attachment = vir::ValueID::Invalid;
 
   // --- 3D ---
   if (shape.has_meshes || shape.has_terrain) {
@@ -1913,13 +1987,6 @@ auto RendererInstance::record_frame(
       .emissive_attachment = emissive_attachment,
       .metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment,
       .velocity_attachment = velocity_attachment,
-    };
-
-    // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
-    // allocates carry into the late pass
-    auto cull_geometry_context = CullGeometryContext{
-      .use_hiz = true,
-      .init_cull_meshes = true,
     };
 
     auto terrain_context = TerrainContext{};
@@ -2011,10 +2078,24 @@ auto RendererInstance::record_frame(
     self.generate_hiz(module, render_context, main_geometry_context);
     run_geometry_pass(true);
 
+    if (shape.has_refractors) {
+      std::tie(
+        refractor_visbuffer_attachment,
+        refractor_depth_attachment
+      ) = self.draw_refractor_visbuffer(module, recording, cull_geometry_context, main_geometry_context);
+    }
+
+    // after the refractors, so editor picking and outlines see glass ahead of what's behind it
     std::tie(
       main_geometry_context.visbuffer_attachment,
-      main_geometry_context.depth_attachment
-    ) = record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
+      main_geometry_context.depth_attachment,
+      refractor_visbuffer_attachment
+    ) =
+      record_visbuffer_stages(
+        main_geometry_context.visbuffer_attachment,
+        main_geometry_context.depth_attachment,
+        refractor_visbuffer_attachment
+      );
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -2059,6 +2140,7 @@ auto RendererInstance::record_frame(
 
     visbuffer_attachment = main_geometry_context.visbuffer_attachment;
     depth_attachment = main_geometry_context.depth_attachment;
+    hiz_attachment = main_geometry_context.hiz_attachment;
     overdraw_attachment = main_geometry_context.overdraw_attachment;
     albedo_attachment = main_geometry_context.albedo_attachment;
     normal_attachment = main_geometry_context.normal_attachment;
@@ -2075,8 +2157,12 @@ auto RendererInstance::record_frame(
         .physical_page_table_attachment = vsm_physical_pages_attachment,
         .light_grid_buffer = light_grid_buffer,
         .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+        .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+        .refractor_depth_attachment = refractor_depth_attachment,
       };
       self.draw_virtual_shadowmap(module, recording, rmvsm_context);
+      refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
+      refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;
       light_grid_buffer = rmvsm_context.light_grid_buffer;
@@ -2089,7 +2175,11 @@ auto RendererInstance::record_frame(
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
-    std::tie(visbuffer_attachment, depth_attachment) = record_visbuffer_stages(visbuffer_attachment, depth_attachment);
+    std::tie(visbuffer_attachment, depth_attachment, std::ignore) = record_visbuffer_stages(
+      visbuffer_attachment,
+      depth_attachment,
+      vir::ValueID::Invalid
+    );
   }
 
   if (shape.has_atmosphere && shape.has_directional_light) {
@@ -2212,6 +2302,30 @@ auto RendererInstance::record_frame(
     }
   }
 
+  // sssr and transparency bind the probe resources under a spec constant, a scene without probe volumes shares
+  // one set of stand-ins they never sample
+  const auto has_transparency = shape.has_blend_meshes || shape.has_refractors;
+  if (shape.probe_volume_count == 0 && (shape.has_sssr || has_transparency)) {
+    probe_volumes_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused probe volumes",
+    });
+    probe_states_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused probe states",
+    });
+    ddgi_irradiance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused ddgi irradiance"}
+    );
+    ddgi_distance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "unused ddgi distance"}
+    );
+  }
+
   // --- lighting ---
   auto pbr_context = PBRContext{
     .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
@@ -2301,6 +2415,130 @@ auto RendererInstance::record_frame(
     ddgi_distance_attachment = sssr_context.distance_attachment;
     sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
     sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
+  }
+
+  // --- transparency ---
+  auto wboit_revealage_attachment = vir::ValueID::Invalid;
+  auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
+  if (has_transparency) {
+    const auto is_atmosphere = static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere);
+    cull_geometry_context.hiz_attachment = hiz_attachment;
+    auto transparency_context = TransparencyContext{
+      .visibility_buffer = cull_geometry_context.visibility_buffer,
+      .hiz_attachment = cull_geometry_context.hiz_attachment,
+      .final_attachment = final_attachment,
+      .depth_attachment = depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
+      .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
+      .sky_aerial_perspective_lut_attachment = sky_aerial_perspective_attachment,
+      .sky_cubemap_attachment = sky_cubemap_attachment,
+      .lighting_buffer = pbr_context.lighting_buffer,
+      .light_grid_buffer = light_grid_buffer,
+      .pointspot_views_buffer = pointspot_views_buffer,
+      .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
+      .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+      .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
+      .probe_volumes_buffer = probe_volumes_buffer,
+      .probe_states_buffer = probe_states_buffer,
+      .irradiance_attachment = ddgi_irradiance_attachment,
+      .distance_attachment = ddgi_distance_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
+      .environment_buffer = is_atmosphere ? values.atmosphere : pbr_context.sky_buffer,
+    };
+
+    // the rear pair resolves over the scene first, so refractors see blended content behind them
+    if (shape.has_blend_meshes) {
+      transparency_context
+        .draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_geometry_context, false);
+      transparency_context.visibility_buffer = cull_geometry_context.visibility_buffer;
+      transparency_context.hiz_attachment = cull_geometry_context.hiz_attachment;
+      self.draw_transparency(module, recording, transparency_context);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
+    if (shape.has_refractors) {
+      if (shape.has_sssr) {
+        const auto traced = record_sssr_refractor_trace(
+          module,
+          render_context,
+          recording,
+          {
+            .camera = values.camera,
+            .refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment,
+            .refractor_depth_attachment = transparency_context.refractor_depth_attachment,
+            .opaque_depth_attachment = transparency_context.depth_attachment,
+            .opaque_normal_attachment = normal_attachment,
+            .depth_hierarchy = sssr_context.depth_hierarchy,
+            .meshes = values.meshes,
+            .mesh_instances = values.mesh_instances,
+            .meshlet_instances = values.transparent_meshlet_instances,
+            .transforms = values.transforms_world,
+            .materials = values.materials,
+            .lighting_buffer = transparency_context.lighting_buffer,
+          }
+        );
+        values.camera = traced.camera;
+        transparency_context.refractor_visbuffer_attachment = traced.refractor_visbuffer_attachment;
+        transparency_context.refractor_depth_attachment = traced.refractor_depth_attachment;
+        transparency_context.depth_attachment = traced.opaque_depth_attachment;
+        normal_attachment = traced.opaque_normal_attachment;
+        sssr_context.depth_hierarchy = traced.depth_hierarchy;
+        values.meshes = traced.meshes;
+        values.mesh_instances = traced.mesh_instances;
+        values.transparent_meshlet_instances = traced.meshlet_instances;
+        values.transforms_world = traced.transforms;
+        values.materials = traced.materials;
+        transparency_context.lighting_buffer = traced.lighting_buffer;
+        transparency_context.refractor_reflection_attachment = traced.reflection_attachment;
+      }
+
+      std::tie(
+        transparency_context.final_attachment,
+        transparency_context.transmission_attachment
+      ) = build_transmission_source(module, render_context, transparency_context.final_attachment);
+      self.shade_refractors(module, recording, transparency_context);
+    }
+
+    if (shape.has_blend_meshes && shape.has_refractors) {
+      std::swap(transparency_context.accumulation_attachment, transparency_context.accumulation_front_attachment);
+      std::swap(transparency_context.revealage_attachment, transparency_context.revealage_front_attachment);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
+    // the debug views read the rear pair, which the swap above moved into the front slots
+    if (shape.has_blend_meshes) {
+      const auto is_split = shape.has_refractors;
+      wboit_revealage_attachment = is_split ? transparency_context.revealage_front_attachment
+                                            : transparency_context.revealage_attachment;
+      wboit_revealage_front_attachment = is_split ? transparency_context.revealage_attachment : vir::ValueID::Invalid;
+    }
+
+    if (is_atmosphere) {
+      values.atmosphere = transparency_context.environment_buffer;
+    }
+
+    final_attachment = transparency_context.final_attachment;
+    depth_attachment = transparency_context.depth_attachment;
+    reactive_mask_attachment = transparency_context.reactive_mask_attachment;
+    hiz_attachment = transparency_context.hiz_attachment;
+    cull_geometry_context.visibility_buffer = transparency_context.visibility_buffer;
+    refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment;
+    refractor_depth_attachment = transparency_context.refractor_depth_attachment;
+    sky_transmittance_lut_attachment = transparency_context.sky_transmittance_lut_attachment;
+    sky_aerial_perspective_attachment = transparency_context.sky_aerial_perspective_lut_attachment;
+    sky_cubemap_attachment = transparency_context.sky_cubemap_attachment;
+    light_grid_buffer = transparency_context.light_grid_buffer;
+    pointspot_views_buffer = transparency_context.pointspot_views_buffer;
+    vsm_pointspot_page_table_attachment = transparency_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = transparency_context.vsm_physical_pages_attachment;
+    vsm_virtual_page_table_attachment = transparency_context.vsm_page_table_attachment;
+    vsm_directional_clipmaps_buffer = transparency_context.directional_clipmaps_buffer;
+    probe_volumes_buffer = transparency_context.probe_volumes_buffer;
+    probe_states_buffer = transparency_context.probe_states_buffer;
+    ddgi_irradiance_attachment = transparency_context.irradiance_attachment;
+    ddgi_distance_attachment = transparency_context.distance_attachment;
   }
 
   // --- 2D ---
@@ -2564,6 +2802,11 @@ auto RendererInstance::record_frame(
       .sssr_confidence_attachment = sssr_context.confidence,
       .sssr_variance_attachment = sssr_context.variance,
       .sssr_sample_count_attachment = sssr_context.sample_count,
+      .wboit_revealage_attachment = wboit_revealage_attachment,
+      .wboit_revealage_front_attachment = wboit_revealage_front_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
     sssr_context.radiance = debug_context.sssr_reflection_attachment;

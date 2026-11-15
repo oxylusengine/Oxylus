@@ -447,6 +447,7 @@ auto RendererInstance::bind_pbr_variables(
     .contact_shadow_thickness = cvar.cvar_contact_shadows_thickness.get(),
     .contact_shadow_length = cvar.cvar_contact_shadows_length.get(),
     .frame_index = self.frame_params.frame_index,
+    .time = self.frame_params.time,
   };
   lighting.vsm.depth_extent = {};
   lighting.vsm.curr_clipmap_index = 0;
@@ -607,7 +608,7 @@ auto RendererInstance::apply_pbr(
       context.pointspot_page_table_attachment,
       context.vsm_physical_pages_attachment,
       values.camera,
-      std::ignore,
+      sky,
       lighting,
       values.lights,
       context.light_grid_buffer,
@@ -641,7 +642,10 @@ auto RendererInstance::apply_pbr(
         .draw(3, 1)
         .end_rendering()
     );
+    context.sky_buffer = sky;
   }
+
+  context.lighting_buffer = lighting;
 
   return dst;
 }

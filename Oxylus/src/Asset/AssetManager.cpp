@@ -65,6 +65,8 @@ static constexpr auto MATERIAL_TEXTURE_SLOTS = std::array{
   MaterialTextureSlot{.member = &Material::emissive_texture, .is_srgb = true},
   MaterialTextureSlot{.member = &Material::metallic_roughness_texture, .is_srgb = false},
   MaterialTextureSlot{.member = &Material::occlusion_texture, .is_srgb = false},
+  MaterialTextureSlot{.member = &Material::transmission_texture, .is_srgb = false},
+  MaterialTextureSlot{.member = &Material::thickness_texture, .is_srgb = false},
 };
 
 auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::string> {
@@ -388,13 +390,9 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Material: {
       auto material = self.get_material(asset->material_id);
       if (material) {
-        children = {
-          material->albedo_texture,
-          material->normal_texture,
-          material->emissive_texture,
-          material->metallic_roughness_texture,
-          material->occlusion_texture,
-        };
+        for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+          children.push_back(material.value->*slot.member);
+        }
       }
     } break;
   }
@@ -459,13 +457,9 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     case AssetType::Material: {
       auto material = self.get_material(asset->material_id);
       if (material) {
-        children = {
-          material->albedo_texture,
-          material->normal_texture,
-          material->emissive_texture,
-          material->metallic_roughness_texture,
-          material->occlusion_texture,
-        };
+        for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+          children.push_back(material.value->*slot.member);
+        }
       }
     } break;
   }
@@ -809,17 +803,12 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
   -> MaterialID {
   ZoneScoped;
 
-  const auto load_texture_slot = [&self](const UUID& texture_uuid, bool is_srgb) -> void {
+  for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+    const auto& texture_uuid = info.*slot.member;
     if (texture_uuid) {
-      self.load_asset(texture_uuid, TextureLoadInfo{.is_srgb = is_srgb}, false);
+      self.load_asset(texture_uuid, TextureLoadInfo{.is_srgb = slot.is_srgb}, false);
     }
-  };
-
-  load_texture_slot(info.albedo_texture, true);
-  load_texture_slot(info.normal_texture, false);
-  load_texture_slot(info.emissive_texture, true);
-  load_texture_slot(info.metallic_roughness_texture, false);
-  load_texture_slot(info.occlusion_texture, false);
+  }
 
   auto write_lock = std::unique_lock(self.materials_mutex);
   auto material_id = self.material_map.create_slot(Material(info));
@@ -837,6 +826,7 @@ auto AssetManager::unload_material(this AssetManager& self, const MaterialID mat
   auto write_lock = std::unique_lock(self.materials_mutex);
   self.material_map.destroy_slot(material_id);
   std::erase(self.dirty_materials, material_id);
+  ++std::atomic_ref(self.materials_revision);
 
   return true;
 }
@@ -1132,7 +1122,7 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
   }
 
   // the new textures first, so one that only moves between slots never reaches zero
-  auto acquired = ankerl::svector<UUID, 5>{};
+  auto acquired = ankerl::svector<UUID, MATERIAL_TEXTURE_SLOTS.size()>{};
   const auto rollback = [&]() {
     for (const auto& texture : acquired) {
       for (u64 i = 0; i < holders; i++) {
@@ -1194,6 +1184,7 @@ auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID materi
   ZoneScoped;
 
   auto lock = std::unique_lock(self.materials_mutex);
+  ++std::atomic_ref(self.materials_revision);
   if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
     return;
   }
@@ -1238,6 +1229,10 @@ auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vecto
   self.dirty_materials.clear();
 
   return dirty_copy;
+}
+
+auto AssetManager::get_materials_revision(this AssetManager& self) -> u32 {
+  return std::atomic_ref(self.materials_revision).load();
 }
 
 auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene> {

@@ -297,6 +297,15 @@ auto RendererInstance::draw_virtual_shadowmap(
   const auto vsm_ctx = variables.context;
   const auto ps_ctx = variables.pointspot_context;
 
+  // the marking shaders read these only in their refractor pass, the opaque pass binds stand-ins
+  const auto mark_pass_count = shape.has_refractors ? 2_u32 : 1_u32;
+  auto unused_visbuffer = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "vsm unused refractor visbuffer"}
+  );
+  auto unused_depth = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Sfloat, .name = "vsm unused opaque depth"}
+  );
+
   context.directional_clipmaps_buffer = module.transient_buffer({
     .size = sizeof(DirectionalClipmaps),
     .usage = TRANSIENT_BUFFER_USAGE,
@@ -598,44 +607,93 @@ auto RendererInstance::draw_virtual_shadowmap(
           .end_compute()
       );
 
-    std::tie(
-      values.camera,
-      context.directional_clipmaps_buffer,
-      context.depth_attachment,
-      context.normal_attachment,
-      context.virtual_page_table_attachment,
-      page_occupancy,
-      page_allocator
-    ) = std::tuple_cat( //
-      module
-        .begin_compute(
-          {{values.camera, vir::Access::ComputeUniformRead},
-           {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
-           {context.depth_attachment, vir::Access::ComputeSampled},
-           {context.normal_attachment, vir::Access::ComputeSampled},
-           {context.virtual_page_table_attachment, vir::Access::ComputeRW},
-           {page_occupancy, vir::Access::ComputeRW},
-           {page_allocator, vir::Access::ComputeRW}}
-        )
-        .with_name("vsm mark visible pages")
-        .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
-        .bind_buffer(0, 0, values.camera)
-        .bind_buffer(0, 1, context.directional_clipmaps_buffer)
-        .bind_image(0, 2, context.depth_attachment)
-        .bind_image(0, 3, context.normal_attachment)
-        .bind_image(0, 4, context.virtual_page_table_attachment)
-        .bind_buffer(0, 5, page_occupancy)
-        .bind_buffer(0, 6, page_allocator)
-        .push_constants_from(vsm_ctx)
-        .dispatch_invocations_per_pixel(context.depth_attachment)
-        .end_compute()
-    );
+    // the second dispatch marks what the refractors cover, from their own depth and normals
+    for (auto mark_pass = 0_u32; mark_pass < mark_pass_count; mark_pass++) {
+      const auto is_refractor = mark_pass == 1;
+      auto marked_depth = is_refractor ? context.refractor_depth_attachment : context.depth_attachment;
+      auto marked_visbuffer = is_refractor ? context.refractor_visbuffer_attachment : unused_visbuffer;
+      auto opaque_depth = is_refractor ? context.depth_attachment : unused_depth;
+      if (is_refractor) {
+        std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
+      }
+
+      std::tie(
+        values.camera,
+        context.directional_clipmaps_buffer,
+        marked_depth,
+        context.normal_attachment,
+        context.virtual_page_table_attachment,
+        page_occupancy,
+        page_allocator,
+        marked_visbuffer,
+        opaque_depth,
+        values.meshlet_instances,
+        values.mesh_instances,
+        values.meshes,
+        values.transforms_world,
+        values.materials
+      ) = std::tuple_cat( //
+        module
+          .begin_compute(
+            {{values.camera, vir::Access::ComputeUniformRead},
+             {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
+             {marked_depth, vir::Access::ComputeSampled},
+             {context.normal_attachment, vir::Access::ComputeSampled},
+             {context.virtual_page_table_attachment, vir::Access::ComputeRW},
+             {page_occupancy, vir::Access::ComputeRW},
+             {page_allocator, vir::Access::ComputeRW},
+             {marked_visbuffer, vir::Access::ComputeSampled},
+             {opaque_depth, vir::Access::ComputeSampled},
+             {values.meshlet_instances, vir::Access::ComputeRead},
+             {values.mesh_instances, vir::Access::ComputeRead},
+             {values.meshes, vir::Access::ComputeRead},
+             {values.transforms_world, vir::Access::ComputeRead},
+             {values.materials, vir::Access::ComputeRead}}
+          )
+          .with_name(is_refractor ? "vsm mark visible refractor pages" : "vsm mark visible pages")
+          .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
+          .bind_buffer(0, 0, values.camera)
+          .bind_buffer(0, 1, context.directional_clipmaps_buffer)
+          .bind_image(0, 2, marked_depth)
+          .bind_image(0, 3, context.normal_attachment)
+          .bind_image(0, 4, context.virtual_page_table_attachment)
+          .bind_buffer(0, 5, page_occupancy)
+          .bind_buffer(0, 6, page_allocator)
+          .bind_image(0, 7, marked_visbuffer)
+          .bind_image(0, 8, opaque_depth)
+          .bind_buffer(0, 9, values.meshlet_instances)
+          .bind_buffer(0, 10, values.mesh_instances)
+          .bind_buffer(0, 11, values.meshes)
+          .bind_buffer(0, 12, values.transforms_world)
+          .bind_buffer(0, 13, values.materials)
+          .specialize_constant(0, static_cast<u32>(is_refractor))
+          .push_constants_from(vsm_ctx)
+          .dispatch_invocations_per_pixel(marked_depth)
+          .end_compute()
+      );
+
+      if (is_refractor) {
+        std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
+        context.refractor_depth_attachment = marked_depth;
+        context.refractor_visbuffer_attachment = marked_visbuffer;
+        context.depth_attachment = opaque_depth;
+      } else {
+        context.depth_attachment = marked_depth;
+        unused_visbuffer = marked_visbuffer;
+        unused_depth = opaque_depth;
+      }
+    }
   }
 
   if (is_pointspot) {
-    {
+    for (auto mark_pass = 0_u32; mark_pass < mark_pass_count; mark_pass++) {
+      const auto is_refractor = mark_pass == 1;
+      auto marked_depth = is_refractor ? context.refractor_depth_attachment : context.depth_attachment;
+      auto marked_visbuffer = is_refractor ? context.refractor_visbuffer_attachment : unused_visbuffer;
+      auto opaque_depth = is_refractor ? context.depth_attachment : unused_depth;
+
       auto mips = std::array<vir::ValueID, RMVSMContext::POINT_SPOT_MIP_COUNT>{};
-      auto accesses = std::array<vir::ResourceAccess, RMVSMContext::POINT_SPOT_MIP_COUNT + 6>{};
+      auto accesses = std::array<vir::ResourceAccess, RMVSMContext::POINT_SPOT_MIP_COUNT + 8>{};
       for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
         mips[mip] = module.mip(context.pointspot_page_table_attachment, mip);
         accesses[mip] = {mips[mip], vir::Access::ComputeRW};
@@ -643,12 +701,14 @@ auto RendererInstance::draw_virtual_shadowmap(
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT] = {values.camera, vir::Access::ComputeUniformRead};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 1] = {context.pointspot_views_buffer, vir::Access::ComputeRead};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 2] = {context.light_grid_buffer, vir::Access::ComputeRead};
-      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 3] = {context.depth_attachment, vir::Access::ComputeSampled};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 3] = {marked_depth, vir::Access::ComputeSampled};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 4] = {page_occupancy, vir::Access::ComputeRW};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 5] = {page_allocator, vir::Access::ComputeRW};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 6] = {marked_visbuffer, vir::Access::ComputeSampled};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 7] = {opaque_depth, vir::Access::ComputeSampled};
       auto pass = bind_vsm_pointspot_spec_constants(
         module.begin_compute(accesses)
-          .with_name("vsm pointspot mark visible pages")
+          .with_name(is_refractor ? "vsm pointspot mark visible refractor pages" : "vsm pointspot mark visible pages")
           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages_pointspot"))
       );
       for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
@@ -657,19 +717,34 @@ auto RendererInstance::draw_virtual_shadowmap(
       module.bind_buffer(0, 0, values.camera)
         .bind_buffer(0, 1, context.pointspot_views_buffer)
         .bind_buffer(0, 2, context.light_grid_buffer)
-        .bind_image(0, 3, context.depth_attachment)
+        .bind_image(0, 3, marked_depth)
         .bind_buffer(0, 10, page_occupancy)
         .bind_buffer(0, 11, page_allocator)
+        .bind_image(0, 12, marked_visbuffer)
+        .bind_image(0, 13, opaque_depth)
+        .specialize_constant(0, static_cast<u32>(is_refractor))
         .push_constants_from(variables.pointspot_mark_push)
-        .dispatch_invocations_per_pixel(context.depth_attachment);
+        .dispatch_invocations_per_pixel(marked_depth);
       const auto results = pass.end_compute();
       context.pointspot_page_table_attachment = module.whole(results[RMVSMContext::POINT_SPOT_MIP_COUNT - 1]);
       values.camera = results[RMVSMContext::POINT_SPOT_MIP_COUNT];
       context.pointspot_views_buffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 1];
       context.light_grid_buffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 2];
-      context.depth_attachment = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 3];
+      marked_depth = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 3];
       page_occupancy = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 4];
       page_allocator = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 5];
+      marked_visbuffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 6];
+      opaque_depth = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 7];
+
+      if (is_refractor) {
+        context.refractor_depth_attachment = marked_depth;
+        context.refractor_visbuffer_attachment = marked_visbuffer;
+        context.depth_attachment = opaque_depth;
+      } else {
+        context.depth_attachment = marked_depth;
+        unused_visbuffer = marked_visbuffer;
+        unused_depth = opaque_depth;
+      }
     }
 
     const auto coarse_mip = module.mip(context.pointspot_page_table_attachment, RMVSMContext::POINT_SPOT_MIP_COUNT - 1);
@@ -990,7 +1065,7 @@ auto RendererInstance::draw_virtual_shadowmap(
              {values.meshlet_instances, geometry_access},
              {values.transforms_world, geometry_access},
              {cull_context.visibility_buffer, geometry_access},
-             {values.materials, vir::Access::FragmentRead},
+             {values.materials, geometry_access | vir::Access::FragmentRead},
              {context.directional_clipmaps_buffer, geometry_access | vir::Access::FragmentRead},
              {hpb, vir::Access::TaskSampled | vir::Access::MeshSampled},
              {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
@@ -1103,7 +1178,7 @@ auto RendererInstance::draw_virtual_shadowmap(
                {values.meshes, geometry_access},
                {values.mesh_instances, geometry_access},
                {values.transforms_world, geometry_access},
-               {values.materials, vir::Access::FragmentRead},
+               {values.materials, geometry_access | vir::Access::FragmentRead},
                {cull_context.views_buffer, geometry_access},
                {cull_context.vsm_meshlet_instances_buffer, geometry_access},
                {cull_context.hpb_attachment, vir::Access::TaskSampled | vir::Access::MeshSampled},

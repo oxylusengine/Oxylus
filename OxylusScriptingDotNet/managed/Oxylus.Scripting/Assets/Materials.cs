@@ -21,6 +21,13 @@ public enum SamplingMode : uint
     LinearRepeatedAnisotropy,
 }
 
+// Asset/Material.hpp's ShadingModel
+public enum ShadingModel : uint
+{
+    Standard = 0,
+    Water,
+}
+
 // a material asset's parameters, laid out like Asset/Material.hpp's Material. Start from Assets.GetMaterial, change
 // what you want and hand it back to Assets.SetMaterial
 [StructLayout(LayoutKind.Sequential)]
@@ -40,16 +47,38 @@ public struct MaterialData
     public SamplingMode SamplingMode;
     uint flipNormalY;
     internal uint Padding;
+    uint doubleSided;
+    public float TransmissionFactor;
+    public float Ior;
+    public float ThicknessFactor;
+    public Vector3 AttenuationColor;
+    // 0 is infinite
+    public float AttenuationDistance;
+    public ShadingModel ShadingModel;
+    public Vector3 WaterScatterColor;
+    public Vector2 WaterFlow;
+    public float WaterDetailScale;
+    public float WaterShoreFade;
     public AssetId AlbedoTexture;
     public AssetId NormalTexture;
     public AssetId EmissiveTexture;
     public AssetId MetallicRoughnessTexture;
     public AssetId OcclusionTexture;
+    // factor multiplies the R channel, linear
+    public AssetId TransmissionTexture;
+    // factor multiplies the G channel, linear
+    public AssetId ThicknessTexture;
 
     // for DirectX convention normal maps
     public bool FlipNormalY
     {
         readonly get => flipNormalY != 0;
         set => flipNormalY = value ? 1u : 0u;
+    }
+
+    public bool DoubleSided
+    {
+        readonly get => doubleSided != 0;
+        set => doubleSided = value ? 1u : 0u;
     }
 }

@@ -140,6 +140,12 @@ public:
   auto set_material_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
   auto get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID>;
+  auto get_materials_revision(this AssetManager& self) -> u32;
+  template <typename Func>
+  auto for_each_material_index(this AssetManager& self, Func&& func) -> void {
+    auto lock = std::shared_lock(self.materials_mutex);
+    self.material_map.for_each_active([&func](usize index, const Material&) { func(index); });
+  }
 
   auto get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene>;
   auto get_scene(this AssetManager& self, SceneID scene_id) -> ReadGuard<Scene>;
@@ -249,6 +255,8 @@ private:
   std::shared_mutex cinematics_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
+  // bumped whenever a material is created, changed or destroyed
+  u32 materials_revision = 0;
 
   std::shared_mutex loading_mutex = {};
   ankerl::unordered_dense::set<UUID> loading_assets = {};

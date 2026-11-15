@@ -575,7 +575,7 @@ public struct DepthRayMarch
     /// March towards a world-space direction. Infinite (ray is extended to cover the whole view frustum).
     ///
     /// Must be called after `from_cs`, as it will clip the world-space ray to the view frustum.
-    DepthRayMarch to_ws_dir(f32x3 dir, f32x4x4 view_matrix, f32x4x4 projection_matrix)
+    public DepthRayMarch to_ws_dir(f32x3 dir, f32x4x4 view_matrix, f32x4x4 projection_matrix)
     {
         return this.to_cs_dir(direction_world_to_clip(dir, view_matrix, projection_matrix));
     }

@@ -92,7 +92,16 @@ public func brdf_setup(f32 alpha, f32x2 AB) -> BRDFSetup {
     return setup;
 }
 
+public func dielectric_f0(f32 ior) -> f32 {
+    let root = (ior - 1.0) / (ior + 1.0);
+    return root * root;
+}
+
 public func brdf_evaluate(in BRDFSetup setup, f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 metallic) -> BRDFResult {
+    return brdf_evaluate(setup, V, N, L, albedo, metallic, 0.04);
+}
+
+public func brdf_evaluate(in BRDFSetup setup, f32x3 V, f32x3 N, f32x3 L, f32x3 albedo, f32 metallic, f32 dielectric_f0_scalar) -> BRDFResult {
     let VL = V + L;
     let H = dot(VL, VL) > 1e-8 ? normalize(VL) : N;
     let NoV = abs(dot(N, V)) + 1e-5;
@@ -100,7 +109,7 @@ public func brdf_evaluate(in BRDFSetup setup, f32x3 V, f32x3 N, f32x3 L, f32x3 a
     let NoH = saturate(dot(N, H));
     let LoH = saturate(dot(L, H));
 
-    let dielectric_F0 = f32x3(0.04);
+    let dielectric_F0 = f32x3(dielectric_f0_scalar);
     let F0 = lerp(dielectric_F0, albedo, metallic);
 
     let D = D_GGX(NoH, setup.alpha2);

@@ -17,7 +17,7 @@ struct AssetManifest {
 
   struct Header {
     static constexpr auto SIGNATURE = 0x464D584F_u32;
-    static constexpr auto VERSION = 1_u16;
+    static constexpr auto VERSION = 2_u16;
 
     u32 magic = SIGNATURE; // "OXMF"
     u16 version = VERSION;
@@ -46,11 +46,24 @@ struct AssetManifest {
     f32 alpha_cutoff = 0.1f;
     SamplingMode sampling_mode = SamplingMode::LinearRepeated;
     bool flip_normal_y = false;
+    bool double_sided = false;
+    f32 transmission_factor = 0.0f;
+    f32 ior = 1.5f;
+    f32 thickness_factor = 0.0f;
+    std::array<f32, 3> attenuation_color = {1.0f, 1.0f, 1.0f};
+    f32 attenuation_distance = 0.0f;
+    ShadingModel shading_model = ShadingModel::Standard;
+    std::array<f32, 3> water_scatter_color = {0.02f, 0.09f, 0.08f};
+    std::array<f32, 2> water_flow = {0.03f, 0.01f};
+    f32 water_detail_scale = 0.37f;
+    f32 water_shore_fade = 0.5f;
     PackedUUID albedo_texture = {};
     PackedUUID normal_texture = {};
     PackedUUID emissive_texture = {};
     PackedUUID metallic_roughness_texture = {};
     PackedUUID occlusion_texture = {};
+    PackedUUID transmission_texture = {};
+    PackedUUID thickness_texture = {};
 
     static auto pack(const UUID& uuid, const Material& material) -> MaterialEntry;
     auto unpack(this const MaterialEntry& self) -> Material;

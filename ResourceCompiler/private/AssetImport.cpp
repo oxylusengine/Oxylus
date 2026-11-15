@@ -395,18 +395,31 @@ auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Mater
   writer["alpha_mode"] = std::to_underlying(material.alpha_mode);
   writer["alpha_cutoff"] = material.alpha_cutoff;
   writer["flip_normal_y"] = material.flip_normal_y;
+  writer["double_sided"] = material.double_sided;
+  writer["transmission_factor"] = material.transmission_factor;
+  writer["ior"] = material.ior;
+  writer["thickness_factor"] = material.thickness_factor;
+  writer["attenuation_color"] = material.attenuation_color;
+  writer["attenuation_distance"] = material.attenuation_distance;
+  writer["shading_model"] = std::to_underlying(material.shading_model);
+  writer["water_scatter_color"] = material.water_scatter_color;
+  writer["water_flow"] = material.water_flow;
+  writer["water_detail_scale"] = material.water_detail_scale;
+  writer["water_shore_fade"] = material.water_shore_fade;
   writer["albedo_texture"] = material.albedo_texture.str().c_str();
   writer["normal_texture"] = material.normal_texture.str().c_str();
   writer["emissive_texture"] = material.emissive_texture.str().c_str();
   writer["metallic_roughness_texture"] = material.metallic_roughness_texture.str().c_str();
   writer["occlusion_texture"] = material.occlusion_texture.str().c_str();
+  writer["transmission_texture"] = material.transmission_texture.str().c_str();
+  writer["thickness_texture"] = material.thickness_texture.str().c_str();
 
   writer.end_obj();
 
   return true;
 }
 
-static auto read_material_asset_meta(simdjson::ondemand::value json, Material& material) -> void {
+static auto read_material_asset_meta(Session& session, simdjson::ondemand::value json, Material& material) -> void {
   ZoneScoped;
 
   const auto read_f32 = [&json](std::string_view key, f32& value) {
@@ -416,11 +429,20 @@ static auto read_material_asset_meta(simdjson::ondemand::value json, Material& m
     }
   };
 
-  const auto read_enum = [&json]<typename T>(std::string_view key, T& value) {
+  const auto read_enum = [&json, &session]<typename T>(std::string_view key, T& value, u64 count) {
     auto result = json[key].get_uint64();
-    if (!result.error()) {
-      value = static_cast<T>(result.value_unsafe());
+    if (result.error()) {
+      return;
     }
+
+    if (result.value_unsafe() >= count) {
+      session.push_error(
+        fmt::format("Material has an invalid `{}` of {}, using the default.", key, result.value_unsafe())
+      );
+      return;
+    }
+
+    value = static_cast<T>(result.value_unsafe());
   };
 
   const auto read_bool = [&json](std::string_view key, bool& value) {
@@ -456,8 +478,9 @@ static auto read_material_asset_meta(simdjson::ondemand::value json, Material& m
     }
   };
 
-  read_enum("sampling_mode", material.sampling_mode);
-  read_enum("alpha_mode", material.alpha_mode);
+  read_enum("sampling_mode", material.sampling_mode, 5);
+  read_enum("alpha_mode", material.alpha_mode, 3);
+  read_enum("shading_model", material.shading_model, 2);
   read_vec("albedo_color", material.albedo_color);
   read_vec("uv_size", material.uv_size);
   read_vec("uv_offset", material.uv_offset);
@@ -468,11 +491,42 @@ static auto read_material_asset_meta(simdjson::ondemand::value json, Material& m
   read_f32("occlusion_strength", material.occlusion_strength);
   read_f32("alpha_cutoff", material.alpha_cutoff);
   read_bool("flip_normal_y", material.flip_normal_y);
+  read_bool("double_sided", material.double_sided);
+  read_f32("transmission_factor", material.transmission_factor);
+  read_f32("ior", material.ior);
+  read_f32("thickness_factor", material.thickness_factor);
+  read_vec("attenuation_color", material.attenuation_color);
+  read_f32("attenuation_distance", material.attenuation_distance);
+  read_vec("water_scatter_color", material.water_scatter_color);
+  read_vec("water_flow", material.water_flow);
+  read_f32("water_detail_scale", material.water_detail_scale);
+  read_f32("water_shore_fade", material.water_shore_fade);
   read_uuid("albedo_texture", material.albedo_texture);
   read_uuid("normal_texture", material.normal_texture);
   read_uuid("emissive_texture", material.emissive_texture);
   read_uuid("metallic_roughness_texture", material.metallic_roughness_texture);
   read_uuid("occlusion_texture", material.occlusion_texture);
+  read_uuid("transmission_texture", material.transmission_texture);
+  read_uuid("thickness_texture", material.thickness_texture);
+}
+
+auto parse_material_asset_meta(Session& session, std::string_view json_text, Material& material) -> bool {
+  ZoneScoped;
+
+  auto contents = simdjson::padded_string(json_text);
+  auto parser = simdjson::ondemand::parser();
+  auto doc = parser.iterate(contents);
+  if (doc.error()) {
+    return false;
+  }
+
+  auto root = doc.get_value();
+  if (root.error()) {
+    return false;
+  }
+
+  read_material_asset_meta(session, root.value_unsafe(), material);
+  return true;
 }
 
 static auto read_meta_file(Session& session, const std::filesystem::path& path) -> std::unique_ptr<MetaFile> {
@@ -610,7 +664,7 @@ static auto read_model_meta(Session& session, const std::filesystem::path& meta_
       }
 
       auto material = Material{};
-      read_material_asset_meta(material_json.value_unsafe(), material);
+      read_material_asset_meta(session, material_json.value_unsafe(), material);
 
       meta.material_uuids.push_back(material_uuid);
       meta.materials.push_back(material);
@@ -1248,7 +1302,7 @@ static auto import_from_meta(Importer& importer, const std::filesystem::path& me
   if (asset.type == AssetType::Material) {
     auto material = Material{};
     if (auto material_json = meta_json->doc["material"]; !material_json.error()) {
-      read_material_asset_meta(material_json.value_unsafe(), material);
+      read_material_asset_meta(importer.session, material_json.value_unsafe(), material);
     }
 
     asset.material = material;

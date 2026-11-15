@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Asset/AssetFile.hpp"
@@ -19,7 +20,7 @@ namespace ox::rc {
 // Bumped whenever a compiled payload's meaning changes, so every cooked pack everywhere goes stale at once.
 // `AssetFileHeader::VERSION` covers layout; this covers everything else the compiler decides (sRGB choices, LOD
 // thresholds, meshlet limits).
-constexpr static auto ASSET_COMPILER_VERSION = 7_u32;
+constexpr static auto ASSET_COMPILER_VERSION = 8_u32;
 
 // Project file formats the importer knows how to turn into assets.
 enum class AssetFileType : u32 {
@@ -64,6 +65,7 @@ OXRC_API auto source_hash(const std::filesystem::path& path) -> u64;
 OXRC_API auto begin_asset_meta(JsonWriter& writer, const UUID& uuid, AssetType type) -> void;
 OXRC_API auto end_asset_meta(JsonWriter& writer, const std::filesystem::path& path) -> bool;
 OXRC_API auto write_material_asset_meta(JsonWriter& writer, const UUID& uuid, const Material& material) -> bool;
+OXRC_API auto parse_material_asset_meta(Session& session, std::string_view json_text, Material& material) -> bool;
 
 // One asset an import produced, for the caller to register: the editor into its `AssetManager`, `cook_assets` into
 // an `AssetManifest`. Paths are physical.
