@@ -42,13 +42,6 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     .init(self.system, "pp.contact_shadows_thickness", "contact shadows thickness", 0.1f);
   self.cvar_contact_shadows_length.init(self.system, "pp.contact_shadows_length", "contact shadows length", 0.01f);
 
-  self.cvar_refractor_reflection_steps.init(
-    self.system,
-    "pp.refractor_reflection_steps",
-    "screen space reflection march steps on glass and water, 0 reflects only the environment",
-    16
-  );
-
   self.cvar_vbgtao_enable.init(self.system, "pp.vbgtao", "use vbgtao", 1);
   self.cvar_vbgtao_quality_level
     .init(self.system, "pp.vbgtao_quality_level", "0: Low, 1: Medium, 2: High, 3: Ultra", 3);

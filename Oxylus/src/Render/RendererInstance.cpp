@@ -2459,6 +2459,41 @@ auto RendererInstance::record_frame(
     }
 
     if (shape.has_refractors) {
+      if (shape.has_sssr) {
+        const auto traced = record_sssr_refractor_trace(
+          module,
+          render_context,
+          recording,
+          {
+            .camera = values.camera,
+            .refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment,
+            .refractor_depth_attachment = transparency_context.refractor_depth_attachment,
+            .opaque_depth_attachment = transparency_context.depth_attachment,
+            .opaque_normal_attachment = normal_attachment,
+            .depth_hierarchy = sssr_context.depth_hierarchy,
+            .meshes = values.meshes,
+            .mesh_instances = values.mesh_instances,
+            .meshlet_instances = values.transparent_meshlet_instances,
+            .transforms = values.transforms_world,
+            .materials = values.materials,
+            .lighting_buffer = transparency_context.lighting_buffer,
+          }
+        );
+        values.camera = traced.camera;
+        transparency_context.refractor_visbuffer_attachment = traced.refractor_visbuffer_attachment;
+        transparency_context.refractor_depth_attachment = traced.refractor_depth_attachment;
+        transparency_context.depth_attachment = traced.opaque_depth_attachment;
+        normal_attachment = traced.opaque_normal_attachment;
+        sssr_context.depth_hierarchy = traced.depth_hierarchy;
+        values.meshes = traced.meshes;
+        values.mesh_instances = traced.mesh_instances;
+        values.transparent_meshlet_instances = traced.meshlet_instances;
+        values.transforms_world = traced.transforms;
+        values.materials = traced.materials;
+        transparency_context.lighting_buffer = traced.lighting_buffer;
+        transparency_context.refractor_reflection_attachment = traced.reflection_attachment;
+      }
+
       std::tie(
         transparency_context.final_attachment,
         transparency_context.transmission_attachment

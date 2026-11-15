@@ -344,6 +344,13 @@ auto RendererInstance::shade_refractors(
   const auto scene_flags = std::to_underlying(shape.scene_flags);
   const auto has_directional_shadows = static_cast<u32>(shape.has_directional_shadows && shape.has_meshes);
 
+  if (context.refractor_reflection_attachment == vir::ValueID::Invalid) {
+    context.refractor_reflection_attachment = module.clear(
+      module.transient_image({.extent = {1, 1, 1}, .format = vir::Format::RGBA16Uint, .name = "refractor reflection"}),
+      vir::ClearValue::rgba_u32(0, 0, 0, 0)
+    );
+  }
+
   auto pass =                          //
     bind_vsm_pointspot_spec_constants( //
       module.begin_rendering(
@@ -374,7 +381,8 @@ auto RendererInstance::shade_refractors(
          {context.refractor_visbuffer_attachment, vir::Access::FragmentSampled},
          {context.refractor_depth_attachment, vir::Access::FragmentSampled},
          {context.depth_attachment, vir::Access::FragmentSampled},
-         {context.transmission_attachment, vir::Access::FragmentSampled}}
+         {context.transmission_attachment, vir::Access::FragmentSampled},
+         {context.refractor_reflection_attachment, vir::Access::FragmentSampled}}
       )
     )
       .with_name("refractor shade")
@@ -405,6 +413,7 @@ auto RendererInstance::shade_refractors(
       .bind_image(0, 19, context.depth_attachment)
       .bind_image(0, 20, context.refractor_depth_attachment)
       .bind_image(0, 21, context.transmission_attachment)
+      .bind_image(0, 22, context.refractor_reflection_attachment)
       .push_constant_address(0, context.environment_buffer)
       .push_constant_address(8, context.lighting_buffer)
       .push_constant_address(16, values.lights)
@@ -443,7 +452,8 @@ auto RendererInstance::shade_refractors(
     context.refractor_visbuffer_attachment,
     context.refractor_depth_attachment,
     context.depth_attachment,
-    context.transmission_attachment
+    context.transmission_attachment,
+    context.refractor_reflection_attachment
   ) = std::tuple_cat(pass.draw(3, 1).end_rendering());
 }
 } // namespace ox

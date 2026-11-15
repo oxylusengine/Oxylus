@@ -208,6 +208,76 @@ auto RendererInstance::allocate_sssr_resources(this RendererInstance& self, cons
   self.sssr_history_valid = false;
 }
 
+auto RendererInstance::record_sssr_refractor_trace(
+  vir::Module& module, RenderContext& render_context, FrameRecording& recording, RefractorReflectionResources resources
+) -> RefractorReflectionResources {
+  ZoneScoped;
+
+  const auto& shape = recording.shape;
+  resources.reflection_attachment = module.transient_image({
+    .extent = {shape.render_size.x, shape.render_size.y, 1},
+    .format = vir::Format::RGBA16Uint,
+    .name = "sssr refractor reflection",
+  });
+  resources.reflection_attachment = module.clear(
+    resources.reflection_attachment,
+    vir::ClearValue::rgba_u32(0, 0, 0, 0)
+  );
+
+  auto pass = //
+    module
+      .begin_compute({
+        {resources.camera, vir::Access::ComputeUniformRead},
+        {resources.refractor_visbuffer_attachment, vir::Access::ComputeSampled},
+        {resources.refractor_depth_attachment, vir::Access::ComputeSampled},
+        {resources.opaque_depth_attachment, vir::Access::ComputeSampled},
+        {resources.meshes, vir::Access::ComputeRead},
+        {resources.mesh_instances, vir::Access::ComputeRead},
+        {resources.meshlet_instances, vir::Access::ComputeRead},
+        {resources.transforms, vir::Access::ComputeRead},
+        {resources.materials, vir::Access::ComputeRead},
+        {resources.depth_hierarchy, vir::Access::ComputeSampled},
+        {resources.opaque_normal_attachment, vir::Access::ComputeSampled},
+        {resources.lighting_buffer, vir::Access::ComputeRead},
+        {resources.reflection_attachment, vir::Access::ComputeWrite},
+      })
+      .with_name("sssr refractor trace")
+      .bind_compute_pipeline(render_context.pipeline("sssr_refractor_trace"))
+      .bind_buffer(0, 0, resources.camera)
+      .bind_image(0, 1, resources.refractor_visbuffer_attachment)
+      .bind_image(0, 2, resources.refractor_depth_attachment)
+      .bind_image(0, 3, resources.opaque_depth_attachment)
+      .bind_buffer(0, 4, resources.meshes)
+      .bind_buffer(0, 5, resources.mesh_instances)
+      .bind_buffer(0, 6, resources.meshlet_instances)
+      .bind_buffer(0, 7, resources.transforms)
+      .bind_buffer(0, 8, resources.materials)
+      .bind_image(0, 9, resources.depth_hierarchy)
+      .bind_image(0, 10, resources.opaque_normal_attachment)
+      .bind_image(0, 11, resources.reflection_attachment)
+      .push_constant_address(0, resources.lighting_buffer)
+      .push_constants_from_at(8, recording.prepared.sssr.settings)
+      .dispatch((shape.render_size.x + 7_u32) / 8_u32, (shape.render_size.y + 7_u32) / 8_u32, 1);
+
+  std::tie(
+    resources.camera,
+    resources.refractor_visbuffer_attachment,
+    resources.refractor_depth_attachment,
+    resources.opaque_depth_attachment,
+    resources.meshes,
+    resources.mesh_instances,
+    resources.meshlet_instances,
+    resources.transforms,
+    resources.materials,
+    resources.depth_hierarchy,
+    resources.opaque_normal_attachment,
+    resources.lighting_buffer,
+    resources.reflection_attachment
+  ) = std::tuple_cat(pass.end_compute());
+
+  return resources;
+}
+
 auto RendererInstance::record_sssr(
   vir::Module& module, RenderContext& render_context, FrameRecording& recording, SSSRContext& context
 ) -> void {

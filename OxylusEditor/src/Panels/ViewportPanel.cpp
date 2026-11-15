@@ -1500,10 +1500,6 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
     ui.drag("Thickness", cvar_sys.cvar_contact_shadows_thickness, 0.0f, 5.0f);
     ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f);
   });
-
-  ui.section({.name = "Glass And Water"}, [&] {
-    ui.drag("Reflection Steps", cvar_sys.cvar_refractor_reflection_steps, 0, 64);
-  });
 }
 
 auto ViewportPanel::draw_device_settings(this ViewportPanel&, SettingsUI& ui) -> void {

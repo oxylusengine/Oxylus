@@ -601,6 +601,22 @@ struct PBRContext {
   vir::ValueID sky_buffer = vir::ValueID::Invalid;
 };
 
+struct RefractorReflectionResources {
+  vir::ValueID camera = vir::ValueID::Invalid;
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID opaque_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID opaque_normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_hierarchy = vir::ValueID::Invalid;
+  vir::ValueID meshes = vir::ValueID::Invalid;
+  vir::ValueID mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transforms = vir::ValueID::Invalid;
+  vir::ValueID materials = vir::ValueID::Invalid;
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID reflection_attachment = vir::ValueID::Invalid;
+};
+
 struct TransparencyContext {
   vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
   vir::ValueID visibility_buffer = vir::ValueID::Invalid;
@@ -635,6 +651,7 @@ struct TransparencyContext {
   vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
   vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID transmission_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_reflection_attachment = vir::ValueID::Invalid;
 
   // the atmosphere, or the sky when the scene has none
   vir::ValueID environment_buffer = vir::ValueID::Invalid;
@@ -1352,6 +1369,12 @@ public:
   static auto record_sssr(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, SSSRContext& context
   ) -> void;
+  static auto record_sssr_refractor_trace(
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    RefractorReflectionResources resources
+  ) -> RefractorReflectionResources;
   auto draw_transparency(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
   ) -> void;

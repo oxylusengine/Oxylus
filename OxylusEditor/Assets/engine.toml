@@ -378,6 +378,12 @@ path = "passes/sssr/resolve_temporal.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "sssr_refractor_trace"
+path = "passes/sssr/refractor_trace.slang"
+entry_points = ["cs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
 name = "sssr_composite"
 path = "passes/sssr/composite.slang"
 entry_points = ["vs_main", "fs_main"]
