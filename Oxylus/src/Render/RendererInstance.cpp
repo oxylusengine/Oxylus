@@ -1927,18 +1927,34 @@ auto RendererInstance::record_frame(
     self.record_acceleration_structures(module, recording);
   }
 
-  const auto record_visbuffer_stages =
-    [&](vir::ValueID visbuffer, vir::ValueID depth) -> std::pair<vir::ValueID, vir::ValueID> {
+  // the refractor visbuffer and its meshlet list are only handed over when the shape has refractors
+  const auto record_visbuffer_stages = [&](vir::ValueID visbuffer, vir::ValueID depth, vir::ValueID refractor_visbuffer)
+    -> std::tuple<vir::ValueID, vir::ValueID, vir::ValueID> {
     auto resources = SharedResources{};
     resources.image_resources = {{"visbuffer_attachment", visbuffer}, {"depth_attachment", depth}};
     resources.buffer_resources = {
       {"meshlet_instances_buffer", values.meshlet_instances},
       {"mesh_instances_buffer", values.mesh_instances},
     };
+    const auto has_refractor_visbuffer = refractor_visbuffer != vir::ValueID::Invalid;
+    if (has_refractor_visbuffer) {
+      resources.image_resources["refractor_visbuffer_attachment"] = refractor_visbuffer;
+      resources.buffer_resources["transparent_meshlet_instances_buffer"] = values.transparent_meshlet_instances;
+    }
+
     self.execute_stages_after(RenderStage::VisBufferEncode, module, resources, prepared);
     values.meshlet_instances = resources.buffer_resources.at("meshlet_instances_buffer");
     values.mesh_instances = resources.buffer_resources.at("mesh_instances_buffer");
-    return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
+    if (has_refractor_visbuffer) {
+      refractor_visbuffer = resources.image_resources.at("refractor_visbuffer_attachment");
+      values.transparent_meshlet_instances = resources.buffer_resources.at("transparent_meshlet_instances_buffer");
+    }
+
+    return {
+      resources.image_resources.at("visbuffer_attachment"),
+      resources.image_resources.at("depth_attachment"),
+      refractor_visbuffer
+    };
   };
 
   // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
@@ -2069,10 +2085,17 @@ auto RendererInstance::record_frame(
       ) = self.draw_refractor_visbuffer(module, recording, cull_geometry_context, main_geometry_context);
     }
 
+    // after the refractors, so editor picking and outlines see glass ahead of what's behind it
     std::tie(
       main_geometry_context.visbuffer_attachment,
-      main_geometry_context.depth_attachment
-    ) = record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
+      main_geometry_context.depth_attachment,
+      refractor_visbuffer_attachment
+    ) =
+      record_visbuffer_stages(
+        main_geometry_context.visbuffer_attachment,
+        main_geometry_context.depth_attachment,
+        refractor_visbuffer_attachment
+      );
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -2152,7 +2175,11 @@ auto RendererInstance::record_frame(
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
-    std::tie(visbuffer_attachment, depth_attachment) = record_visbuffer_stages(visbuffer_attachment, depth_attachment);
+    std::tie(visbuffer_attachment, depth_attachment, std::ignore) = record_visbuffer_stages(
+      visbuffer_attachment,
+      depth_attachment,
+      vir::ValueID::Invalid
+    );
   }
 
   if (shape.has_atmosphere && shape.has_directional_light) {

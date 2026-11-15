@@ -2040,6 +2040,42 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
+// the frame's refractor visbuffer and the meshlet list it indexes, or stand-ins holding no refractor when the
+// shape has none, so the stages record the same passes either way
+static auto refractor_stage_resources(RenderStageContext& ctx) -> std::pair<vir::ValueID, vir::ValueID> {
+  if (ctx.image_resources.contains("refractor_visbuffer_attachment")) {
+    return {
+      ctx.get_image_resource("refractor_visbuffer_attachment"),
+      ctx.get_buffer_resource("transparent_meshlet_instances_buffer")
+    };
+  }
+
+  auto& module = ctx.module;
+  auto refractor_visbuffer = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "no refractor visbuffer"}
+  );
+  refractor_visbuffer = module.clear(refractor_visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
+  const auto transparent_meshlet_instances = module.transient_buffer({
+    .size = sizeof(GPU::MeshletInstance),
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "no transparent meshlet instances",
+  });
+
+  return {refractor_visbuffer, transparent_meshlet_instances};
+}
+
+static auto store_refractor_stage_resources(
+  RenderStageContext& ctx, vir::ValueID refractor_visbuffer, vir::ValueID transparent_meshlet_instances
+) -> void {
+  if (!ctx.image_resources.contains("refractor_visbuffer_attachment")) {
+    return;
+  }
+
+  ctx.set_image_resource("refractor_visbuffer_attachment", refractor_visbuffer)
+    .set_buffer_resource("transparent_meshlet_instances_buffer", transparent_meshlet_instances);
+}
+
 using HighlightMaskPush = PushConstants<u32, u32>;
 using PickPush2D = PushConstants<glm::uvec2, u64>;
 using PickPush3D = PushConstants<glm::uvec2, u64, u32>;
@@ -2054,6 +2090,7 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
   auto visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
   auto meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
   auto mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+  auto [refractor_visbuffer, transparent_meshlet_instances] = refractor_stage_resources(ctx);
   auto transform_indices = module.declare_buffer_var("highlight transform indices", vir::Access::None);
   const auto push = module.declare_bytes_var("highlight mask push", sizeof(HighlightMaskPush));
   const auto highlight_condition = module.declare_bool_var("is highlighting", false);
@@ -2066,7 +2103,15 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
     {.extent = extent, .format = vir::Format::R8Unorm, .name = "selection silhouette mask"}
   );
 
-  std::tie(silhouette_mask, visbuffer_attachment, meshlet_instances_buffer, mesh_instances_buffer, std::ignore) =
+  std::tie(
+    silhouette_mask,
+    visbuffer_attachment,
+    meshlet_instances_buffer,
+    mesh_instances_buffer,
+    std::ignore,
+    refractor_visbuffer,
+    transparent_meshlet_instances
+  ) =
     std::tuple_cat(module.set_condition(
       highlight_condition,
       [&](vir::Module& arm) {
@@ -2077,7 +2122,9 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
              {visbuffer_attachment, vir::Access::ComputeSampled},
              {meshlet_instances_buffer, vir::Access::ComputeRead},
              {mesh_instances_buffer, vir::Access::ComputeRead},
-             {transform_indices, vir::Access::ComputeRead}}
+             {transform_indices, vir::Access::ComputeRead},
+             {refractor_visbuffer, vir::Access::ComputeSampled},
+             {transparent_meshlet_instances, vir::Access::ComputeRead}}
           )
           .with_name("highlight mask")
           .bind_compute_pipeline(render_context.pipeline("highlight_mask_generate"))
@@ -2086,6 +2133,8 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
           .bind_image(0, 2, visbuffer_attachment)
           .bind_image(0, 3, cleared_mask)
           .bind_buffer(0, 4, transform_indices)
+          .bind_image(0, 5, refractor_visbuffer)
+          .bind_buffer(0, 6, transparent_meshlet_instances)
           .push_constants_from(push)
           .dispatch_invocations_per_pixel(cleared_mask)
           .end_compute();
@@ -2096,11 +2145,14 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
           visbuffer_attachment,
           meshlet_instances_buffer,
           mesh_instances_buffer,
-          transform_indices
+          transform_indices,
+          refractor_visbuffer,
+          transparent_meshlet_instances
         };
       }
     ));
 
+  store_refractor_stage_resources(ctx, refractor_visbuffer, transparent_meshlet_instances);
   ctx.set_shared_image_resource("silhouette_mask", silhouette_mask)
     .set_image_resource("visbuffer_attachment", visbuffer_attachment)
     .set_buffer_resource("meshlet_instances_buffer", meshlet_instances_buffer)
@@ -2345,34 +2397,58 @@ auto ViewportPanel::mouse_picking_stages(
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
+        auto [refractor_visbuffer, transparent_meshlet_instances] = refractor_stage_resources(ctx);
         auto readback = module.declare_buffer_var("pick readback", vir::Access::HostRead);
         const auto push = module.declare_bytes_var("pick push", sizeof(PickPush3D));
         const auto pick_condition = module.declare_bool_var("is picking", false);
         ctx.variables["pick readback"] = readback;
         ctx.variables["pick push"] = push;
         ctx.variables["is picking"] = pick_condition;
-        std::tie(readback, visbuffer, meshlet_instances, mesh_instances) = std::tuple_cat(module.set_condition(
-          pick_condition,
-          [&](vir::Module& arm) {
-            return arm
-              .begin_compute(
-                {{readback, vir::Access::ComputeWrite},
-                 {visbuffer, vir::Access::ComputeSampled},
-                 {meshlet_instances, vir::Access::ComputeRead},
-                 {mesh_instances, vir::Access::ComputeRead}}
-              )
-              .with_name("mouse picking")
-              .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
-              .bind_buffer(0, 0, meshlet_instances)
-              .bind_buffer(0, 1, mesh_instances)
-              .bind_image(0, 2, visbuffer)
-              .push_constants_from(push)
-              .dispatch(1, 1, 1)
-              .end_compute();
-          },
-          [&](vir::Module&) { return std::array{readback, visbuffer, meshlet_instances, mesh_instances}; }
-        ));
+        std::tie(
+          readback,
+          visbuffer,
+          meshlet_instances,
+          mesh_instances,
+          refractor_visbuffer,
+          transparent_meshlet_instances
+        ) = std::tuple_cat( //
+          module.set_condition(
+            pick_condition,
+            [&](vir::Module& arm) {
+              return arm
+                .begin_compute(
+                  {{readback, vir::Access::ComputeWrite},
+                   {visbuffer, vir::Access::ComputeSampled},
+                   {meshlet_instances, vir::Access::ComputeRead},
+                   {mesh_instances, vir::Access::ComputeRead},
+                   {refractor_visbuffer, vir::Access::ComputeSampled},
+                   {transparent_meshlet_instances, vir::Access::ComputeRead}}
+                )
+                .with_name("mouse picking")
+                .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
+                .bind_buffer(0, 0, meshlet_instances)
+                .bind_buffer(0, 1, mesh_instances)
+                .bind_image(0, 2, visbuffer)
+                .bind_image(0, 3, refractor_visbuffer)
+                .bind_buffer(0, 4, transparent_meshlet_instances)
+                .push_constants_from(push)
+                .dispatch(1, 1, 1)
+                .end_compute();
+            },
+            [&](vir::Module&) {
+              return std::array{
+                readback,
+                visbuffer,
+                meshlet_instances,
+                mesh_instances,
+                refractor_visbuffer,
+                transparent_meshlet_instances
+              };
+            }
+          )
+        );
         module.export_to(readback, vir::Access::HostRead);
+        store_refractor_stage_resources(ctx, refractor_visbuffer, transparent_meshlet_instances);
         ctx.set_image_resource("visbuffer_attachment", visbuffer)
           .set_buffer_resource("meshlet_instances_buffer", meshlet_instances)
           .set_buffer_resource("mesh_instances_buffer", mesh_instances);
