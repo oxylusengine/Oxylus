@@ -316,6 +316,10 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
     );
   }
 
+  if (!vk10_supported.independentBlend) {
+    OX_LOG_FATAL("The selected device does not support independentBlend, which is required by the renderer.");
+  }
+
   constexpr auto sampled_color = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
   constexpr auto sampled_storage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
   constexpr auto sampled_storage_color = sampled_storage | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -436,6 +440,7 @@ auto RenderContext::create_context(this RenderContext& self, const Window& windo
   vk10_features.features.shaderStorageImageExtendedFormats = true;
   vk10_features.features.shaderInt16 = true;
   vk10_features.features.tessellationShader = true;
+  vk10_features.features.independentBlend = true;
   // every cooked texture is block compressed, so a device without it can't show any of them
   vk10_features.features.textureCompressionBC = vk10_supported.textureCompressionBC;
   if (!vk10_features.features.textureCompressionBC) {
