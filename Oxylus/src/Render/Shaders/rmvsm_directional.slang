@@ -8,6 +8,7 @@ struct VSMDirectionalResources {
     Texture2DArray<u32> page_table;
     Texture2D<f32> physical_pages;
     SamplerState sampler;
+    u32 scene_flags;
 };
 
 struct VSMCenterPage {
@@ -336,7 +337,7 @@ func pcss_soft_shadow(
     f32 NoL,
     f32x2 noise
 ) -> f32 {
-    let is_temporal = (scene_flags & SceneFlags::HasTemporalUpscaler) != 0;
+    let is_temporal = (res.scene_flags & SceneFlags::HasTemporalUpscaler) != 0;
     let blocker_sample_count = is_temporal ? PCSS_TEMPORAL_BLOCKER_SEARCH_SAMPLES : PCSS_BLOCKER_SEARCH_SAMPLES;
     let pcf_sample_count = is_temporal ? PCSS_TEMPORAL_PCF_SAMPLES : PCSS_PCF_SAMPLES;
 
@@ -539,7 +540,7 @@ func vsm_directional_visibility(
     let vsm_ctx = lighting.vsm;
     let clipmap_selection = vsm_ctx.get_clipmap_selection(camera, uv, depth, flat_normal);
 
-    if ((scene_flags & SceneFlags::HasTemporalUpscaler) != 0) {
+    if ((res.scene_flags & SceneFlags::HasTemporalUpscaler) != 0) {
         let frame_coords = pixel_coords + f32(lighting.frame_index & 63u) * f32x2(17.0, 31.0);
         let noise = hash2(frame_coords);
         var clipmap_index = i32(clipmap_selection.fine_clipmap_index);

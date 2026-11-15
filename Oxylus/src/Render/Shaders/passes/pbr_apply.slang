@@ -80,7 +80,8 @@ func fs_main(
     var visibility = 0.0;
     if (NoL > 0.0) {
         visibility = sun_visibility(
-            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light, *lighting, vsm_clipmaps);
+            make_lighting_resources(lighting, lights, light_grid, vsm_pointspot_views, vsm_clipmaps),
+            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light);
     }
 
     let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
@@ -141,8 +142,8 @@ func fs_main(
     }
 
     var color = material_surface_color + indirect_illuminance + emission + aerial_perspective_contribution;
-    point_spot_lighting(
-        input.tex_coord, depth, world_position, N, V, smooth_normal, albedo_color, metallic, brdf_params,
-        *lighting, lights, light_grid, vsm_pointspot_views, color);
+    lighting_point_spot(
+        make_lighting_resources(lighting, lights, light_grid, vsm_pointspot_views, vsm_clipmaps),
+        input.tex_coord, depth, world_position, N, V, smooth_normal, albedo_color, metallic, brdf_params, color);
     return f32x4(color, 1.0);
 }
