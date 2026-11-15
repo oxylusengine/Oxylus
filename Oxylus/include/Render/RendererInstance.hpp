@@ -707,6 +707,13 @@ struct DebugContext {
   vir::ValueID sssr_confidence_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_variance_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_sample_count_attachment = vir::ValueID::Invalid;
+
+  // invalid when the frame has no blend meshes or no refractors, the pass binds stand-ins then
+  vir::ValueID wboit_revealage_attachment = vir::ValueID::Invalid;
+  vir::ValueID wboit_revealage_front_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
 };
 
 // Reactivity is a coverage value in [0, 1], so overlapping alpha blended draws combine as

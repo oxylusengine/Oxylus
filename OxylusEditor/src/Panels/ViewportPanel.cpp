@@ -1117,7 +1117,11 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "SSSR Reflection",
         "SSSR Confidence",
         "SSSR Variance",
-        "SSSR Sample Count"
+        "SSSR Sample Count",
+        "Transparency Coverage",
+        "Refractors",
+        "Refractor Depth",
+        "Reactive Mask"
       };
       ui.combo("Visualization", cvar_sys.cvar_debug_view, debug_views);
     }

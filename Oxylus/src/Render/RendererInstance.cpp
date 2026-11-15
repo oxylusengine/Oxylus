@@ -2394,6 +2394,8 @@ auto RendererInstance::record_frame(
   }
 
   // --- transparency ---
+  auto wboit_revealage_attachment = vir::ValueID::Invalid;
+  auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
   if (shape.has_blend_meshes || shape.has_refractors) {
     cull_geometry_context.hiz_attachment = hiz_attachment;
     auto transparency_context = TransparencyContext{
@@ -2443,6 +2445,14 @@ auto RendererInstance::record_frame(
       std::swap(transparency_context.accumulation_attachment, transparency_context.accumulation_front_attachment);
       std::swap(transparency_context.revealage_attachment, transparency_context.revealage_front_attachment);
       resolve_transparency(module, render_context, transparency_context);
+    }
+
+    // the debug views read the rear pair, which the swap above moved into the front slots
+    if (shape.has_blend_meshes) {
+      const auto is_split = shape.has_refractors;
+      wboit_revealage_attachment = is_split ? transparency_context.revealage_front_attachment
+                                            : transparency_context.revealage_attachment;
+      wboit_revealage_front_attachment = is_split ? transparency_context.revealage_attachment : vir::ValueID::Invalid;
     }
 
     if (static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere)) {
@@ -2734,6 +2744,11 @@ auto RendererInstance::record_frame(
       .sssr_confidence_attachment = sssr_context.confidence,
       .sssr_variance_attachment = sssr_context.variance,
       .sssr_sample_count_attachment = sssr_context.sample_count,
+      .wboit_revealage_attachment = wboit_revealage_attachment,
+      .wboit_revealage_front_attachment = wboit_revealage_front_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
     };
     dst_attachment = self.apply_debug_view(module, recording, debug_context, dst_attachment);
     sssr_context.radiance = debug_context.sssr_reflection_attachment;

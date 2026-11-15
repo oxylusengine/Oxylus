@@ -130,6 +130,10 @@ enum class DebugView : i32 {
   SSSRConfidence,
   SSSRVariance,
   SSSRSampleCount,
+  TransparencyCoverage,
+  Refractors,
+  RefractorDepth,
+  ReactiveMask,
 
   Count,
 };

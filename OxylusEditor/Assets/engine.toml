@@ -388,6 +388,11 @@ path = "passes/sssr/debug.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
+name = "transparency_debug"
+path = "passes/transparency_debug.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "histogram_generate"
 path = "passes/histogram_generate.slang"
 entry_points = ["cs_main"]
