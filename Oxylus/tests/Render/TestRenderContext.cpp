@@ -908,6 +908,7 @@ TEST(RenderContext, EarlyAndLateGeometryShareLiveCullInputs) {
     auto recording = FrameRecording{.shape = shape, .prepared = prepared};
     auto& values = recording.values;
     values.meshes = module.declare_buffer_var("meshes", vir::Access::ComputeRead);
+    values.materials = module.declare_buffer_var("materials", vir::Access::ComputeRead);
     values.transforms_world = module.declare_buffer_var("transforms", vir::Access::ComputeRead);
     values.mesh_instances = module.declare_buffer_var("instances", vir::Access::ComputeRW);
     values.meshlet_instances = module.declare_buffer_var("meshlets", vir::Access::ComputeRW);
@@ -967,6 +968,7 @@ TEST(RenderContext, PointSpotCullingKeepsDistinctMipInputsAndReusesRepeatedMip) 
     auto recording = FrameRecording{.shape = shape, .prepared = prepared};
     auto& values = recording.values;
     values.meshes = module.declare_buffer_var("meshes", vir::Access::ComputeRead);
+    values.materials = module.declare_buffer_var("materials", vir::Access::ComputeRead);
     values.transforms_world = module.declare_buffer_var("transforms", vir::Access::ComputeRead);
     values.mesh_instances = module.declare_buffer_var("instances", vir::Access::ComputeRead);
     auto context = CullGeometryPointSpotContext{.init = true};

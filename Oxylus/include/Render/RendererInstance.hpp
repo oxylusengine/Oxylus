@@ -309,6 +309,8 @@ struct FrameShape {
   VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
   bool is_debugging = false;
   bool has_meshes = false;
+  bool has_blend_meshes = false;
+  bool has_refractors = false;
   bool has_terrain = false;
   bool has_sprites = false;
   bool has_particles = false;
@@ -372,6 +374,7 @@ struct FrameValues {
   vir::ValueID skinning_transforms = vir::ValueID::Invalid;
   vir::ValueID skinned_vertices = vir::ValueID::Invalid;
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
   vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
   vir::ValueID meshlet_instance_visibility_mask = vir::ValueID::Invalid;
   vir::ValueID reordered_indices = vir::ValueID::Invalid;
@@ -409,6 +412,10 @@ struct CullGeometryContext {
   vir::ValueID visibility_buffer = vir::ValueID::Invalid;
   vir::ValueID cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
   vir::ValueID draw_geometry_cmd_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID blend_cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID refractor_cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
 };
 
 struct CullGeometryPointSpotContext {
@@ -976,6 +983,7 @@ struct PreparedFrame {
   vir::ValueID sprites = vir::ValueID::Invalid;
 
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
   vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
   vir::ValueID reordered_indices = vir::ValueID::Invalid;
   vir::ValueID terrain_visible_patches = vir::ValueID::Invalid;
@@ -1132,6 +1140,13 @@ public:
   static auto cull_geometry(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryContext& context
   ) -> void;
+  static auto cull_transparent(
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    CullGeometryContext& context,
+    bool is_refractor_list
+  ) -> vir::ValueID;
   static auto cull_geometry_pointspot(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryPointSpotContext& context
   ) -> void;

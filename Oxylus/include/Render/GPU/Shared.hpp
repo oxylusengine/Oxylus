@@ -199,6 +199,10 @@ struct MeshletInstanceVisibility {
   u32 early_visible_meshlet_instances = 0;
   // Same as above, but if requested (used for two pass occlusion tests)
   u32 late_visible_meshlet_instances = 0;
+  u32 total_blend_meshlet_instances = 0;
+  u32 total_refractor_meshlet_instances = 0;
+  u32 visible_blend_meshlet_instances = 0;
+  u32 visible_refractor_meshlet_instances = 0;
 };
 
 struct MeshletInstance {
@@ -326,6 +330,7 @@ struct CullCamera {
   // only the main geometry pass sets this, culling and shadow users leave it zero
   f32x2 jitter = {};
   f32 texture_mip_bias = {};
+  u32 meshlet_instance_capacity = {};
 };
 
 // --- Lights ---
@@ -664,6 +669,12 @@ enum class CullFlag : u32 {
   LatePass = 1 << 3,
   // drops instances without `MeshInstanceFlag::CastShadows`, for the shadow map passes
   ShadowCastersOnly = 1 << 4,
+  RouteBlend = 1 << 5,
+  RouteRefractors = 1 << 6,
+  // the cull pass processes a transparent list instead of the opaque one
+  Transparent = 1 << 7,
+  // with `Transparent`, selects the refractor list, otherwise the blend list
+  RefractorList = 1 << 8,
 
   TestAll = (1 << 0) | (1 << 1) | (1 << 2),
 };

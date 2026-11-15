@@ -826,6 +826,7 @@ auto AssetManager::unload_material(this AssetManager& self, const MaterialID mat
   auto write_lock = std::unique_lock(self.materials_mutex);
   self.material_map.destroy_slot(material_id);
   std::erase(self.dirty_materials, material_id);
+  ++std::atomic_ref(self.materials_revision);
 
   return true;
 }
@@ -1183,6 +1184,7 @@ auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID materi
   ZoneScoped;
 
   auto lock = std::unique_lock(self.materials_mutex);
+  ++std::atomic_ref(self.materials_revision);
   if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
     return;
   }
@@ -1227,6 +1229,10 @@ auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vecto
   self.dirty_materials.clear();
 
   return dirty_copy;
+}
+
+auto AssetManager::get_materials_revision(this AssetManager& self) -> u32 {
+  return std::atomic_ref(self.materials_revision).load();
 }
 
 auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene> {

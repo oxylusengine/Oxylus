@@ -22,10 +22,16 @@ func cs_main(
     uint global_thread_id : SV_DispatchThreadID,
     uniform CullCamera camera
 ) -> void {
-    let meshlet_instance_index = global_thread_id;
-    if (meshlet_instance_index >= visibility[0].total_visible_meshlet_instances) {
+    let is_transparent = HAS_FLAG(CULL_FLAGS, CullFlag.Transparent);
+    let is_refractor_list = HAS_FLAG(CULL_FLAGS, CullFlag.RefractorList);
+    let transparent_count = select(is_refractor_list, visibility[0].total_refractor_meshlet_instances, visibility[0].total_blend_meshlet_instances);
+    let list_count = select(is_transparent, transparent_count, visibility[0].total_visible_meshlet_instances);
+    if (global_thread_id >= list_count) {
         return;
     }
+
+    let list_offset = select(is_transparent && is_refractor_list, camera.meshlet_instance_capacity - list_count, 0u);
+    let meshlet_instance_index = list_offset + global_thread_id;
 
     let meshlet_instance = meshlet_instances[meshlet_instance_index];
     let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
@@ -43,7 +49,7 @@ func cs_main(
     var visibility_mask_index = 0;
     var visibility_bit = 0;
     var was_visible = true;
-    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion)) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion) && !is_transparent) {
         let meshlet_instance_visibility_index = mesh_instance.meshlet_instance_visibility_offset + meshlet_instance.meshlet_index;
         visibility_mask_index = meshlet_instance_visibility_index / 32;
         let bit_index = meshlet_instance_visibility_index - visibility_mask_index * 32;
@@ -63,7 +69,7 @@ func cs_main(
     visible = visible && (skinned || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
     visible = visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent));
 
-    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible && !skinned) {
+    if ((HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) || is_transparent) && visible && !skinned) {
         if (let screen_aabb = project_aabb(mvp, camera.near_clip, aabb_center, aabb_extent)) {
             visible = !test_occlusion(screen_aabb, hiz_image);
         }
@@ -71,7 +77,13 @@ func cs_main(
 
     if (visible && (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) || !was_visible)) {
         var index = 0;
-        if (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
+        if (is_transparent) {
+            if (is_refractor_list) {
+                index = __atomic_add(visibility[0].visible_refractor_meshlet_instances, 1, MemoryOrder::Relaxed);
+            } else {
+                index = __atomic_add(visibility[0].visible_blend_meshlet_instances, 1, MemoryOrder::Relaxed);
+            }
+        } else if (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
             index = __atomic_add(visibility[0].early_visible_meshlet_instances, 1, MemoryOrder::Relaxed);
         } else {
             let late_offset = __atomic_add(visibility[0].late_visible_meshlet_instances, 1, MemoryOrder::Relaxed);
@@ -83,7 +95,7 @@ func cs_main(
         __atomic_add(cull_triangles_cmd[0].x, 1, MemoryOrder::Relaxed);
     }
 
-    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass)) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && !is_transparent) {
         if (visible) {
             __atomic_or(meshlet_instance_visibility_mask[visibility_mask_index], visibility_bit, MemoryOrder::Relaxed);
         } else {

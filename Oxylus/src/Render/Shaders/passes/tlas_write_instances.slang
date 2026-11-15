@@ -7,6 +7,7 @@ import scene;
 [[vk::binding(2)]] StructuredBuffer<u64> blas_addresses;
 [[vk::binding(3)]] RWStructuredBuffer<AccelerationStructureInstance> instances;
 [[vk::binding(4)]] StructuredBuffer<u64> skinned_blas_addresses;
+[[vk::binding(5)]] StructuredBuffer<Material> materials;
 
 [[shader("compute")]]
 [[numthreads(64, 1, 1)]]
@@ -53,7 +54,8 @@ func cs_main(
 
     // an instance with no structure yet, which is every skinned one until the pool exists, drops out
     // of the TLAS rather than tracing against address zero
-    let mask = blas_address != 0 ? mesh_instance.tlas_mask() : 0u;
+    let is_opaque = materials[mesh_instance.material_index].render_class() == MaterialClass::Opaque;
+    let mask = (blas_address != 0 && is_opaque) ? mesh_instance.tlas_mask() : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     instance.sbt_offset_and_flags = 0;
     instance.blas_address = blas_address;

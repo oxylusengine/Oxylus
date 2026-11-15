@@ -477,6 +477,8 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
   const auto flags = std::array{
     shape.is_debugging,
     shape.has_meshes,
+    shape.has_blend_meshes,
+    shape.has_refractors,
     shape.has_terrain,
     shape.has_sprites,
     shape.has_particles,
@@ -1005,6 +1007,8 @@ auto RendererInstance::frame_shape(
   const auto is_debugging = debug_view != GPU::DebugView::None && cvar.cvar_enable_debug_renderer.as_bool() &&
                             (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
+  const auto has_blend_meshes = has_meshes && self.renderer.blend_material_count > 0;
+  const auto has_refractors = has_meshes && self.renderer.refractor_material_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
   const auto has_rtao = cvar.cvar_rtao_enable.as_bool() && has_tlas;
@@ -1062,6 +1066,8 @@ auto RendererInstance::frame_shape(
     .tlas = has_tlas ? self.tlas_handle() : VK_NULL_HANDLE,
     .is_debugging = is_debugging,
     .has_meshes = has_meshes,
+    .has_blend_meshes = has_blend_meshes,
+    .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
@@ -1118,6 +1124,7 @@ auto RendererInstance::prepare_frame_params(
     .mesh_instance_count = self.frame_data.mesh_instance_count,
     .jitter = self.current_jitter,
     .texture_mip_bias = self.camera_data.texture_mip_bias,
+    .meshlet_instance_capacity = self.frame_data.max_meshlet_instance_count,
   };
 
   if (params.is_upscaling) {
@@ -1387,6 +1394,24 @@ auto RendererInstance::bind_frame(
     }
     program.set(prepared.meshlet_instances, buffer.value_or(vir::Buffer{}));
   }
+  if (
+    prepared.transparent_meshlet_instances != vir::ValueID::Invalid &&
+    program.has_variable(prepared.transparent_meshlet_instances)
+  ) {
+    auto buffer = render_context.allocate_frame_buffer({
+      .size = std::max<u64>(data.meshlet_instances_size, 16),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+               VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .location = vir::MemoryLocation::GpuOnly,
+      .alignment = 16,
+      .name = "transparent meshlet instances",
+    });
+    if (!buffer) {
+      OX_LOG_ERROR("failed to allocate {}", "transparent meshlet instances");
+    }
+    program.set(prepared.transparent_meshlet_instances, buffer.value_or(vir::Buffer{}));
+  }
   if (program.has_variable(prepared.visible_meshlet_instances_indices)) {
     auto buffer = render_context.allocate_frame_buffer({
       .size = std::max<u64>(data.visible_meshlet_instances_size, 16),
@@ -1555,7 +1580,8 @@ auto RendererInstance::record_acceleration_structures(
     values.mesh_instances,
     values.transforms_world,
     values.blas_addresses,
-    values.skinned_blas_addresses
+    values.skinned_blas_addresses,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -1563,7 +1589,8 @@ auto RendererInstance::record_acceleration_structures(
          {values.mesh_instances, vir::Access::ComputeRead},
          {values.transforms_world, vir::Access::ComputeRead},
          {values.blas_addresses, vir::Access::ComputeRead},
-         {values.skinned_blas_addresses, vir::Access::ComputeRead}}
+         {values.skinned_blas_addresses, vir::Access::ComputeRead},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("tlas write instances")
       .bind_compute_pipeline(render_context.pipeline("tlas_write_instances"))
@@ -1572,6 +1599,7 @@ auto RendererInstance::record_acceleration_structures(
       .bind_buffer(0, 2, values.blas_addresses)
       .bind_buffer(0, 3, instances)
       .bind_buffer(0, 4, values.skinned_blas_addresses)
+      .bind_buffer(0, 5, values.materials)
       .push_constants_from(prepared.tlas_instance_counts)
       .dispatch_invocations(prepared.tlas_instance_count, 1, 1)
       .end_compute()
@@ -1735,6 +1763,12 @@ auto RendererInstance::record_frame(
   prepared.dirty_mesh_instances = module.declare_buffer_var("dirty mesh instances", vir::Access::None);
   prepared.removed_mesh_bounds = module.declare_buffer_var("removed mesh bounds", vir::Access::None);
   prepared.meshlet_instances = module.declare_buffer_var("meshlet instances", vir::Access::None);
+  if (shape.has_blend_meshes || shape.has_refractors) {
+    prepared.transparent_meshlet_instances = module.declare_buffer_var(
+      "transparent meshlet instances",
+      vir::Access::None
+    );
+  }
   prepared.visible_meshlet_instances_indices = module.declare_buffer_var(
     "visible meshlet instances",
     vir::Access::None
@@ -1745,6 +1779,7 @@ auto RendererInstance::record_frame(
   values.dirty_mesh_instances = prepared.dirty_mesh_instances;
   values.removed_mesh_bounds = prepared.removed_mesh_bounds;
   values.meshlet_instances = prepared.meshlet_instances;
+  values.transparent_meshlet_instances = prepared.transparent_meshlet_instances;
   values.visible_meshlet_instances_indices = prepared.visible_meshlet_instances_indices;
   values.reordered_indices = prepared.reordered_indices;
 
@@ -1900,6 +1935,14 @@ auto RendererInstance::record_frame(
     return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
   };
 
+  // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
+  // allocates carry into the late pass, and into the transparency cull after lighting
+  auto cull_geometry_context = CullGeometryContext{
+    .use_hiz = true,
+    .init_cull_meshes = true,
+  };
+
+
   // --- 3D ---
   if (shape.has_meshes || shape.has_terrain) {
     auto main_geometry_context = MainGeometryContext{
@@ -1913,13 +1956,6 @@ auto RendererInstance::record_frame(
       .emissive_attachment = emissive_attachment,
       .metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment,
       .velocity_attachment = velocity_attachment,
-    };
-
-    // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
-    // allocates carry into the late pass
-    auto cull_geometry_context = CullGeometryContext{
-      .use_hiz = true,
-      .init_cull_meshes = true,
     };
 
     auto terrain_context = TerrainContext{};

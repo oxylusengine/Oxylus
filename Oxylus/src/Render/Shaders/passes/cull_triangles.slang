@@ -32,7 +32,7 @@ func cs_main(
     uniform CullCamera camera
 ) -> void {
     var visible_meshlet_instance_index = group_id.x;
-    if (HAS_FLAG(CULL_FLAGS, CullFlag.LatePass)) {
+    if (HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) && !HAS_FLAG(CULL_FLAGS, CullFlag.Transparent)) {
         visible_meshlet_instance_index += visibility[0].early_visible_meshlet_instances;
     }
 

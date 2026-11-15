@@ -35,6 +35,7 @@ auto RendererInstance::bind_cull_variables(
       .resolution = self.camera_data.resolution,
       .near_clip = clipmap.z_near,
       .mesh_instance_count = data.mesh_instance_count,
+      .meshlet_instance_capacity = data.max_meshlet_instance_count,
     };
     program.set_bytes(variables.shadow_camera, shadow_camera);
     program.set_bytes(
@@ -165,6 +166,9 @@ auto RendererInstance::cull_geometry(
 
   const auto cull_flags = context.cull_flags;
   const auto is_late = static_cast<bool>(cull_flags & GPU::CullFlag::LatePass);
+  const auto is_transparent = static_cast<bool>(cull_flags & GPU::CullFlag::Transparent);
+  const auto is_refractor_list = static_cast<bool>(cull_flags & GPU::CullFlag::RefractorList);
+  const auto* pass_name = is_transparent ? (is_refractor_list ? "refractor" : "blend") : (is_late ? "late" : "early");
   auto& variables = prepared.cull;
   if (variables.mesh_instance_count == vir::ValueID::Invalid) {
     variables.mesh_instance_count = module.declare_u32_var("cull mesh instance count", 0);
@@ -210,13 +214,52 @@ auto RendererInstance::cull_geometry(
       std::span{reinterpret_cast<const u8*>(&cull_meshlets_command), sizeof(cull_meshlets_command)}
     );
 
+    context.blend_cull_meshlets_cmd_buffer = module.transient_buffer({
+      .size = sizeof(cull_meshlets_command),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "blend cull meshlets command",
+    });
+    context.blend_cull_meshlets_cmd_buffer = module.update_buffer(
+      context.blend_cull_meshlets_cmd_buffer,
+      std::span{reinterpret_cast<const u8*>(&cull_meshlets_command), sizeof(cull_meshlets_command)}
+    );
+    context.refractor_cull_meshlets_cmd_buffer = module.transient_buffer({
+      .size = sizeof(cull_meshlets_command),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "refractor cull meshlets command",
+    });
+    context.refractor_cull_meshlets_cmd_buffer = module.update_buffer(
+      context.refractor_cull_meshlets_cmd_buffer,
+      std::span{reinterpret_cast<const u8*>(&cull_meshlets_command), sizeof(cull_meshlets_command)}
+    );
+
+    // shadow culls and frames with nothing to route bind a stand-in, so they never touch the real lists
+    const auto is_routing = static_cast<bool>(
+      cull_flags & (GPU::CullFlag::RouteBlend | GPU::CullFlag::RouteRefractors)
+    );
+    context.transparent_meshlet_instances = is_routing ? values.transparent_meshlet_instances : vir::ValueID::Invalid;
+    if (context.transparent_meshlet_instances == vir::ValueID::Invalid) {
+      context.transparent_meshlet_instances = module.transient_buffer({
+        .size = 16,
+        .usage = TRANSIENT_BUFFER_USAGE,
+        .location = vir::MemoryLocation::GpuOnly,
+        .name = "transparent meshlet instances",
+      });
+    }
+
     std::tie(
       values.meshes,
       values.transforms_world,
       values.mesh_instances,
       values.meshlet_instances,
       context.visibility_buffer,
-      context.cull_meshlets_cmd_buffer
+      context.cull_meshlets_cmd_buffer,
+      values.materials,
+      context.transparent_meshlet_instances,
+      context.blend_cull_meshlets_cmd_buffer,
+      context.refractor_cull_meshlets_cmd_buffer
     ) = std::tuple_cat( //
       module
         .begin_compute(
@@ -225,7 +268,11 @@ auto RendererInstance::cull_geometry(
            {values.mesh_instances, vir::Access::ComputeRW},
            {values.meshlet_instances, vir::Access::ComputeRW},
            {context.visibility_buffer, vir::Access::ComputeRW},
-           {context.cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+           {context.cull_meshlets_cmd_buffer, vir::Access::ComputeRW},
+           {values.materials, vir::Access::ComputeRead},
+           {context.transparent_meshlet_instances, vir::Access::ComputeWrite},
+           {context.blend_cull_meshlets_cmd_buffer, vir::Access::ComputeRW},
+           {context.refractor_cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
         )
         .with_name(context.use_hiz ? "vis cull meshes" : "cull meshes")
         .bind_compute_pipeline(render_context.pipeline("cull_meshes"))
@@ -235,11 +282,19 @@ auto RendererInstance::cull_geometry(
         .bind_buffer(0, 3, values.meshlet_instances)
         .bind_buffer(0, 4, context.visibility_buffer)
         .bind_buffer(0, 5, context.cull_meshlets_cmd_buffer)
+        .bind_buffer(0, 6, values.materials)
+        .bind_buffer(0, 7, context.transparent_meshlet_instances)
+        .bind_buffer(0, 8, context.blend_cull_meshlets_cmd_buffer)
+        .bind_buffer(0, 9, context.refractor_cull_meshlets_cmd_buffer)
         .specialize_constant(0, std::to_underlying(cull_flags))
         .push_constants_from(cull_camera)
         .dispatch_invocations(prepared.cull.mesh_instance_count, 1, 1)
         .end_compute()
     );
+
+    if (is_routing) {
+      values.transparent_meshlet_instances = context.transparent_meshlet_instances;
+    }
   }
 
   if (recording.shape.use_mesh_shaders) {
@@ -286,7 +341,7 @@ auto RendererInstance::cull_geometry(
            {values.meshlet_instance_visibility_mask, vir::Access::ComputeRW},
            {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
         )
-        .with_name(stack.format("vis cull meshlets {}", is_late ? "late" : "early"))
+        .with_name(stack.format("vis cull meshlets {}", pass_name))
         .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hiz"))
         .bind_image(0, 0, context.hiz_attachment)
         .bind_buffer(0, 1, values.meshes)
@@ -427,7 +482,7 @@ auto RendererInstance::cull_geometry(
          {values.reordered_indices, vir::Access::ComputeRW},
          {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW}}
       )
-      .with_name(context.use_hiz ? stack.format("cull triangles {}", is_late ? "late" : "early") : "cull triangles")
+      .with_name(context.use_hiz ? stack.format("cull triangles {}", pass_name) : "cull triangles")
       .bind_compute_pipeline(render_context.pipeline("cull_triangles"))
       .bind_buffer(0, 0, values.meshes)
       .bind_buffer(0, 1, values.mesh_instances)
@@ -442,6 +497,41 @@ auto RendererInstance::cull_geometry(
       .dispatch_indirect(cull_triangles_cmd_buffer)
       .end_compute()
   );
+}
+
+auto RendererInstance::cull_transparent(
+  vir::Module& module,
+  RenderContext& render_context,
+  FrameRecording& recording,
+  CullGeometryContext& context,
+  bool is_refractor_list
+) -> vir::ValueID {
+  ZoneScoped;
+  auto& values = recording.values;
+
+  auto& list_cmd_buffer = is_refractor_list ? context.refractor_cull_meshlets_cmd_buffer
+                                            : context.blend_cull_meshlets_cmd_buffer;
+  auto list_context = CullGeometryContext{
+    .use_hiz = true,
+    .cull_flags = GPU::CullFlag::Transparent | GPU::CullFlag::TestFrustum |
+                  (is_refractor_list ? GPU::CullFlag::RefractorList : GPU::CullFlag::None),
+    .hiz_attachment = context.hiz_attachment,
+    .visibility_buffer = context.visibility_buffer,
+    .cull_meshlets_cmd_buffer = list_cmd_buffer,
+  };
+
+  std::swap(values.meshlet_instances, context.transparent_meshlet_instances);
+  cull_geometry(module, render_context, recording, list_context);
+  std::swap(values.meshlet_instances, context.transparent_meshlet_instances);
+
+  context.hiz_attachment = list_context.hiz_attachment;
+  context.visibility_buffer = list_context.visibility_buffer;
+  list_cmd_buffer = list_context.cull_meshlets_cmd_buffer;
+  if (values.transparent_meshlet_instances != vir::ValueID::Invalid) {
+    values.transparent_meshlet_instances = context.transparent_meshlet_instances;
+  }
+
+  return list_context.draw_geometry_cmd_buffer;
 }
 
 auto RendererInstance::cull_geometry_pointspot(
@@ -564,7 +654,8 @@ auto RendererInstance::cull_geometry_pointspot(
     active_layers_buffer,
     context.vsm_meshlet_instances_buffer,
     vsm_meshlet_instance_count_buffer,
-    cull_meshlets_cmd_buffer
+    cull_meshlets_cmd_buffer,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -576,7 +667,8 @@ auto RendererInstance::cull_geometry_pointspot(
          {active_layers_buffer, vir::Access::ComputeRead},
          {context.vsm_meshlet_instances_buffer, vir::Access::ComputeWrite},
          {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRW},
-         {cull_meshlets_cmd_buffer, vir::Access::ComputeRW}}
+         {cull_meshlets_cmd_buffer, vir::Access::ComputeRW},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("rmvsm pointspot cull meshes")
       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshes"))
@@ -588,6 +680,7 @@ auto RendererInstance::cull_geometry_pointspot(
       .bind_buffer(0, 5, context.vsm_meshlet_instances_buffer)
       .bind_buffer(0, 6, vsm_meshlet_instance_count_buffer)
       .bind_buffer(0, 7, cull_meshlets_cmd_buffer)
+      .bind_buffer(0, 8, values.materials)
       .push_constants_from(ps_ctx)
       .dispatch_indirect(cull_meshes_cmd_buffer)
       .end_compute()

@@ -16,6 +16,13 @@ the G-buffer and checks hit positions, misses, ray counts and the quad copies ag
 `OX_SSSR_GPU_VALIDATION=1` to enable Vulkan validation and synchronization validation. It skips when a suitable
 Vulkan device is unavailable.
 
+`TestTransparencyGPU` runs the built `cull_meshes` and transparent-mode `cull_meshlets_hiz` pipelines on synthetic
+meshes and materials on a headless device. It checks that blend and refractor meshlets land in their own lists, that
+shadow culls count only opaque casters, that every routed meshlet survives the transparent meshlet cull, and that refractors
+route into the tail of the list without blend routing. Set
+`OX_TRANSPARENCY_GPU_VALIDATION=1` to enable Vulkan validation and synchronization validation. It skips when a
+suitable Vulkan device is unavailable.
+
 `TestStaticBLASGPU` builds mesh acceleration structures on a headless device through
 `AssetManager::resolve_mesh_blas`, the scene's per-frame address pass, and checks that nothing is built without a
 budget, that a budget defers builds to later frames, and that a mesh larger than the budget still gets one. It skips
