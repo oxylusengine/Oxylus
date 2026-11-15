@@ -149,8 +149,18 @@ enum class MaterialFlag : u32 {
   AlphaOpaque = 1 << 7,
   AlphaMask = 1 << 8,
   AlphaBlend = 1 << 9,
+  DoubleSided = 1 << 10,
+  HasTransmissionImage = 1 << 11,
+  HasThicknessImage = 1 << 12,
+  Water = 1 << 13,
 };
 OX_BITMASK(MaterialFlag)
+
+enum class MaterialClass : u32 {
+  Opaque = 0,
+  Blend = 1,
+  Refractor = 2,
+};
 
 struct Material {
   u16x4 albedo_color = {};
@@ -169,6 +179,17 @@ struct Material {
   u32 occlusion_image_index = 0;
   u16x2 uv_size = {};
   u16x2 uv_offset = {};
+  u16 transmission_factor = 0;
+  u16 ior = 0;
+  u16 thickness_factor = 0;
+  u16 attenuation_distance = 0;
+  u16x3 attenuation_color = {};
+  u16 water_detail_scale = 0;
+  u16x3 water_scatter_color = {};
+  u16 water_shore_fade = 0;
+  u16x2 water_flow = {};
+  u32 transmission_image_index = 0;
+  u32 thickness_image_index = 0;
 };
 
 struct MeshletInstanceVisibility {

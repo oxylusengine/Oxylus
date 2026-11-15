@@ -41,11 +41,26 @@ protected:
     material.roughness_factor = 0.25f;
     material.alpha_mode = ox::AlphaMode::Blend;
     material.albedo_texture = texture_uuid;
+    material.double_sided = true;
+    material.transmission_factor = 0.75f;
+    material.ior = 1.33f;
+    material.thickness_factor = 2.0f;
+    material.attenuation_color = {0.25f, 0.5f, 0.75f};
+    material.attenuation_distance = 6.0f;
+    material.shading_model = ox::ShadingModel::Water;
+    material.water_scatter_color = {0.0625f, 0.125f, 0.1875f};
+    material.water_flow = {0.5f, -0.25f};
+    material.water_detail_scale = 0.75f;
+    material.water_shore_fade = 1.5f;
+    material.transmission_texture = transmission_uuid;
+    material.thickness_texture = thickness_uuid;
     return material;
   }
 
   static inline std::unique_ptr<ox::App> app = nullptr;
   static inline const auto texture_uuid = ox::UUID::generate_random();
+  static inline const auto transmission_uuid = ox::UUID::generate_random();
+  static inline const auto thickness_uuid = ox::UUID::generate_random();
   std::filesystem::path root = {};
 };
 
@@ -76,6 +91,19 @@ TEST_F(AssetManifestTest, RoundTripsEntriesAndMaterials) {
   EXPECT_EQ(material.alpha_mode, ox::AlphaMode::Blend);
   EXPECT_EQ(material.albedo_texture, texture_uuid);
   EXPECT_FALSE(material.normal_texture);
+  EXPECT_TRUE(material.double_sided);
+  EXPECT_FLOAT_EQ(material.transmission_factor, 0.75f);
+  EXPECT_FLOAT_EQ(material.ior, 1.33f);
+  EXPECT_FLOAT_EQ(material.thickness_factor, 2.0f);
+  EXPECT_EQ(material.attenuation_color, glm::vec3(0.25f, 0.5f, 0.75f));
+  EXPECT_FLOAT_EQ(material.attenuation_distance, 6.0f);
+  EXPECT_EQ(material.shading_model, ox::ShadingModel::Water);
+  EXPECT_EQ(material.water_scatter_color, glm::vec3(0.0625f, 0.125f, 0.1875f));
+  EXPECT_EQ(material.water_flow, glm::vec2(0.5f, -0.25f));
+  EXPECT_FLOAT_EQ(material.water_detail_scale, 0.75f);
+  EXPECT_FLOAT_EQ(material.water_shore_fade, 1.5f);
+  EXPECT_EQ(material.transmission_texture, transmission_uuid);
+  EXPECT_EQ(material.thickness_texture, thickness_uuid);
 }
 
 TEST_F(AssetManifestTest, RejectsAFileThatIsNotAManifest) {

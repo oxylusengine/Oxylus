@@ -53,6 +53,14 @@ protected:
     material.alpha_mode = AlphaMode::Mask;
     material.sampling_mode = SamplingMode::NearestClamped;
     material.albedo_texture_index = 0;
+    material.double_sided = true;
+    material.transmission_factor = 0.5f;
+    material.ior = 1.33f;
+    material.thickness_factor = 2.0f;
+    material.attenuation_color = {0.25f, 0.5f, 0.75f};
+    material.attenuation_distance = 6.0f;
+    material.transmission_texture_index = 1;
+    material.thickness_texture_index = 2;
     model.materials.push_back(std::move(material));
 
     model.textures.push_back({.name = "bark_albedo", .uuid = {.bytes = {4, 2}}, .is_srgb = true});
@@ -170,6 +178,14 @@ TEST_F(AssetFileTest, PacksAndUnpacksEveryPayloadType) {
   EXPECT_EQ(model->materials[0].albedo_texture_index, 0u);
   // an index that was never assigned must survive as the sentinel, not as 0
   EXPECT_EQ(model->materials[0].normal_texture_index, ModelData::INVALID_INDEX);
+  EXPECT_TRUE(model->materials[0].double_sided);
+  EXPECT_FLOAT_EQ(model->materials[0].transmission_factor, 0.5f);
+  EXPECT_FLOAT_EQ(model->materials[0].ior, 1.33f);
+  EXPECT_FLOAT_EQ(model->materials[0].thickness_factor, 2.0f);
+  EXPECT_THAT(model->materials[0].attenuation_color, ::testing::ElementsAre(0.25f, 0.5f, 0.75f));
+  EXPECT_FLOAT_EQ(model->materials[0].attenuation_distance, 6.0f);
+  EXPECT_EQ(model->materials[0].transmission_texture_index, 1u);
+  EXPECT_EQ(model->materials[0].thickness_texture_index, 2u);
   ASSERT_EQ(model->textures.size(), 1u);
   EXPECT_EQ(model->textures[0].uuid.bytes[0], 4);
   ASSERT_EQ(model->lights.size(), 1u);
@@ -255,6 +271,33 @@ TEST_F(AssetFileTest, ConvertsPackedAnimationDataToTheRuntimeTypes) {
   EXPECT_THAT(repacked.bone_names, ::testing::ElementsAre("root", "spine"));
   EXPECT_THAT(repacked.parent_indices, ::testing::ElementsAre(-1, 0));
   EXPECT_FLOAT_EQ(repacked.parent_space_reference_pose[1].translation_scale[1], 2.0f);
+}
+
+TEST_F(AssetFileTest, ConvertsAPackedMaterialToTheRuntimeType) {
+  const auto albedo = UUID::generate_random();
+  const auto transmission = UUID::generate_random();
+  const auto thickness = UUID::generate_random();
+  const auto textures = std::array{albedo, transmission, thickness};
+
+  auto packed = make_model().materials[0];
+  packed.albedo_texture_index = 0;
+  packed.transmission_texture_index = 1;
+  packed.thickness_texture_index = 2;
+
+  const auto material = to_material(packed, textures);
+  EXPECT_TRUE(material.double_sided);
+  EXPECT_FLOAT_EQ(material.transmission_factor, 0.5f);
+  EXPECT_FLOAT_EQ(material.ior, 1.33f);
+  EXPECT_FLOAT_EQ(material.thickness_factor, 2.0f);
+  EXPECT_EQ(material.attenuation_color, glm::vec3(0.25f, 0.5f, 0.75f));
+  EXPECT_FLOAT_EQ(material.attenuation_distance, 6.0f);
+  EXPECT_EQ(material.albedo_texture, albedo);
+  EXPECT_EQ(material.transmission_texture, transmission);
+  EXPECT_EQ(material.thickness_texture, thickness);
+  EXPECT_FALSE(material.normal_texture);
+
+  packed.thickness_texture_index = 99;
+  EXPECT_FALSE(to_material(packed, textures).thickness_texture);
 }
 
 TEST_F(AssetFileTest, RejectsAPackFromAnOtherVersion) {

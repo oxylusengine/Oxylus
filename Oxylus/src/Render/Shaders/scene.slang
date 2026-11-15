@@ -194,6 +194,87 @@ public extension Material {
 
     return 1.0;
   }
+
+  public func get_transmission_factor() -> f32 {
+    return com::dequantize_half(transmission_factor);
+  }
+
+  public func get_ior() -> f32 {
+    return com::dequantize_half(ior);
+  }
+
+  public func get_thickness_factor() -> f32 {
+    return com::dequantize_half(thickness_factor);
+  }
+
+  public func get_attenuation_distance() -> f32 {
+    return com::dequantize_half(attenuation_distance);
+  }
+
+  public func get_attenuation_color() -> f32x3 {
+    return f32x3(
+      com::dequantize_half(attenuation_color.x),
+      com::dequantize_half(attenuation_color.y),
+      com::dequantize_half(attenuation_color.z)
+    );
+  }
+
+  public func get_water_detail_scale() -> f32 {
+    return com::dequantize_half(water_detail_scale);
+  }
+
+  public func get_water_scatter_color() -> f32x3 {
+    return f32x3(
+      com::dequantize_half(water_scatter_color.x),
+      com::dequantize_half(water_scatter_color.y),
+      com::dequantize_half(water_scatter_color.z)
+    );
+  }
+
+  public func get_water_shore_fade() -> f32 {
+    return com::dequantize_half(water_shore_fade);
+  }
+
+  public func get_water_flow() -> f32x2 {
+    return f32x2(
+      com::dequantize_half(water_flow.x),
+      com::dequantize_half(water_flow.y)
+    );
+  }
+
+  public func sample_transmission<S : IUVSample>(in S s) -> f32 {
+    let transmission = this.get_transmission_factor();
+    if (this.flags & MaterialFlag::HasTransmissionImage) {
+        return transmission * s.sample(this.transmission_image_index, this.sampler_index).r;
+    }
+
+    return transmission;
+  }
+
+  public func sample_thickness<S : IUVSample>(in S s) -> f32 {
+    let thickness = this.get_thickness_factor();
+    if (this.flags & MaterialFlag::HasThicknessImage) {
+        return thickness * s.sample(this.thickness_image_index, this.sampler_index).g;
+    }
+
+    return thickness;
+  }
+
+  public func is_double_sided() -> bool {
+    return HAS_FLAG(this.flags, MaterialFlag::DoubleSided);
+  }
+
+  public func render_class() -> MaterialClass {
+    if (HAS_FLAG(this.flags, MaterialFlag::Water) || this.get_transmission_factor() > 0.0) {
+        return MaterialClass::Refractor;
+    }
+
+    if (HAS_FLAG(this.flags, MaterialFlag::AlphaBlend)) {
+        return MaterialClass::Blend;
+    }
+
+    return MaterialClass::Opaque;
+  }
 };
 
 public extension Camera {

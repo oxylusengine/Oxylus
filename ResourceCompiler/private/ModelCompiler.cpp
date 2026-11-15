@@ -1,6 +1,7 @@
 #include "ModelCompiler.hpp"
 
 #include <ankerl/unordered_dense.h>
+#include <cmath>
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
@@ -84,7 +85,8 @@ auto texture_index_of(const fastgltf::TextureInfo& info, usize texture_count) ->
   return static_cast<u32>(info.textureIndex);
 }
 
-auto gltf_material_to_material(const fastgltf::Material& gltf_material, usize texture_count) -> ModelData::Material {
+auto gltf_material_to_material(Session& session, const fastgltf::Material& gltf_material, usize texture_count)
+  -> ModelData::Material {
   auto material = ModelData::Material{};
   material.name = std::string(gltf_material.name);
 
@@ -135,6 +137,39 @@ auto gltf_material_to_material(const fastgltf::Material& gltf_material, usize te
 
   if (gltf_material.emissiveTexture.has_value()) {
     material.emissive_texture_index = texture_index_of(gltf_material.emissiveTexture.value(), texture_count);
+  }
+
+  material.double_sided = gltf_material.doubleSided;
+
+  // ior 0 is glTF's compatibility value for a material that opts out of specular, which our fixed f0 can't express
+  material.ior = gltf_material.ior;
+  if (material.ior == 0.0f) {
+    material.ior = 1.0f;
+    session.push_message(
+      fmt::format("Material '{}' has ior 0, which isn't supported. Using 1.0 instead.", gltf_material.name)
+    );
+  }
+
+  if (gltf_material.transmission) {
+    const auto& transmission = *gltf_material.transmission;
+    material.transmission_factor = transmission.transmissionFactor;
+    if (transmission.transmissionTexture.has_value()) {
+      material.transmission_texture_index = texture_index_of(transmission.transmissionTexture.value(), texture_count);
+    }
+  }
+
+  if (gltf_material.volume) {
+    const auto& volume = *gltf_material.volume;
+    material.thickness_factor = volume.thicknessFactor;
+    material
+      .attenuation_color = {volume.attenuationColor.x(), volume.attenuationColor.y(), volume.attenuationColor.z()};
+    if (std::isfinite(volume.attenuationDistance)) {
+      material.attenuation_distance = volume.attenuationDistance;
+    }
+
+    if (volume.thicknessTexture.has_value()) {
+      material.thickness_texture_index = texture_index_of(volume.thicknessTexture.value(), texture_count);
+    }
   }
 
   return material;
@@ -189,6 +224,9 @@ auto extract_texture_usages(const fastgltf::Asset& asset) -> ankerl::unordered_d
     }
     if (material.transmission) {
       claim(material.transmission->transmissionTexture, TextureUsage::Linear);
+    }
+    if (material.volume) {
+      claim(material.volume->thicknessTexture, TextureUsage::Linear);
     }
     if (material.anisotropy) {
       claim(material.anisotropy->anisotropyTexture, TextureUsage::Linear);
@@ -561,7 +599,7 @@ auto compile_model(Session& session, const ModelCompileRequest& request) -> opti
 
   model.materials.reserve(asset.materials.size());
   for (const auto& gltf_material : asset.materials) {
-    model.materials.push_back(gltf_material_to_material(gltf_material, asset.textures.size()));
+    model.materials.push_back(gltf_material_to_material(session, gltf_material, asset.textures.size()));
   }
 
   compile_gltf_lights(asset, model);

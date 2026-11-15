@@ -177,11 +177,19 @@ struct ModelData {
     AlphaMode alpha_mode = AlphaMode::Opaque;
     SamplingMode sampling_mode = SamplingMode::LinearRepeated;
     bool flip_normal_y = false;
+    bool double_sided = false;
+    f32 transmission_factor = 0.0f;
+    f32 ior = 1.5f;
+    f32 thickness_factor = 0.0f;
+    std::array<f32, 3> attenuation_color = {1.0f, 1.0f, 1.0f};
+    f32 attenuation_distance = 0.0f;
     u32 albedo_texture_index = INVALID_INDEX;
     u32 normal_texture_index = INVALID_INDEX;
     u32 emissive_texture_index = INVALID_INDEX;
     u32 metallic_roughness_texture_index = INVALID_INDEX;
     u32 occlusion_texture_index = INVALID_INDEX;
+    u32 transmission_texture_index = INVALID_INDEX;
+    u32 thickness_texture_index = INVALID_INDEX;
   };
 
   // The compiler leaves `uuid` null; the editor stamps it before the pack is written, so the engine
@@ -312,7 +320,7 @@ consteval void enable_bitmask(AssetFileFlags);
 
 struct AssetFileHeader {
   static constexpr auto SIGNATURE = 0x4352584F_u32;
-  static constexpr auto VERSION = 7_u16;
+  static constexpr auto VERSION = 8_u16;
 
   u32 magic = SIGNATURE; // "OXRC"
   u16 version = VERSION;
