@@ -48,55 +48,16 @@ struct TransparencyBinding {
   vir::Access access = vir::Access::Empty;
 };
 
-auto RendererInstance::prepare_transparency(
-  this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
-) -> void {
-  ZoneScoped;
-  auto& prepared = recording.prepared;
-  auto& values = recording.values;
-  const auto& shape = recording.shape;
+// the ddgi fields trail the forward push, a frame without ddgi pushes zeros its shaders never read
+static constexpr auto DDGI_PUSH_OFFSET = 48_u32;
 
-  context.sky_buffer = module.transient_buffer({
-    .size = sizeof(GPU::Sky),
-    .usage = TRANSIENT_BUFFER_USAGE,
-    .location = vir::MemoryLocation::GpuOnly,
-    .name = "transparency sky",
-  });
-  context.sky_buffer = module.update_buffer_from(context.sky_buffer, prepared.pbr.sky);
-
-  const auto is_atmosphere = static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere);
-  context.atmosphere_buffer = values.atmosphere;
-  if (!is_atmosphere) {
-    context.atmosphere_buffer = module.transient_buffer({
-      .size = sizeof(u32),
-      .usage = TRANSIENT_BUFFER_USAGE,
-      .location = vir::MemoryLocation::GpuOnly,
-      .name = "transparency unused atmosphere",
-    });
+static auto push_ddgi_apply(vir::Module& module, const FrameRecording& recording, u32 offset) -> void {
+  if (recording.shape.has_ddgi) {
+    module.push_constants_from_at(offset, recording.prepared.ddgi.apply_push);
+    return;
   }
 
-  // the shaders read these under a spec constant, so a frame without DDGI binds placeholders it never samples
-  if (!shape.has_ddgi) {
-    context.probe_volumes_buffer = module.transient_buffer({
-      .size = sizeof(u32),
-      .usage = TRANSIENT_BUFFER_USAGE,
-      .location = vir::MemoryLocation::GpuOnly,
-      .name = "transparency unused probe volumes",
-    });
-    context.probe_states_buffer = module.transient_buffer({
-      .size = sizeof(u32),
-      .usage = TRANSIENT_BUFFER_USAGE,
-      .location = vir::MemoryLocation::GpuOnly,
-      .name = "transparency unused probe states",
-    });
-    context.irradiance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "transparency unused irradiance"}
-    );
-    context.distance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "transparency unused distance"}
-    );
-    prepared.ddgi.apply_push = module.declare_bytes_var("transparency ddgi push", sizeof(f32) * 7);
-  }
+  module.push_constants_at(offset, std::array<u32, 7>{});
 }
 
 auto RendererInstance::draw_transparency(
@@ -185,8 +146,7 @@ auto RendererInstance::draw_transparency(
   }
 
   for (const auto& binding : std::array{
-         TransparencyBinding{&context.atmosphere_buffer, vir::Access::FragmentRead},
-         TransparencyBinding{&context.sky_buffer, vir::Access::FragmentRead},
+         TransparencyBinding{&context.environment_buffer, vir::Access::FragmentRead},
          TransparencyBinding{&context.lighting_buffer, vir::Access::FragmentRead},
          TransparencyBinding{&values.lights, vir::Access::FragmentRead},
          TransparencyBinding{&context.light_grid_buffer, vir::Access::FragmentRead},
@@ -251,14 +211,12 @@ auto RendererInstance::draw_transparency(
                  .bind_buffer(0, 16, values.transparent_meshlet_instances)
                  .bind_buffer(0, 17, values.transforms_world)
                  .bind_image(0, 20, context.refractor_depth_attachment)
-                 .push_constant_address(push_base + 0, context.atmosphere_buffer)
-                 .push_constant_address(push_base + 8, context.sky_buffer)
-                 .push_constant_address(push_base + 16, context.lighting_buffer)
-                 .push_constant_address(push_base + 24, values.lights)
-                 .push_constant_address(push_base + 32, context.light_grid_buffer)
-                 .push_constant_address(push_base + 40, context.pointspot_views_buffer)
-                 .push_constant_address(push_base + 48, context.directional_clipmaps_buffer)
-                 .push_constants_from_at(push_base + 56, prepared.ddgi.apply_push)
+                 .push_constant_address(push_base + 0, context.environment_buffer)
+                 .push_constant_address(push_base + 8, context.lighting_buffer)
+                 .push_constant_address(push_base + 16, values.lights)
+                 .push_constant_address(push_base + 24, context.light_grid_buffer)
+                 .push_constant_address(push_base + 32, context.pointspot_views_buffer)
+                 .push_constant_address(push_base + 40, context.directional_clipmaps_buffer)
                  .specialize_constant(0, scene_flags)
                  .specialize_constant(1, has_directional_shadows)
                  .specialize_constant(3, is_split);
@@ -266,6 +224,8 @@ auto RendererInstance::draw_transparency(
   if (is_split) {
     pass.set_color_blend(2, ACCUMULATION_BLEND).set_color_blend(3, REVEALAGE_BLEND);
   }
+
+  push_ddgi_apply(module, recording, push_base + DDGI_PUSH_OFFSET);
 
   if (shape.use_mesh_shaders) {
     pass.bind_image(0, 18, context.hiz_attachment)
@@ -375,7 +335,6 @@ auto RendererInstance::shade_refractors(
   this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
 ) -> void {
   ZoneScoped;
-  auto& prepared = recording.prepared;
   auto& values = recording.values;
   const auto& shape = recording.shape;
 
@@ -385,37 +344,7 @@ auto RendererInstance::shade_refractors(
   const auto scene_flags = std::to_underlying(shape.scene_flags);
   const auto has_directional_shadows = static_cast<u32>(shape.has_directional_shadows && shape.has_meshes);
 
-  std::tie(
-    context.final_attachment,
-    context.reactive_mask_attachment,
-    values.camera,
-    values.meshes,
-    values.mesh_instances,
-    values.transparent_meshlet_instances,
-    values.transforms_world,
-    values.materials,
-    context.atmosphere_buffer,
-    context.sky_buffer,
-    context.lighting_buffer,
-    values.lights,
-    context.light_grid_buffer,
-    context.pointspot_views_buffer,
-    context.directional_clipmaps_buffer,
-    context.vsm_page_table_attachment,
-    context.pointspot_page_table_attachment,
-    context.vsm_physical_pages_attachment,
-    context.sky_transmittance_lut_attachment,
-    context.sky_aerial_perspective_lut_attachment,
-    context.sky_cubemap_attachment,
-    context.probe_volumes_buffer,
-    context.probe_states_buffer,
-    context.irradiance_attachment,
-    context.distance_attachment,
-    context.refractor_visbuffer_attachment,
-    context.refractor_depth_attachment,
-    context.depth_attachment,
-    context.transmission_attachment
-  ) = std::tuple_cat(                  //
+  auto pass =                          //
     bind_vsm_pointspot_spec_constants( //
       module.begin_rendering(
         {{context.final_attachment, vir::Access::ColorRW},
@@ -426,8 +355,7 @@ auto RendererInstance::shade_refractors(
          {values.transparent_meshlet_instances, vir::Access::FragmentRead},
          {values.transforms_world, vir::Access::FragmentRead},
          {values.materials, vir::Access::FragmentRead},
-         {context.atmosphere_buffer, vir::Access::FragmentRead},
-         {context.sky_buffer, vir::Access::FragmentRead},
+         {context.environment_buffer, vir::Access::FragmentRead},
          {context.lighting_buffer, vir::Access::FragmentRead},
          {values.lights, vir::Access::FragmentRead},
          {context.light_grid_buffer, vir::Access::FragmentRead},
@@ -477,18 +405,45 @@ auto RendererInstance::shade_refractors(
       .bind_image(0, 19, context.depth_attachment)
       .bind_image(0, 20, context.refractor_depth_attachment)
       .bind_image(0, 21, context.transmission_attachment)
-      .push_constant_address(0, context.atmosphere_buffer)
-      .push_constant_address(8, context.sky_buffer)
-      .push_constant_address(16, context.lighting_buffer)
-      .push_constant_address(24, values.lights)
-      .push_constant_address(32, context.light_grid_buffer)
-      .push_constant_address(40, context.pointspot_views_buffer)
-      .push_constant_address(48, context.directional_clipmaps_buffer)
-      .push_constants_from_at(56, prepared.ddgi.apply_push)
+      .push_constant_address(0, context.environment_buffer)
+      .push_constant_address(8, context.lighting_buffer)
+      .push_constant_address(16, values.lights)
+      .push_constant_address(24, context.light_grid_buffer)
+      .push_constant_address(32, context.pointspot_views_buffer)
+      .push_constant_address(40, context.directional_clipmaps_buffer)
       .specialize_constant(0, scene_flags)
-      .specialize_constant(1, has_directional_shadows)
-      .draw(3, 1)
-      .end_rendering()
-  );
+      .specialize_constant(1, has_directional_shadows);
+  push_ddgi_apply(module, recording, DDGI_PUSH_OFFSET);
+
+  std::tie(
+    context.final_attachment,
+    context.reactive_mask_attachment,
+    values.camera,
+    values.meshes,
+    values.mesh_instances,
+    values.transparent_meshlet_instances,
+    values.transforms_world,
+    values.materials,
+    context.environment_buffer,
+    context.lighting_buffer,
+    values.lights,
+    context.light_grid_buffer,
+    context.pointspot_views_buffer,
+    context.directional_clipmaps_buffer,
+    context.vsm_page_table_attachment,
+    context.pointspot_page_table_attachment,
+    context.vsm_physical_pages_attachment,
+    context.sky_transmittance_lut_attachment,
+    context.sky_aerial_perspective_lut_attachment,
+    context.sky_cubemap_attachment,
+    context.probe_volumes_buffer,
+    context.probe_states_buffer,
+    context.irradiance_attachment,
+    context.distance_attachment,
+    context.refractor_visbuffer_attachment,
+    context.refractor_depth_attachment,
+    context.depth_attachment,
+    context.transmission_attachment
+  ) = std::tuple_cat(pass.draw(3, 1).end_rendering());
 }
 } // namespace ox

@@ -597,6 +597,8 @@ struct PBRContext {
   vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 
   vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  // only without an atmosphere, which stands in for the sky
+  vir::ValueID sky_buffer = vir::ValueID::Invalid;
 };
 
 struct TransparencyContext {
@@ -634,8 +636,8 @@ struct TransparencyContext {
   vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID transmission_attachment = vir::ValueID::Invalid;
 
-  vir::ValueID sky_buffer = vir::ValueID::Invalid;
-  vir::ValueID atmosphere_buffer = vir::ValueID::Invalid;
+  // the atmosphere, or the sky when the scene has none
+  vir::ValueID environment_buffer = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -1349,9 +1351,6 @@ public:
   auto allocate_sssr_resources(this RendererInstance& self, glm::uvec2 render_size) -> void;
   static auto record_sssr(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, SSSRContext& context
-  ) -> void;
-  auto prepare_transparency(
-    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
   ) -> void;
   auto draw_transparency(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context

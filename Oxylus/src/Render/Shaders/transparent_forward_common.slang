@@ -30,8 +30,8 @@ import lighting;
 [[vk::binding(20, 0)]] Texture2D<f32> refractor_depth;
 
 struct ForwardPush {
+    // the sky instead when the scene has no atmosphere, the shaders never read both
     Atmosphere *atmosphere;
-    Sky *sky;
     PBRLighting *lighting;
     Light *lights;
     LightGridCell *light_grid;
@@ -184,7 +184,8 @@ func light_surface(
         specular_environment = sky_cubemap_specular(sky_cubemap, linear_clamp_sampler, N, R, roughness, horizon_darkening);
     } else {
         let has_sky = (scene_flags & SceneFlags::HasSky) != 0;
-        diffuse_environment = select(has_sky, push.sky.ambient_color, push.lighting.base_ambient_color);
+        let sky = (Sky *)push.atmosphere;
+        diffuse_environment = select(has_sky, sky.ambient_color, push.lighting.base_ambient_color);
         specular_environment = diffuse_environment;
     }
 

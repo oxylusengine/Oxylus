@@ -2302,6 +2302,30 @@ auto RendererInstance::record_frame(
     }
   }
 
+  // sssr and transparency bind the probe resources under a spec constant, a scene without probe volumes shares
+  // one set of stand-ins they never sample
+  const auto has_transparency = shape.has_blend_meshes || shape.has_refractors;
+  if (shape.probe_volume_count == 0 && (shape.has_sssr || has_transparency)) {
+    probe_volumes_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused probe volumes",
+    });
+    probe_states_buffer = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused probe states",
+    });
+    ddgi_irradiance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused ddgi irradiance"}
+    );
+    ddgi_distance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "unused ddgi distance"}
+    );
+  }
+
   // --- lighting ---
   auto pbr_context = PBRContext{
     .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
@@ -2396,7 +2420,8 @@ auto RendererInstance::record_frame(
   // --- transparency ---
   auto wboit_revealage_attachment = vir::ValueID::Invalid;
   auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
-  if (shape.has_blend_meshes || shape.has_refractors) {
+  if (has_transparency) {
+    const auto is_atmosphere = static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere);
     cull_geometry_context.hiz_attachment = hiz_attachment;
     auto transparency_context = TransparencyContext{
       .visibility_buffer = cull_geometry_context.visibility_buffer,
@@ -2420,8 +2445,8 @@ auto RendererInstance::record_frame(
       .distance_attachment = ddgi_distance_attachment,
       .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
       .refractor_depth_attachment = refractor_depth_attachment,
+      .environment_buffer = is_atmosphere ? values.atmosphere : pbr_context.sky_buffer,
     };
-    self.prepare_transparency(module, recording, transparency_context);
 
     // the rear pair resolves over the scene first, so refractors see blended content behind them
     if (shape.has_blend_meshes) {
@@ -2455,8 +2480,8 @@ auto RendererInstance::record_frame(
       wboit_revealage_front_attachment = is_split ? transparency_context.revealage_attachment : vir::ValueID::Invalid;
     }
 
-    if (static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere)) {
-      values.atmosphere = transparency_context.atmosphere_buffer;
+    if (is_atmosphere) {
+      values.atmosphere = transparency_context.environment_buffer;
     }
 
     final_attachment = transparency_context.final_attachment;
@@ -2475,12 +2500,10 @@ auto RendererInstance::record_frame(
     vsm_physical_pages_attachment = transparency_context.vsm_physical_pages_attachment;
     vsm_virtual_page_table_attachment = transparency_context.vsm_page_table_attachment;
     vsm_directional_clipmaps_buffer = transparency_context.directional_clipmaps_buffer;
-    if (shape.has_ddgi) {
-      probe_volumes_buffer = transparency_context.probe_volumes_buffer;
-      probe_states_buffer = transparency_context.probe_states_buffer;
-      ddgi_irradiance_attachment = transparency_context.irradiance_attachment;
-      ddgi_distance_attachment = transparency_context.distance_attachment;
-    }
+    probe_volumes_buffer = transparency_context.probe_volumes_buffer;
+    probe_states_buffer = transparency_context.probe_states_buffer;
+    ddgi_irradiance_attachment = transparency_context.irradiance_attachment;
+    ddgi_distance_attachment = transparency_context.distance_attachment;
   }
 
   // --- 2D ---

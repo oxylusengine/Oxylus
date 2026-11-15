@@ -609,7 +609,7 @@ auto RendererInstance::apply_pbr(
       context.pointspot_page_table_attachment,
       context.vsm_physical_pages_attachment,
       values.camera,
-      std::ignore,
+      sky,
       lighting,
       values.lights,
       context.light_grid_buffer,
@@ -643,6 +643,7 @@ auto RendererInstance::apply_pbr(
         .draw(3, 1)
         .end_rendering()
     );
+    context.sky_buffer = sky;
   }
 
   context.lighting_buffer = lighting;

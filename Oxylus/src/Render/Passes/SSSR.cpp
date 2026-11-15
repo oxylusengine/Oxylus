@@ -393,27 +393,6 @@ auto RendererInstance::record_sssr(
   auto irradiance_attachment = context.irradiance_attachment;
   auto distance_attachment = context.distance_attachment;
   auto atmosphere = values.atmosphere;
-  if (!is_ddgi) {
-    probe_volumes_buffer = module.transient_buffer({
-      .size = sizeof(u32),
-      .usage = TRANSIENT_BUFFER_USAGE,
-      .location = vir::MemoryLocation::GpuOnly,
-      .name = "sssr unused probe volumes",
-    });
-    probe_states_buffer = module.transient_buffer({
-      .size = sizeof(u32),
-      .usage = TRANSIENT_BUFFER_USAGE,
-      .location = vir::MemoryLocation::GpuOnly,
-      .name = "sssr unused probe states",
-    });
-    irradiance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused irradiance"}
-    );
-    distance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "sssr unused distance"}
-    );
-  }
-
   if (!is_sky) {
     atmosphere = module.transient_buffer({
       .size = sizeof(u32),
@@ -616,12 +595,10 @@ auto RendererInstance::record_sssr(
     ) = std::tuple_cat(pass.end_compute());
   }
 
-  if (is_ddgi) {
-    context.probe_volumes_buffer = probe_volumes_buffer;
-    context.probe_states_buffer = probe_states_buffer;
-    context.irradiance_attachment = irradiance_attachment;
-    context.distance_attachment = distance_attachment;
-  }
+  context.probe_volumes_buffer = probe_volumes_buffer;
+  context.probe_states_buffer = probe_states_buffer;
+  context.irradiance_attachment = irradiance_attachment;
+  context.distance_attachment = distance_attachment;
 
   if (is_sky) {
     values.atmosphere = atmosphere;
