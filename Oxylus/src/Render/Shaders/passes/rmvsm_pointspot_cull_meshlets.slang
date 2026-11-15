@@ -16,6 +16,7 @@ import rmvsm;
 [[vk::binding(6)]] Texture2DArray<u8> hpb;
 [[vk::binding(7)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(9)]] StructuredBuffer<Material> materials;
 
 groupshared u32 visible_count_shared;
 groupshared u32 base_index_shared;
@@ -57,7 +58,8 @@ func cs_main(
         // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
         // skips meshlet-level culling and relies on the per-mesh animated bounds instead
         let skinned = mesh_instance.is_skinned();
-        let cone_visible = skinned || cone_cutoff >= 1.0 ||
+        let is_double_sided = materials[mesh_instance.material_index].is_double_sided();
+        let cone_visible = skinned || is_double_sided || cone_cutoff >= 1.0 ||
                            !test_cone(world_center, world_radius, cone_axis, cone_cutoff, view.light_position);
 
         if (in_range && cone_visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent))) {

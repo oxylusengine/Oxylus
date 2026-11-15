@@ -78,7 +78,8 @@ func ts_main(
         // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
         // skips meshlet-level culling and relies on the per-mesh animated bounds instead
         let skinned = mesh_instance.is_skinned();
-        let cone_visible = skinned || cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, view_dir);
+        let is_double_sided = materials[mesh_instance.material_index].is_double_sided();
+        let cone_visible = skinned || is_double_sided || cone_cutoff >= 1.0 || !test_cone_directional(cone_axis, cone_cutoff, view_dir);
 
         if (cone_visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent))) {
             var visible = true;
@@ -99,6 +100,7 @@ func ts_main(
 }
 
 groupshared f32x4 clip_positions_shared[MESHLET_MAX_VERTICES];
+groupshared bool is_double_sided_shared;
 
 [[shader("mesh")]]
 [[outputtopology("triangle")]]
@@ -122,6 +124,10 @@ func ms_main(
     let vertex_count = u32(meshlet.vertex_count);
     let triangle_count = u32(meshlet.triangle_count);
     SetMeshOutputCounts(vertex_count, triangle_count);
+
+    if (local_index == 0) {
+        is_double_sided_shared = materials[mesh_instance.material_index].is_double_sided();
+    }
 
     let mvp = mul(clipmaps[payload.clipmap_index].projection_view_mat, transforms[mesh_instance.transform_index].world);
 
@@ -156,7 +162,7 @@ func ms_main(
 
         PrimitiveOutput output;
         let in_front = clip_pos[0].z >= 0.0 && clip_pos[1].z >= 0.0 && clip_pos[2].z >= 0.0;
-        output.culled = !in_front || test_triangle_backface(clip_pos);
+        output.culled = !in_front || (!is_double_sided_shared && test_triangle_backface(clip_pos));
         primitives[local_index] = output;
     }
 }
@@ -180,14 +186,17 @@ func fs_main(VertexOutput input) -> void {
         let physical_texel_coord = in_memory_offset + in_page_texel_coord;
 
         let material = materials[NonUniformResourceIndex(input.material_index)];
-        if (material.flags & MaterialFlag::HasAlbedoImage) {
-            UVGradient grad;
-            grad.uv = input.tex_coord;
-            grad.ddx = ddx(input.tex_coord);
-            grad.ddy = ddy(input.tex_coord);
-            let alpha_color = material.sample_albedo_color_grad(grad).a;
+        if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+            var alpha = material.get_albedo_color().a;
+            if (material.flags & MaterialFlag::HasAlbedoImage) {
+                UVGradient grad;
+                grad.uv = input.tex_coord;
+                grad.ddx = ddx(input.tex_coord);
+                grad.ddy = ddy(input.tex_coord);
+                alpha = material.sample_albedo_color_grad(grad).a;
+            }
 
-            if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
+            if (alpha < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
                 return;
             }
         }

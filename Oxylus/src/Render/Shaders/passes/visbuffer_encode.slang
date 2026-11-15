@@ -53,16 +53,18 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
 func fs_main(VertexOutput input) -> u32 {
 #if 1
     let material = materials[NonUniformResourceIndex(input.material_index)];
-    if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
-        UVGradient grad;
-        grad.uv = input.tex_coord;
-        grad.ddx = ddx(input.tex_coord);
-        grad.ddy = ddy(input.tex_coord);
-        grad.apply_mip_bias(camera.texture_mip_bias);
-        let alpha_color = material.sample_albedo_color(grad).a;
+    if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+        var alpha = material.get_albedo_color().a;
+        if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
+            UVGradient grad;
+            grad.uv = input.tex_coord;
+            grad.ddx = ddx(input.tex_coord);
+            grad.ddy = ddy(input.tex_coord);
+            grad.apply_mip_bias(camera.texture_mip_bias);
+            alpha = material.sample_albedo_color(grad).a;
+        }
 
-        // We are doing deferred, blend alpha mode is not supported in this pass.
-        if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
+        if (alpha < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
             discard;
         }
     }

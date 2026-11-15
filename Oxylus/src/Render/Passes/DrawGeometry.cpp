@@ -7,7 +7,7 @@
 #include "Render/RendererInstance.hpp"
 
 namespace ox {
-static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_BACK_BIT};
+static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_NONE};
 static constexpr auto VISBUFFER_DEPTH = vir::DepthState{
   .is_test_enabled = true,
   .is_write_enabled = true,
@@ -55,7 +55,7 @@ auto RendererInstance::draw_for_visbuffer_ms(
          {values.transforms_world, scene_access},
          {context.visibility_buffer, vir::Access::TaskRead},
          {values.meshlet_instance_visibility_mask, vir::Access::TaskRW},
-         {values.materials, vir::Access::FragmentRead},
+         {values.materials, scene_access | vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::ColorRW},
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}

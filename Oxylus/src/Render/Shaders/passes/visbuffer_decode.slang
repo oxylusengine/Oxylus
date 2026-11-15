@@ -53,6 +53,7 @@ struct PartialDeriv {
     f32x3 ddx;
     f32x3 ddy;
     f32x3 lambda;
+    bool is_back_facing;
 
     func gradient_of(f32x2x3 v) -> UVGradient {
         UVGradient grad;
@@ -80,7 +81,10 @@ func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32
     // https://cg.ivd.kit.edu/publications/2015/dais/DAIS.pdf
     // Appendix A:
     // D =
-    let inv_det = 1.0 / determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
+    let det = determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
+    // same orientation as the 3x3 clip determinant in test_triangle_backface, scaled by 1/(w0*w1*w2) > 0
+    result.is_back_facing = det > 0.0;
+    let inv_det = 1.0 / det;
     // Lambda 1 =
     result.ddx = f32x3(ndc_1.y - ndc_2.y, ndc_2.y - ndc_0.y, ndc_0.y - ndc_1.y) * inv_det * inv_w;
     // Lambda 2 =
@@ -140,7 +144,10 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         tri.world_positions[2].xyz - params.camera.position.xyz,
     };
 
-    const f32x3 world_normal = tri.interpolate_normal(deriv.lambda);
+    // a double sided triangle seen from behind shades with the normal facing the camera
+    let is_flipped = deriv.is_back_facing && material.is_double_sided();
+    let normal_sign = select(is_flipped, -1.0, 1.0);
+    const f32x3 world_normal = normal_sign * tri.interpolate_normal(deriv.lambda);
     let position_dx = mul(deriv.ddx, camera_relative_world_positions);
     let position_dy = mul(deriv.ddy, camera_relative_world_positions);
     let uv_dx = tex_coord_grad.ddx;
@@ -158,7 +165,7 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         [ForceUnroll]
         for (i32 axis = 0; axis < 2; axis++) {
             let bary_offset = axis == 0 ? deriv.ddx : deriv.ddy;
-            let interpolated_normal = mul(deriv.lambda + bary_offset, tri.world_normals);
+            let interpolated_normal = normal_sign * mul(deriv.lambda + bary_offset, tri.world_normals);
             let normal_length_sq = dot(interpolated_normal, interpolated_normal);
             let vertex_normal = normal_length_sq > 1e-8 ? interpolated_normal * rsqrt(normal_length_sq) : world_normal;
             var sample_normal = vertex_normal;

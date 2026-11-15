@@ -438,7 +438,8 @@ protected:
           visibility,
           visible[list],
           mask,
-          triangle_commands[list]
+          triangle_commands[list],
+          materials
         ) = std::tuple_cat( //
           module
             .begin_compute(
@@ -451,7 +452,8 @@ protected:
                {visibility, vir::Access::ComputeRW},
                {visible[list], vir::Access::ComputeRW},
                {mask, vir::Access::ComputeRW},
-               {triangle_commands[list], vir::Access::ComputeRW}}
+               {triangle_commands[list], vir::Access::ComputeRW},
+               {materials, vir::Access::ComputeRead}}
             )
             .with_name(list == 1 ? "cull refractor meshlets" : "cull blend meshlets")
             .bind_compute_pipeline(render->pipeline("cull_meshlets_hiz"))
@@ -464,6 +466,7 @@ protected:
             .bind_buffer(0, 6, visible[list])
             .bind_buffer(0, 7, mask)
             .bind_buffer(0, 8, triangle_commands[list])
+            .bind_buffer(0, 9, materials)
             .specialize_constant(0, std::to_underlying(cull_flags))
             .push_constants(cull_camera)
             .dispatch_indirect(list_command)
@@ -511,6 +514,229 @@ protected:
     }
 
     return results;
+  }
+
+  struct FacingScene {
+    vir::Buffer positions = {};
+    vir::Buffer normals = {};
+    vir::Buffer triangle_indices = {};
+    vir::Buffer vertex_indices = {};
+    vir::Buffer meshlets = {};
+    vir::Buffer bounds = {};
+    vir::Buffer lod = {};
+    vir::Buffer mesh = {};
+    vir::Buffer materials = {};
+    vir::Buffer transforms = {};
+    vir::Buffer mesh_instances = {};
+    vir::Buffer meshlet_instances = {};
+    vir::Buffer visibility = {};
+  };
+
+  // one meshlet with a counter-clockwise and a clockwise triangle over the same three vertices,
+  // and a normal cone pointing along `cone_axis_z`. material 0 is single sided, material 1 double sided
+  auto build_facing_scene(i8 cone_axis_z) -> FacingScene {
+    auto result = FacingScene{};
+    const auto positions = std::array{
+      glm::u16vec4(glm::packHalf1x16(0.0f), glm::packHalf1x16(0.0f), glm::packHalf1x16(0.0f), 0),
+      glm::u16vec4(glm::packHalf1x16(10.0f), glm::packHalf1x16(0.0f), glm::packHalf1x16(0.0f), 0),
+      glm::u16vec4(glm::packHalf1x16(0.0f), glm::packHalf1x16(10.0f), glm::packHalf1x16(0.0f), 0),
+    };
+    result.positions = upload<glm::u16vec4>(positions);
+
+    // corners 0 1 2 then 0 2 1, packed four bytes to a word
+    const auto triangle_indices = std::array{0x00020100_u32, 0x00000102_u32};
+    result.triangle_indices = upload<u32>(triangle_indices);
+    const auto vertex_indices = std::array{0_u32, 1_u32, 2_u32};
+    result.vertex_indices = upload<u32>(vertex_indices);
+
+    const auto meshlets = std::array{GPU::Meshlet{
+      .indirect_vertex_index_offset = 0,
+      .local_triangle_index_offset = 0,
+      .vertex_count = 3,
+      .triangle_count = 2
+    }};
+    result.meshlets = upload<GPU::Meshlet>(meshlets);
+
+    auto bounds = GPU::MeshletBounds{};
+    bounds.aabb_center = {glm::packHalf1x16(0.0f), glm::packHalf1x16(0.0f), glm::packHalf1x16(0.0f)};
+    bounds.aabb_extent = {glm::packHalf1x16(1.0f), glm::packHalf1x16(1.0f), glm::packHalf1x16(1.0f)};
+    bounds.cone_axis_z = cone_axis_z;
+    bounds.cone_cutoff = 0;
+    result.bounds = upload<GPU::MeshletBounds>(std::array{bounds});
+
+    auto lod = GPU::MeshLOD{};
+    lod.indices_count = 0;
+    lod.meshlets = result.meshlets.device_address;
+    lod.meshlet_bounds = result.bounds.device_address;
+    lod.local_triangle_indices = result.triangle_indices.device_address;
+    lod.indirect_vertex_indices = result.vertex_indices.device_address;
+    lod.meshlet_count = 1;
+    lod.meshlet_bounds_count = 1;
+    lod.local_triangle_indices_count = 2;
+    lod.indirect_vertex_indices_count = 3;
+    result.lod = upload<GPU::MeshLOD>(std::array{lod});
+
+    auto mesh = GPU::Mesh{};
+    mesh.vertex_positions = result.positions.device_address;
+    mesh.vertex_count = 3;
+    mesh.lod_count = 1;
+    mesh.lods = result.lod.device_address;
+    mesh.bounds = {.aabb_center = glm::vec3(0.0f), .aabb_extent = glm::vec3(1.0f)};
+    result.mesh = upload<GPU::Mesh>(std::array{mesh});
+
+    auto materials = std::array<GPU::Material, 2>{};
+    materials[0].flags = GPU::MaterialFlag::AlphaOpaque;
+    materials[1].flags = GPU::MaterialFlag::AlphaOpaque | GPU::MaterialFlag::DoubleSided;
+    result.materials = upload<GPU::Material>(materials);
+
+    auto transform = GPU::TransformWorld{.world = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 10.0f))};
+    result.transforms = upload<GPU::TransformWorld>(std::array{transform});
+
+    result.mesh_instances = upload<GPU::MeshInstance>(std::array{GPU::MeshInstance{}});
+    result.meshlet_instances = upload<GPU::MeshletInstance>(std::array{GPU::MeshletInstance{}});
+
+    auto visibility = GPU::MeshletInstanceVisibility{};
+    visibility.total_visible_meshlet_instances = 1;
+    result.visibility = upload<GPU::MeshletInstanceVisibility>(std::array{visibility});
+    return result;
+  }
+
+  auto set_facing_material(const FacingScene& scene, u32 material_index) -> void {
+    auto instance = GPU::MeshInstance{};
+    instance.material_index = material_index;
+    EXPECT_TRUE(scene.mesh_instances.write<GPU::MeshInstance>(0, std::array{instance}));
+    EXPECT_TRUE(render->persistent->flush_buffer(scene.mesh_instances));
+  }
+
+  // number of indices cull_triangles emitted for the facing scene
+  auto run_cull_triangles(u32 material_index) -> u32 {
+    auto scene = build_facing_scene(0);
+    set_facing_material(scene, material_index);
+
+    auto visible_buffer = upload<u32>(std::array{0_u32});
+    auto indices_buffer = allocate(16 * sizeof(u32));
+    auto draw_buffer = allocate(sizeof(VkDrawIndexedIndirectCommand));
+    fill<VkDrawIndexedIndirectCommand>(
+      draw_buffer,
+      1,
+      {.indexCount = 0, .instanceCount = 1, .firstIndex = 0, .vertexOffset = 0, .firstInstance = 0}
+    );
+
+    auto module = vir::Module{};
+    auto meshes = module.import_buffer(scene.mesh, vir::Access::HostWrite);
+    auto instances = module.import_buffer(scene.mesh_instances, vir::Access::HostWrite);
+    auto meshlet_instances = module.import_buffer(scene.meshlet_instances, vir::Access::HostWrite);
+    auto visibility = module.import_buffer(scene.visibility, vir::Access::HostWrite);
+    auto transforms = module.import_buffer(scene.transforms, vir::Access::HostWrite);
+    auto visible = module.import_buffer(visible_buffer, vir::Access::HostWrite);
+    auto indices = module.import_buffer(indices_buffer, vir::Access::HostWrite);
+    auto draw = module.import_buffer(draw_buffer, vir::Access::HostWrite);
+    auto materials = module.import_buffer(scene.materials, vir::Access::HostWrite);
+
+    std::tie(meshes, instances, meshlet_instances, visibility, transforms, visible, indices, draw, materials) =
+      module
+        .begin_compute(
+          {{meshes, vir::Access::ComputeRead},
+           {instances, vir::Access::ComputeRead},
+           {meshlet_instances, vir::Access::ComputeRead},
+           {visibility, vir::Access::ComputeRead},
+           {transforms, vir::Access::ComputeRead},
+           {visible, vir::Access::ComputeRead},
+           {indices, vir::Access::ComputeRW},
+           {draw, vir::Access::ComputeRW},
+           {materials, vir::Access::ComputeRead}}
+        )
+        .with_name("cull triangles facing")
+        .bind_compute_pipeline(render->pipeline("cull_triangles"))
+        .bind_buffer(0, 0, meshes)
+        .bind_buffer(0, 1, instances)
+        .bind_buffer(0, 2, meshlet_instances)
+        .bind_buffer(0, 3, visibility)
+        .bind_buffer(0, 4, transforms)
+        .bind_buffer(0, 5, visible)
+        .bind_buffer(0, 6, indices)
+        .bind_buffer(0, 7, draw)
+        .bind_buffer(0, 8, materials)
+        .specialize_constant(0, std::to_underlying(GPU::CullFlag::None))
+        .push_constants(camera(1))
+        .dispatch(1, 1, 1)
+        .end_compute();
+    module.export_to(draw, vir::Access::HostRead);
+
+    const auto program = render->compile(std::move(module));
+    EXPECT_TRUE(program);
+    if (!program) {
+      return ~0_u32;
+    }
+
+    EXPECT_TRUE(render->execute_blocking(*program));
+    return read<VkDrawIndexedIndirectCommand>(draw_buffer, 1)[0].indexCount;
+  }
+
+  // number of meshlets cull_meshlets_hiz sent on to the triangle cull
+  auto run_cull_meshlets_hiz(i8 cone_axis_z, u32 material_index) -> u32 {
+    auto scene = build_facing_scene(cone_axis_z);
+    set_facing_material(scene, material_index);
+
+    auto visible_buffer = upload<u32>(std::array{0_u32});
+    auto mask_buffer = upload<u32>(std::array{~0_u32, ~0_u32, ~0_u32, ~0_u32});
+    auto command_buffer = allocate(16);
+    fill<VkDispatchIndirectCommand>(command_buffer, 1, {.x = 0, .y = 1, .z = 1});
+
+    auto module = vir::Module{};
+    auto hiz = module.transient_image({.extent = {4, 4, 1}, .format = vir::Format::R32Sfloat, .name = "facing hiz"});
+    hiz = module.clear(hiz, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f));
+    auto meshes = module.import_buffer(scene.mesh, vir::Access::HostWrite);
+    auto instances = module.import_buffer(scene.mesh_instances, vir::Access::HostWrite);
+    auto meshlet_instances = module.import_buffer(scene.meshlet_instances, vir::Access::HostWrite);
+    auto transforms = module.import_buffer(scene.transforms, vir::Access::HostWrite);
+    auto visibility = module.import_buffer(scene.visibility, vir::Access::HostWrite);
+    auto visible = module.import_buffer(visible_buffer, vir::Access::HostWrite);
+    auto mask = module.import_buffer(mask_buffer, vir::Access::HostWrite);
+    auto command = module.import_buffer(command_buffer, vir::Access::HostWrite);
+    auto materials = module.import_buffer(scene.materials, vir::Access::HostWrite);
+
+    const auto flags = GPU::CullFlag::TestFrustum | GPU::CullFlag::TestOcclusion;
+    std::tie(hiz, meshes, instances, meshlet_instances, transforms, visibility, visible, mask, command, materials) =
+      module
+        .begin_compute(
+          {{hiz, vir::Access::ComputeSampled},
+           {meshes, vir::Access::ComputeRead},
+           {instances, vir::Access::ComputeRead},
+           {meshlet_instances, vir::Access::ComputeRead},
+           {transforms, vir::Access::ComputeRead},
+           {visibility, vir::Access::ComputeRW},
+           {visible, vir::Access::ComputeRW},
+           {mask, vir::Access::ComputeRW},
+           {command, vir::Access::ComputeRW},
+           {materials, vir::Access::ComputeRead}}
+        )
+        .with_name("cull meshlets facing")
+        .bind_compute_pipeline(render->pipeline("cull_meshlets_hiz"))
+        .bind_image(0, 0, hiz)
+        .bind_buffer(0, 1, meshes)
+        .bind_buffer(0, 2, instances)
+        .bind_buffer(0, 3, meshlet_instances)
+        .bind_buffer(0, 4, transforms)
+        .bind_buffer(0, 5, visibility)
+        .bind_buffer(0, 6, visible)
+        .bind_buffer(0, 7, mask)
+        .bind_buffer(0, 8, command)
+        .bind_buffer(0, 9, materials)
+        .specialize_constant(0, std::to_underlying(flags))
+        .push_constants(camera(1))
+        .dispatch(1, 1, 1)
+        .end_compute();
+    module.export_to(command, vir::Access::HostRead);
+
+    const auto program = render->compile(std::move(module));
+    EXPECT_TRUE(program);
+    if (!program) {
+      return ~0_u32;
+    }
+
+    EXPECT_TRUE(render->execute_blocking(*program));
+    return read<VkDispatchIndirectCommand>(command_buffer, 1)[0].x;
   }
 
   auto class_of(u32 instance_index) const -> GPU::MaterialClass {
@@ -668,6 +894,20 @@ TEST_F(TransparencyGPUTest, TransparentMeshletCullKeepsEveryRoutedMeshletInFrust
   for (auto index = 0_sz; index < refractor.size(); index++) {
     EXPECT_EQ(refractor_indices[index], capacity - refractor.size() + index);
   }
+}
+
+TEST_F(TransparencyGPUTest, TriangleCullDropsBackFacesOfSingleSidedMaterials) { EXPECT_EQ(run_cull_triangles(0), 3u); }
+
+TEST_F(TransparencyGPUTest, TriangleCullKeepsBackFacesOfDoubleSidedMaterials) { EXPECT_EQ(run_cull_triangles(1), 6u); }
+
+TEST_F(TransparencyGPUTest, MeshletCullRejectsBackFacingConeOfSingleSidedMaterials) {
+  EXPECT_EQ(run_cull_meshlets_hiz(127, 0), 0u);
+  EXPECT_EQ(run_cull_meshlets_hiz(-127, 0), 1u);
+}
+
+TEST_F(TransparencyGPUTest, MeshletCullKeepsBackFacingConeOfDoubleSidedMaterials) {
+  EXPECT_EQ(run_cull_meshlets_hiz(127, 1), 1u);
+  EXPECT_EQ(run_cull_meshlets_hiz(-127, 1), 1u);
 }
 
 TEST_F(TransparencyGPUTest, RefractorsRouteWithoutBlend) {

@@ -326,7 +326,8 @@ auto RendererInstance::cull_geometry(
       context.visibility_buffer,
       values.visible_meshlet_instances_indices,
       values.meshlet_instance_visibility_mask,
-      cull_triangles_cmd_buffer
+      cull_triangles_cmd_buffer,
+      values.materials
     ) = std::tuple_cat( //
       module
         .begin_compute(
@@ -339,7 +340,8 @@ auto RendererInstance::cull_geometry(
            {context.visibility_buffer, vir::Access::ComputeRW},
            {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
            {values.meshlet_instance_visibility_mask, vir::Access::ComputeRW},
-           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
+           {values.materials, vir::Access::ComputeRead}}
         )
         .with_name(stack.format("vis cull meshlets {}", pass_name))
         .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hiz"))
@@ -352,6 +354,7 @@ auto RendererInstance::cull_geometry(
         .bind_buffer(0, 6, values.visible_meshlet_instances_indices)
         .bind_buffer(0, 7, values.meshlet_instance_visibility_mask)
         .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+        .bind_buffer(0, 9, values.materials)
         .specialize_constant(0, std::to_underlying(cull_flags))
         .push_constants_from(cull_camera)
         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
@@ -369,7 +372,8 @@ auto RendererInstance::cull_geometry(
       cull_triangles_cmd_buffer,
       context.hpb_attachment,
       context.vsm_clipmaps_buffer,
-      context.vsm_clipmap_dirty_flags_buffer
+      context.vsm_clipmap_dirty_flags_buffer,
+      values.materials
     ) = std::tuple_cat( //
       module
         .begin_compute(
@@ -383,7 +387,8 @@ auto RendererInstance::cull_geometry(
            {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
            {context.hpb_attachment, vir::Access::ComputeSampled},
            {context.vsm_clipmaps_buffer, vir::Access::ComputeRead},
-           {context.vsm_clipmap_dirty_flags_buffer, vir::Access::ComputeRead}}
+           {context.vsm_clipmap_dirty_flags_buffer, vir::Access::ComputeRead},
+           {values.materials, vir::Access::ComputeRead}}
         )
         .with_name("rmvsm cull meshlets")
         .bind_compute_pipeline(render_context.pipeline("cull_meshlets_hpb"))
@@ -398,6 +403,7 @@ auto RendererInstance::cull_geometry(
         .bind_sampler(0, 8, render_context.cached_sampler_handle(NearestSamplerClamped))
         .bind_buffer(0, 9, context.vsm_clipmaps_buffer)
         .bind_buffer(0, 10, context.vsm_clipmap_dirty_flags_buffer)
+        .bind_buffer(0, 11, values.materials)
         .push_constants_from(prepared.cull.clipmap_push)
         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
         .end_compute()
@@ -412,7 +418,8 @@ auto RendererInstance::cull_geometry(
       values.transforms_world,
       context.visibility_buffer,
       values.visible_meshlet_instances_indices,
-      cull_triangles_cmd_buffer
+      cull_triangles_cmd_buffer,
+      values.materials
     ) = std::tuple_cat( //
       module
         .begin_compute(
@@ -423,7 +430,8 @@ auto RendererInstance::cull_geometry(
            {values.transforms_world, vir::Access::ComputeRead},
            {context.visibility_buffer, vir::Access::ComputeRW},
            {values.visible_meshlet_instances_indices, vir::Access::ComputeRW},
-           {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+           {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
+           {values.materials, vir::Access::ComputeRead}}
         )
         .with_name("cull meshlets")
         .bind_compute_pipeline(render_context.pipeline("cull_meshlets"))
@@ -434,6 +442,7 @@ auto RendererInstance::cull_geometry(
         .bind_buffer(0, 4, context.visibility_buffer)
         .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
         .bind_buffer(0, 6, cull_triangles_cmd_buffer)
+        .bind_buffer(0, 7, values.materials)
         .specialize_constant(0, std::to_underlying(cull_meshlets_flags))
         .push_constants_from(cull_camera)
         .dispatch_indirect(context.cull_meshlets_cmd_buffer)
@@ -468,7 +477,8 @@ auto RendererInstance::cull_geometry(
     values.transforms_world,
     values.visible_meshlet_instances_indices,
     values.reordered_indices,
-    context.draw_geometry_cmd_buffer
+    context.draw_geometry_cmd_buffer,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -480,7 +490,8 @@ auto RendererInstance::cull_geometry(
          {values.transforms_world, vir::Access::ComputeRead},
          {values.visible_meshlet_instances_indices, vir::Access::ComputeRead},
          {values.reordered_indices, vir::Access::ComputeRW},
-         {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW}}
+         {context.draw_geometry_cmd_buffer, vir::Access::ComputeRW},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name(context.use_hiz ? stack.format("cull triangles {}", pass_name) : "cull triangles")
       .bind_compute_pipeline(render_context.pipeline("cull_triangles"))
@@ -492,6 +503,7 @@ auto RendererInstance::cull_geometry(
       .bind_buffer(0, 5, values.visible_meshlet_instances_indices)
       .bind_buffer(0, 6, values.reordered_indices)
       .bind_buffer(0, 7, context.draw_geometry_cmd_buffer)
+      .bind_buffer(0, 8, values.materials)
       .specialize_constant(0, std::to_underlying(cull_flags))
       .push_constants_from(cull_camera)
       .dispatch_indirect(cull_triangles_cmd_buffer)
@@ -767,7 +779,8 @@ auto RendererInstance::cull_geometry_pointspot(
          {vsm_meshlet_instance_count_buffer, vir::Access::ComputeRead},
          {context.hpb_attachment, vir::Access::ComputeSampled},
          {context.visible_indices_buffer, vir::Access::ComputeWrite},
-         {cull_triangles_cmd_buffer, vir::Access::ComputeRW}}
+         {cull_triangles_cmd_buffer, vir::Access::ComputeRW},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("rmvsm pointspot cull meshlets")
       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_meshlets"));
@@ -781,7 +794,8 @@ auto RendererInstance::cull_geometry_pointspot(
     vsm_meshlet_instance_count_buffer,
     context.hpb_attachment,
     context.visible_indices_buffer,
-    cull_triangles_cmd_buffer
+    cull_triangles_cmd_buffer,
+    values.materials
   ) = std::tuple_cat( //
     bind_vsm_pointspot_spec_constants(cull_pass)
       .bind_buffer(0, 0, values.meshes)
@@ -793,6 +807,7 @@ auto RendererInstance::cull_geometry_pointspot(
       .bind_image(0, 6, context.hpb_attachment)
       .bind_buffer(0, 7, context.visible_indices_buffer)
       .bind_buffer(0, 8, cull_triangles_cmd_buffer)
+      .bind_buffer(0, 9, values.materials)
       .push_constants_from(ps_ctx)
       .dispatch_indirect(cull_meshlets_cmd_buffer)
       .end_compute()
@@ -807,7 +822,8 @@ auto RendererInstance::cull_geometry_pointspot(
     context.vsm_meshlet_instances_buffer,
     context.visible_indices_buffer,
     context.reordered_indices_buffer,
-    context.draw_cmd_buffer
+    context.draw_cmd_buffer,
+    values.materials
   ) = std::tuple_cat( //
     module
       .begin_compute(
@@ -819,7 +835,8 @@ auto RendererInstance::cull_geometry_pointspot(
          {context.vsm_meshlet_instances_buffer, vir::Access::ComputeRead},
          {context.visible_indices_buffer, vir::Access::ComputeRead},
          {context.reordered_indices_buffer, vir::Access::ComputeWrite},
-         {context.draw_cmd_buffer, vir::Access::ComputeRW}}
+         {context.draw_cmd_buffer, vir::Access::ComputeRW},
+         {values.materials, vir::Access::ComputeRead}}
       )
       .with_name("rmvsm pointspot cull triangles")
       .bind_compute_pipeline(render_context.pipeline("rmvsm_pointspot_cull_triangles"))
@@ -831,6 +848,7 @@ auto RendererInstance::cull_geometry_pointspot(
       .bind_buffer(0, 5, context.visible_indices_buffer)
       .bind_buffer(0, 6, context.reordered_indices_buffer)
       .bind_buffer(0, 7, context.draw_cmd_buffer)
+      .bind_buffer(0, 8, values.materials)
       .push_constants_from(ps_ctx)
       .dispatch_indirect(cull_triangles_cmd_buffer)
       .end_compute()

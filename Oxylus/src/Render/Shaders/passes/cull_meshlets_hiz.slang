@@ -15,6 +15,7 @@ import cull;
 [[vk::binding(6)]] RWStructuredBuffer<u32> visible_meshlet_instances_indices;
 [[vk::binding(7)]] RWStructuredBuffer<u32> meshlet_instance_visibility_mask;
 [[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> cull_triangles_cmd;
+[[vk::binding(9)]] StructuredBuffer<Material> materials;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
@@ -65,8 +66,9 @@ func cs_main(
     // bind-pose meshlet bounds are meaningless once the mesh deforms, so a skinned instance
     // skips meshlet-level culling and relies on the per-mesh animated bounds instead
     let skinned = mesh_instance.is_skinned();
+    let is_double_sided = materials[mesh_instance.material_index].is_double_sided();
 
-    visible = visible && (skinned || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
+    visible = visible && (skinned || is_double_sided || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
     visible = visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent));
 
     if ((HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) || is_transparent) && visible && !skinned) {

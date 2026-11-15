@@ -82,9 +82,10 @@ func ts_main(
         // meshlet AABBs and cones describe the bind pose, so on a skinned instance they are simply
         // wrong, and per-mesh culling already used the animated bounds so every meshlet passes here
         let skinned = mesh_instance.is_skinned();
+        let is_double_sided = materials[mesh_instance.material_index].is_double_sided();
 
         var visible = HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) ? true : was_visible;
-        visible = visible && (skinned || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
+        visible = visible && (skinned || is_double_sided || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
         visible = visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent));
 
         if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible && !skinned) {
@@ -113,6 +114,7 @@ func ts_main(
 }
 
 groupshared f32x4 clip_positions_shared[MESHLET_MAX_VERTICES];
+groupshared bool is_double_sided_shared;
 
 [[shader("mesh")]]
 [[outputtopology("triangle")]]
@@ -136,6 +138,10 @@ func ms_main(
     let vertex_count = u32(meshlet.vertex_count);
     let triangle_count = u32(meshlet.triangle_count);
     SetMeshOutputCounts(vertex_count, triangle_count);
+
+    if (local_index == 0) {
+        is_double_sided_shared = materials[mesh_instance.material_index].is_double_sided();
+    }
 
     let mvp = mul(camera.projection_view, transforms[mesh_instance.transform_index].world);
 
@@ -172,7 +178,7 @@ func ms_main(
         PrimitiveOutput output;
         output.triangle_index = local_index;
         let in_front = clip_pos[0].z >= 0.0 && clip_pos[1].z >= 0.0 && clip_pos[2].z >= 0.0;
-        output.culled = !in_front || test_triangle_backface(clip_pos);
+        output.culled = !in_front || (!is_double_sided_shared && test_triangle_backface(clip_pos));
         primitives[local_index] = output;
     }
 }
@@ -180,16 +186,18 @@ func ms_main(
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> u32 {
     let material = materials[NonUniformResourceIndex(input.material_index)];
-    if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
-        UVGradient grad;
-        grad.uv = input.tex_coord;
-        grad.ddx = ddx(input.tex_coord);
-        grad.ddy = ddy(input.tex_coord);
-        grad.apply_mip_bias(camera.texture_mip_bias);
-        let alpha_color = material.sample_albedo_color(grad).a;
+    if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+        var alpha = material.get_albedo_color().a;
+        if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
+            UVGradient grad;
+            grad.uv = input.tex_coord;
+            grad.ddx = ddx(input.tex_coord);
+            grad.ddy = ddy(input.tex_coord);
+            grad.apply_mip_bias(camera.texture_mip_bias);
+            alpha = material.sample_albedo_color(grad).a;
+        }
 
-        // We are doing deferred, blend alpha mode is not supported in this pass.
-        if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
+        if (alpha < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
             discard;
         }
     }
