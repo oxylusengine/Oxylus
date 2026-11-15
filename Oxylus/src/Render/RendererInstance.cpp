@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <ankerl/svector.h>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <ranges>
@@ -1110,6 +1111,11 @@ auto RendererInstance::prepare_frame_params(
   params.shape = shape;
   params.cvar = &cvar;
   params.delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+  // a running scene animates on its gameplay clock so materials pause with it, the editor previews in real time
+  const auto shading_step = self.scene.is_running() ? static_cast<f64>(self.scene.last_step_delta)
+                                                    : static_cast<f64>(params.delta_time);
+  self.shading_time = std::fmod(self.shading_time + shading_step, 3600.0);
+  params.time = static_cast<f32>(self.shading_time);
   params.frame_index = static_cast<u32>(self.renderer.render_context->num_frames);
   params.is_upscaling = shape.upscaler != UpscalerBackend::None;
   params.render_size = shape.render_size;

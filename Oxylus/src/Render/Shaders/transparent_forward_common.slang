@@ -63,6 +63,11 @@ struct SurfaceLight {
     f32x3 diffuse;
     f32x3 specular;
     f32x3 aerial_perspective;
+    // the share of `specular` that came from the environment, and its weight, so a traced reflection can replace it
+    f32x3 environment_specular;
+    f32x3 environment_weight;
+    // what a white lambertian surface would reflect, lights a participating medium
+    f32x3 scatter_radiance;
 };
 
 func light_surface(
@@ -194,6 +199,9 @@ func light_surface(
     light.diffuse = indirect_diffuse;
     light.specular = indirect_specular;
     light.aerial_perspective = aerial_perspective_contribution;
+    light.environment_specular = specular_environment;
+    light.environment_weight = kS * spec_occlusion;
+    light.scatter_radiance = diffuse_environment + direct_illuminance * visibility / PI;
     if (NoL > 0.0) {
         let result = brdf_evaluate(brdf_params, V, N, L, albedo_color, metallic, dielectric_f0_scalar);
         let direct_scale = direct_illuminance * NoL * visibility;

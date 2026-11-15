@@ -447,6 +447,8 @@ auto RendererInstance::bind_pbr_variables(
     .contact_shadow_thickness = cvar.cvar_contact_shadows_thickness.get(),
     .contact_shadow_length = cvar.cvar_contact_shadows_length.get(),
     .frame_index = self.frame_params.frame_index,
+    .time = self.frame_params.time,
+    .refractor_reflection_steps = static_cast<u32>(std::max(cvar.cvar_refractor_reflection_steps.get(), 0)),
   };
   lighting.vsm.depth_extent = {};
   lighting.vsm.curr_clipmap_index = 0;

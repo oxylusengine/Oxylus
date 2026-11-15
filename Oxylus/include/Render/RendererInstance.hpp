@@ -1069,6 +1069,7 @@ struct FrameParams {
   FrameShape shape = {};
   const RendererCVar* cvar = nullptr;
   f32 delta_time = 0.0f;
+  f32 time = 0.0f;
   u32 frame_index = 0;
   bool is_upscaling = false;
   glm::uvec2 render_size = {};
@@ -1447,6 +1448,7 @@ private:
   glm::vec2 current_jitter = {};
   glm::vec2 previous_jitter = {};
   u32 jitter_frame_index = 0;
+  f64 shading_time = 0.0;
 
   vir::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vir::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};

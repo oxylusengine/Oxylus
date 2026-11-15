@@ -653,6 +653,9 @@ struct PBRLighting {
   f32 contact_shadow_thickness = 0.0f;
   f32 contact_shadow_length = 0.0f;
   u32 frame_index = 0;
+  // seconds, wrapped hourly so f32 keeps sub-millisecond precision
+  f32 time = 0.0f;
+  u32 refractor_reflection_steps = 0;
 };
 
 struct VirtualClipmap {

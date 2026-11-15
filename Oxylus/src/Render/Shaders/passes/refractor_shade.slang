@@ -3,6 +3,8 @@ import gpu;
 import scene;
 import visbuffer;
 import hit;
+import pbr;
+import raymarch;
 
 #include <fullscreen.slang>
 #include <transparent_forward_common.slang>
@@ -19,6 +21,7 @@ import hit;
 
 // stands in for the distance to a background that is only sky
 static const f32 SKY_DISTANCE = 100.0;
+static const f32 WATER_MAX_REFRACTION = 2.0;
 // 64 pixel texels, coarser levels average so much of the screen that turning the camera changes them
 static const f32 MAX_TRANSMISSION_MIP = 6.0;
 
@@ -152,6 +155,96 @@ func glass_absorption(in RefractorSurface s) -> f32x3 {
     return exp(-absorption_coefficient(s) * s.thickness * s.object_scale);
 }
 
+func water_tangent_normal(in Material material, in UVGradient uv_grad, f32 time) -> f32x3 {
+    let flow = material.get_water_flow();
+    var base_layer = uv_grad;
+    base_layer.uv += flow * time;
+    // a second layer at another scale drifting across the first, so the pattern never visibly repeats
+    var detail_layer = uv_grad;
+    detail_layer.scale_offset(f32x2(max(material.get_water_detail_scale(), 1e-3)), f32x2(-flow.y, flow.x) * 0.7 * time);
+
+    let base_normal = material.sample_tangent_normal(base_layer);
+    let detail_normal = material.sample_tangent_normal(detail_layer);
+    // whiteout blend keeps the slopes of both layers
+    return normalize(f32x3(base_normal.xy + detail_normal.xy, base_normal.z * detail_normal.z));
+}
+
+func water_world_normal(in Material material, in TangentFrame frame, in UVGradient uv_grad, f32 time, f32 shore) -> f32x3 {
+    let tangent_normal = water_tangent_normal(material, uv_grad, time);
+    return frame.to_world(lerp(f32x3(0.0, 0.0, 1.0), tangent_normal, shore));
+}
+
+func shade_water_surface(in Material material, in DecodedSurface decoded, f32 shore) -> SurfaceMaterial {
+    let time = push.lighting.time;
+    var surface = decoded.surface;
+    surface.metallic = 0.0;
+    surface.normal = water_world_normal(material, decoded.frame, decoded.uv_grad, time, shore);
+
+    // the moving normal needs its own footprint, measured explicitly as the visbuffer decode does
+    let unbiased_scale = exp2(-camera.texture_mip_bias);
+    var sample_dx = decoded.uv_grad;
+    sample_dx.uv += decoded.uv_grad.ddx * unbiased_scale;
+    var sample_dy = decoded.uv_grad;
+    sample_dy.uv += decoded.uv_grad.ddy * unbiased_scale;
+    let normal_dx = water_world_normal(material, decoded.frame, sample_dx, time, shore) - surface.normal;
+    let normal_dy = water_world_normal(material, decoded.frame, sample_dy, time, shore) - surface.normal;
+    let roughness = material.sample_metallic_roughness(decoded.uv_grad).y;
+    surface.roughness = filter_specular_roughness(roughness, normal_dx, normal_dy);
+
+    return surface;
+}
+
+func water_refracted_uv(in RefractorSurface s, f32x3 geometric_normal, f32 column, f32 shore) -> f32x2 {
+    let eta = 1.0 / s.ior;
+    let segment_length = min(column, WATER_MAX_REFRACTION) * shore;
+    // only the ripples bend the view, flat water keeps the floor where the raster put it
+    let rippled_direction = refract(-s.view_direction, s.surface.normal, eta);
+    let flat_direction = refract(-s.view_direction, geometric_normal, eta);
+    let rippled_clip = mul(camera.projection_view, f32x4(s.world_position + rippled_direction * segment_length, 1.0));
+    let flat_clip = mul(camera.projection_view, f32x4(s.world_position + flat_direction * segment_length, 1.0));
+    let is_projectable = rippled_clip.w > 0.0 && flat_clip.w > 0.0;
+    let offset = (rippled_clip.xy / max(rippled_clip.w, 1e-6) - flat_clip.xy / max(flat_clip.w, 1e-6)) * 0.5;
+
+    return accept_refracted_uv(s, s.pixel_uv + select(is_projectable, offset, f32x2(0.0)));
+}
+
+// screen space reflection over the opaque depth, the weight is zero where it found nothing to replace the environment
+func trace_reflection(in RefractorSurface s, f32 roughness, out f32x3 color) -> f32 {
+    color = f32x3(0.0);
+    let steps = push.lighting.refractor_reflection_steps;
+    let R = reflect(-s.view_direction, s.surface.normal);
+    let facing_fade = smoothstep(0.6, 0.2, dot(R, s.view_direction));
+    let roughness_fade = smoothstep(0.5, 0.3, roughness);
+    if (steps == 0 || facing_fade * roughness_fade <= 0.0) {
+        return 0.0;
+    }
+
+    // march in the jittered grid the depth was rasterized into
+    var jittered_projection = camera.projection;
+    jittered_projection[0] += (2.0 * camera.temporalaa_jitter.x / camera.resolution.x) * camera.projection[3];
+    jittered_projection[1] += (2.0 * camera.temporalaa_jitter.y / camera.resolution.y) * camera.projection[3];
+
+    let result = DepthRayMarch::new_from_depth(camera.resolution)
+        .from_cs(f32x3(s.pixel_uv * 2.0 - 1.0, s.depth))
+        .to_ws_dir(R, camera.view, jittered_projection)
+        .with_linear_steps(steps)
+        .with_bisection_steps(4)
+        .with_use_secant(true)
+        .with_depth_thickness(1.0)
+        .with_march_behind_surfaces(false)
+        .march(opaque_depth, linear_clamp_sampler, nearest_clamp_sampler, 1.0 / camera.near_clip);
+    if (!result.hit) {
+        return 0.0;
+    }
+
+    let border = min(result.hit_uv, 1.0 - result.hit_uv);
+    let edge_fade = saturate(min(border.x, border.y) * 10.0);
+    let spread = roughness * roughness;
+    color = sample_transmission_rough(result.hit_uv, lobe_mip(s, spread, background_distance(s, result.hit_uv))).rgb;
+
+    return facing_fade * roughness_fade * edge_fade;
+}
+
 func shade_glass(in RefractorSurface s) -> RefractorResult {
     let N = s.surface.normal;
     let albedo = s.surface.albedo.rgb;
@@ -178,6 +271,28 @@ func shade_glass(in RefractorSurface s) -> RefractorResult {
     return result;
 }
 
+func shade_water(in RefractorSurface s, in Material material, f32x3 geometric_normal, f32 column, f32 shore) -> RefractorResult {
+    let N = s.surface.normal;
+    let F = F_Schlick(saturate(dot(N, s.view_direction)), f32x3(dielectric_f0(s.ior)));
+
+    let uv = water_refracted_uv(s, geometric_normal, column, shore);
+    let transmitted_sample = sample_transmitted(s, uv);
+    let transmittance = exp(-absorption_coefficient(s) * background_distance(s, uv));
+    // single scattering toward the eye, lit by whatever sun and sky reach the surface
+    let inscatter = material.get_water_scatter_color() * (1.0 - transmittance) * s.light.scatter_radiance;
+    let transmitted = (transmitted_sample.rgb * transmittance + inscatter) * (1.0 - F);
+
+    RefractorResult result;
+    let color = s.light.specular + transmitted + s.surface.emissive + s.light.aerial_perspective;
+    result.color = clamp(com::sanitize(color), f32x3(0.0), f32x3(8000.0));
+    let mean_fresnel = dot(F, f32x3(1.0 / 3.0));
+    result.alpha = saturate(1.0 - (1.0 - mean_fresnel) * (1.0 - transmitted_sample.a));
+    // moving ripples would ghost under the upscaler's history
+    result.reactive = 0.3;
+
+    return result;
+}
+
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> RefractorOutput {
     let pixel = i32x2(input.position.xy);
@@ -200,12 +315,23 @@ func fs_main(VertexOutput input) -> RefractorOutput {
     let world_position = tri.interpolate_position(decoded.triangle.deriv.lambda);
     let depth = refractor_depth.Load(i32x3(pixel, 0));
     let transform = transforms[tri.transform_index];
-    let surface = decoded.surface;
+    let is_water = HAS_FLAG(material.flags, MaterialFlag::Water);
 
     RefractorSurface s = {};
     s.world_position = world_position;
     s.pixel_uv = input.position.xy / camera.resolution;
     s.depth = depth;
+
+    var surface = decoded.surface;
+    var column = 0.0;
+    var shore = 1.0;
+    if (is_water) {
+        column = background_distance(s, s.pixel_uv);
+        // ripples and refraction calm down where the water gets shallow
+        shore = saturate(column / max(material.get_water_shore_fade(), 1e-3));
+        surface = shade_water_surface(material, decoded, shore);
+    }
+
     s.surface = surface;
     s.light = light_surface(surface, ior, decoded.triangle.world_normal, world_position, input.position.xy, depth, push);
     s.view_direction = normalize(camera.position.xyz - world_position);
@@ -213,12 +339,22 @@ func fs_main(VertexOutput input) -> RefractorOutput {
     s.ior = ior;
     s.thickness = material.sample_thickness(decoded.uv_grad);
     s.object_scale = (length(transform.world[0].xyz) + length(transform.world[1].xyz) + length(transform.world[2].xyz)) / 3.0;
-    s.transmission = material.sample_transmission(decoded.uv_grad) * (1.0 - clamp(surface.metallic, 0.0, 1.0));
+    // water is a medium all the way through, so its transmission factor doesn't apply
+    let transmission = material.sample_transmission(decoded.uv_grad) * (1.0 - clamp(surface.metallic, 0.0, 1.0));
+    s.transmission = select(is_water, 1.0, transmission);
     s.attenuation_color = material.get_attenuation_color();
     s.attenuation_distance = material.get_attenuation_distance();
 
-    // water shades as glass until it gets its own model
-    let shaded = shade_glass(s);
+    var reflection = f32x3(0.0);
+    let reflection_weight = trace_reflection(s, clamp(surface.roughness, 0.045, 1.0), reflection);
+    s.light.specular += s.light.environment_weight * (reflection - s.light.environment_specular) * reflection_weight;
+
+    RefractorResult shaded;
+    if (is_water) {
+        shaded = shade_water(s, material, decoded.triangle.world_normal, column, shore);
+    } else {
+        shaded = shade_glass(s);
+    }
 
     let background = transmission_source.Load(i32x3(pixel, 0));
     let is_blended = HAS_FLAG(material.flags, MaterialFlag::AlphaBlend);

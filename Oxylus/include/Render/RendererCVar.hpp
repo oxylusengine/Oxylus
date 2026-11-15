@@ -33,6 +33,8 @@ struct RendererCVar {
   AutoCVar_Float cvar_contact_shadows_thickness;
   AutoCVar_Float cvar_contact_shadows_length;
 
+  AutoCVar_Int cvar_refractor_reflection_steps;
+
   AutoCVar_Int cvar_vbgtao_enable;
   AutoCVar_Int cvar_vbgtao_quality_level;
   AutoCVar_Float cvar_vbgtao_thickness;
