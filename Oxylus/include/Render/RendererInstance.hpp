@@ -592,6 +592,47 @@ struct PBRContext {
   vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
   vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
   vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+};
+
+struct TransparencyContext {
+  vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID visibility_buffer = vir::ValueID::Invalid;
+  vir::ValueID hiz_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID final_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_aerial_perspective_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID accumulation_attachment = vir::ValueID::Invalid;
+  vir::ValueID revealage_attachment = vir::ValueID::Invalid;
+  vir::ValueID accumulation_front_attachment = vir::ValueID::Invalid;
+  vir::ValueID revealage_front_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID transmission_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID sky_buffer = vir::ValueID::Invalid;
+  vir::ValueID atmosphere_buffer = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -1291,6 +1332,14 @@ public:
   static auto record_sssr(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, SSSRContext& context
   ) -> void;
+  auto prepare_transparency(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+  ) -> void;
+  auto draw_transparency(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+  ) -> void;
+  static auto resolve_transparency(vir::Module& module, RenderContext& render_context, TransparencyContext& context)
+    -> void;
   static auto generate_sssr_depth_hierarchy(
     vir::Module& module,
     RenderContext& render_context,

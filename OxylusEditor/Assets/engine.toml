@@ -99,6 +99,24 @@ entry_points = ["ts_main", "ms_main", "fs_main"]
 requires = ["bindless", "mesh_shaders"]
 
 [[shader_sessions.programs]]
+name = "transparent_forward"
+path = "passes/transparent_forward.slang"
+entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "transparent_forward_ms"
+path = "passes/transparent_forward_ms.slang"
+entry_points = ["ts_main", "ms_main", "fs_main"]
+requires = ["bindless", "mesh_shaders"]
+
+[[shader_sessions.programs]]
+name = "wboit_resolve"
+path = "passes/wboit_resolve.slang"
+entry_points = ["vs_main", "fs_main"]
+
+
+[[shader_sessions.programs]]
 name = "tlas_write_instances"
 path = "passes/tlas_write_instances.slang"
 entry_points = ["cs_main"]

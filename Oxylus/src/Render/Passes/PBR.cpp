@@ -643,6 +643,8 @@ auto RendererInstance::apply_pbr(
     );
   }
 
+  context.lighting_buffer = lighting;
+
   return dst;
 }
 } // namespace ox

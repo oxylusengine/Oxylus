@@ -40,9 +40,13 @@ groupshared MeshletTaskPayload payload;
 [[shader("task")]]
 [[numthreads(CULLING_MESHLET_COUNT, 1, 1)]]
 func ts_main(
-    u32 meshlet_instance_index : SV_DispatchThreadID,
+    u32 dispatch_thread_id : SV_DispatchThreadID,
     u32 local_index : SV_GroupIndex
 ) -> void {
+    let is_transparent = HAS_FLAG(CULL_FLAGS, CullFlag.Transparent);
+    let list = meshlet_task_list(CULL_FLAGS, camera.meshlet_instance_capacity, visibility);
+    let meshlet_instance_index = list.offset + dispatch_thread_id;
+
     if (local_index == 0) {
         visible_meshlet_count = 0;
         payload.base_meshlet_instance_index = meshlet_instance_index;
@@ -50,24 +54,13 @@ func ts_main(
 
     GroupMemoryBarrierWithGroupSync();
 
-    if (meshlet_instance_index < visibility[0].total_visible_meshlet_instances) {
-        let meshlet_instance = meshlet_instances[meshlet_instance_index];
-        let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
-        let transform = transforms[mesh_instance.transform_index];
-        let mvp = mul(camera.projection_view, transform.world);
-
-        var mesh = meshes[mesh_instance.mesh_index];
-        mesh.apply_skin(mesh_instance);
-        let mesh_lod = mesh.lods[mesh_instance.lod_index];
-        let meshlet_bounds = mesh_lod.meshlet_bounds[meshlet_instance.meshlet_index];
-        let aabb_center = meshlet_bounds.get_aabb_center();
-        let aabb_extent = meshlet_bounds.get_aabb_extent();
-        let cone_cutoff = meshlet_bounds.get_cone_cutoff();
-
+    if (dispatch_thread_id < list.count) {
         var visibility_mask_index = 0u;
         var visibility_bit = 0u;
         var was_visible = true;
-        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion)) {
+        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion) && !is_transparent) {
+            let meshlet_instance = meshlet_instances[meshlet_instance_index];
+            let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
             let meshlet_instance_visibility_index = mesh_instance.meshlet_instance_visibility_offset + meshlet_instance.meshlet_index;
             visibility_mask_index = meshlet_instance_visibility_index / 32;
             let bit_index = meshlet_instance_visibility_index - visibility_mask_index * 32;
@@ -75,31 +68,22 @@ func ts_main(
             was_visible = (meshlet_instance_visibility_mask[visibility_mask_index] & visibility_bit) != 0;
         }
 
-        let cone_axis = normalize(transform.to_world_normal(meshlet_bounds.get_cone_axis()));
-        let world_center = transform.to_world_position(aabb_center).xyz;
-        let world_radius = transform.to_world_radius(length(aabb_extent * 0.5));
-
-        // meshlet AABBs and cones describe the bind pose, so on a skinned instance they are simply
-        // wrong, and per-mesh culling already used the animated bounds so every meshlet passes here
-        let skinned = mesh_instance.is_skinned();
-        let is_double_sided = materials[mesh_instance.material_index].is_double_sided();
-
-        var visible = HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) ? true : was_visible;
-        visible = visible && (skinned || is_double_sided || cone_cutoff >= 1.0 || !test_cone(world_center, world_radius, cone_axis, cone_cutoff, camera.position));
-        visible = visible && (skinned || test_frustum(mvp, aabb_center, aabb_extent));
-
-        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && visible && !skinned) {
-            if (let screen_aabb = project_aabb(mvp, camera.near_clip, aabb_center, aabb_extent)) {
-                visible = !test_occlusion(screen_aabb, hiz_image);
-            }
-        }
+        MeshletCullResources cull_resources;
+        cull_resources.hiz_image = hiz_image;
+        cull_resources.meshes = meshes;
+        cull_resources.mesh_instances = mesh_instances;
+        cull_resources.meshlet_instances = meshlet_instances;
+        cull_resources.transforms = transforms;
+        cull_resources.materials = materials;
+        cull_resources.camera = camera;
+        let visible = is_task_meshlet_visible(cull_resources, CULL_FLAGS, meshlet_instance_index, was_visible);
 
         if (visible && (!HAS_FLAG(CULL_FLAGS, CullFlag.LatePass) || !was_visible)) {
             let slot = __atomic_add(visible_meshlet_count, 1, MemoryOrder::Relaxed);
             payload.visible_indices[slot] = u8(local_index);
         }
 
-        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass)) {
+        if (HAS_FLAG(CULL_FLAGS, CullFlag.TestOcclusion | CullFlag.LatePass) && !is_transparent) {
             if (visible) {
                 __atomic_or(meshlet_instance_visibility_mask[visibility_mask_index], visibility_bit, MemoryOrder::Relaxed);
             } else {
@@ -129,44 +113,34 @@ func ms_main(
 ) -> void {
     let slot = group_id.x;
     let meshlet_instance_index = payload.base_meshlet_instance_index + u32(payload.visible_indices[slot]);
-    let meshlet_instance = meshlet_instances[meshlet_instance_index];
-    let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
-    var mesh = meshes[mesh_instance.mesh_index];
-    mesh.apply_skin(mesh_instance);
-    let mesh_lod = mesh.lods[mesh_instance.lod_index];
-    let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
-    let vertex_count = u32(meshlet.vertex_count);
-    let triangle_count = u32(meshlet.triangle_count);
+    let source = resolve_meshlet_source(meshes, mesh_instances, transforms, meshlet_instances[meshlet_instance_index]);
+    let vertex_count = u32(source.meshlet.vertex_count);
+    let triangle_count = u32(source.meshlet.triangle_count);
     SetMeshOutputCounts(vertex_count, triangle_count);
 
     if (local_index == 0) {
-        is_double_sided_shared = materials[mesh_instance.material_index].is_double_sided();
+        is_double_sided_shared = materials[source.mesh_instance.material_index].is_double_sided();
     }
 
-    let mvp = mul(camera.projection_view, transforms[mesh_instance.transform_index].world);
+    let mvp = mul(camera.projection_view, source.transform.world);
 
     if (local_index < vertex_count) {
-        let vertex_index = mesh_lod.indirect_vertex_indices[meshlet.indirect_vertex_index_offset + local_index];
-        let clip_pos = camera.jitter_clip(mul(mvp, f32x4(meshlet.position(mesh, vertex_index), 1.0)));
+        let vertex_index = source.mesh_lod.indirect_vertex_indices[source.meshlet.indirect_vertex_index_offset + local_index];
+        let clip_pos = camera.jitter_clip(mul(mvp, f32x4(source.meshlet.position(source.mesh, vertex_index), 1.0)));
         clip_positions_shared[local_index] = clip_pos;
 
         VertexOutput output;
         output.position = clip_pos;
-        output.tex_coord = meshlet.tex_coord(mesh, vertex_index);
+        output.tex_coord = source.meshlet.tex_coord(source.mesh, vertex_index);
         output.meshlet_instance_index = meshlet_instance_index;
-        output.material_index = mesh_instance.material_index;
+        output.material_index = source.mesh_instance.material_index;
         vertices[local_index] = output;
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     if (local_index < triangle_count) {
-        let base_triangle_index = meshlet.local_triangle_index_offset + local_index * 3;
-        let corners = u32x3(
-            Meshlet.get_micro_index(mesh_lod.local_triangle_indices, base_triangle_index + 0),
-            Meshlet.get_micro_index(mesh_lod.local_triangle_indices, base_triangle_index + 1),
-            Meshlet.get_micro_index(mesh_lod.local_triangle_indices, base_triangle_index + 2)
-        );
+        let corners = meshlet_triangle_corners(source, local_index);
         triangles[local_index] = corners;
 
         let clip_pos = f32x4x3(
@@ -177,8 +151,7 @@ func ms_main(
 
         PrimitiveOutput output;
         output.triangle_index = local_index;
-        let in_front = clip_pos[0].z >= 0.0 && clip_pos[1].z >= 0.0 && clip_pos[2].z >= 0.0;
-        output.culled = !in_front || (!is_double_sided_shared && test_triangle_backface(clip_pos));
+        output.culled = is_meshlet_triangle_culled(clip_pos, is_double_sided_shared);
         primitives[local_index] = output;
     }
 }

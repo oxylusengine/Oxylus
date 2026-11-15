@@ -97,6 +97,50 @@ struct TransparencyTestDirectory {
   }
 };
 
+struct WboitLayer {
+  glm::vec3 color = {};
+  f32 alpha = 0.0f;
+  f32 distance = 0.0f;
+};
+
+struct WboitPixel {
+  glm::vec4 accumulation = glm::vec4(0.0f);
+  f32 revealage = 1.0f;
+};
+
+static auto wboit_weight(f32 distance) -> f32 {
+  return std::clamp(10.0f / (1e-5f + std::pow(distance / 5.0f, 2.0f) + std::pow(distance / 200.0f, 6.0f)), 1e-2f, 3e3f);
+}
+
+static auto to_half(f32 value) -> f32 { return glm::unpackHalf1x16(glm::packHalf1x16(value)); }
+
+static auto to_unorm8(f32 value) -> f32 { return std::round(std::clamp(value, 0.0f, 1.0f) * 255.0f) / 255.0f; }
+
+// blending adds into fp16 and multiplies into r8 one layer at a time, so the reference rounds the same way
+static auto wboit_accumulate(std::span<const WboitLayer> layers) -> WboitPixel {
+  auto pixel = WboitPixel{};
+  for (const auto& layer : layers) {
+    const auto term = glm::vec4(layer.color * layer.alpha, layer.alpha) * wboit_weight(layer.distance);
+    for (auto channel = 0; channel < 4; channel++) {
+      pixel.accumulation[channel] = to_half(pixel.accumulation[channel] + to_half(term[channel]));
+    }
+
+    pixel.revealage = to_unorm8(pixel.revealage * (1.0f - layer.alpha));
+  }
+
+  return pixel;
+}
+
+static auto wboit_composite(const WboitPixel& pixel, const glm::vec4& background) -> glm::vec4 {
+  if (pixel.revealage >= 1.0f) {
+    return background;
+  }
+
+  const auto coverage = 1.0f - pixel.revealage;
+  const auto average = glm::vec3(pixel.accumulation) / std::max(pixel.accumulation.a, 1e-5f);
+  return glm::vec4(average * coverage, coverage) + background * (1.0f - coverage);
+}
+
 constexpr static auto TEST_MESHLET_COUNTS = std::array{3_u32, 5_u32};
 constexpr static auto TEST_INSTANCE_COUNT = 200_u32;
 constexpr static auto TEST_MESHLETS_PER_GROUP = 64_u32;
@@ -207,7 +251,7 @@ protected:
       const auto* shader = std::get_if<ShaderPipelineData>(&entry.data);
       if (
         shader && (shader->module_name == "cull_meshes" || shader->module_name == "cull_meshlets_hiz" ||
-                   shader->module_name == "cull_triangles")
+                   shader->module_name == "cull_triangles" || shader->module_name == "wboit_resolve")
       ) {
         ASSERT_TRUE(render->create_pipeline(*shader));
       }
@@ -215,6 +259,7 @@ protected:
     ASSERT_NE(render->pipeline("cull_meshes"), vir::PipelineID::Invalid);
     ASSERT_NE(render->pipeline("cull_meshlets_hiz"), vir::PipelineID::Invalid);
     ASSERT_NE(render->pipeline("cull_triangles"), vir::PipelineID::Invalid);
+    ASSERT_NE(render->pipeline("wboit_resolve"), vir::PipelineID::Invalid);
 
     build_scene();
   }
@@ -739,6 +784,34 @@ protected:
     return read<VkDispatchIndirectCommand>(command_buffer, 1)[0].x;
   }
 
+  auto upload_bytes(const void* data, u64 size) -> vir::Buffer {
+    const auto buffer = render->persistent->allocate_buffer(
+      {.size = size, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .location = vir::MemoryLocation::CpuToGpu}
+    );
+    EXPECT_TRUE(buffer);
+    if (!buffer) {
+      return {};
+    }
+
+    buffers.push_back(*buffer);
+    EXPECT_TRUE(buffer->write<u8>(0, std::span(static_cast<const u8*>(data), size)));
+    EXPECT_TRUE(render->persistent->flush_buffer(*buffer));
+    return *buffer;
+  }
+
+  auto readback_buffer(u64 size) -> vir::Buffer {
+    const auto buffer = render->persistent->allocate_buffer(
+      {.size = size, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .location = vir::MemoryLocation::GpuToCpu}
+    );
+    EXPECT_TRUE(buffer);
+    if (!buffer) {
+      return {};
+    }
+
+    buffers.push_back(*buffer);
+    return *buffer;
+  }
+
   auto class_of(u32 instance_index) const -> GPU::MaterialClass {
     switch (mesh_instances[instance_index].material_index) {
       case 1 : return GPU::MaterialClass::Blend;
@@ -908,6 +981,125 @@ TEST_F(TransparencyGPUTest, MeshletCullRejectsBackFacingConeOfSingleSidedMateria
 TEST_F(TransparencyGPUTest, MeshletCullKeepsBackFacingConeOfDoubleSidedMaterials) {
   EXPECT_EQ(run_cull_meshlets_hiz(127, 1), 1u);
   EXPECT_EQ(run_cull_meshlets_hiz(-127, 1), 1u);
+}
+
+TEST_F(TransparencyGPUTest, ResolveCompositesLayersIndependentOfOrder) {
+  const auto layer_a = WboitLayer{.color = glm::vec3(0.8f, 0.2f, 0.1f), .alpha = 0.3f, .distance = 3.0f};
+  const auto layer_b = WboitLayer{.color = glm::vec3(0.1f, 0.4f, 0.9f), .alpha = 0.6f, .distance = 10.0f};
+  const auto layer_half = WboitLayer{.color = glm::vec3(0.9f, 0.5f, 0.1f), .alpha = 0.5f, .distance = 4.0f};
+  const auto layer_opaque = WboitLayer{.color = glm::vec3(0.2f, 0.7f, 0.3f), .alpha = 1.0f, .distance = 4.0f};
+  const auto layer_bright = WboitLayer{.color = glm::vec3(12.0f, 6.0f, 3.0f), .alpha = 0.25f, .distance = 20.0f};
+  const auto layers = std::array<std::vector<WboitLayer>, 6>{
+    std::vector<WboitLayer>{},
+    std::vector<WboitLayer>{layer_half},
+    std::vector<WboitLayer>{layer_opaque},
+    std::vector<WboitLayer>{layer_a, layer_b},
+    std::vector<WboitLayer>{layer_b, layer_a},
+    std::vector<WboitLayer>{layer_bright},
+  };
+  constexpr auto pixel_count = layers.size();
+  const auto background = glm::vec4(0.25f, 0.5f, 0.75f, 1.0f);
+
+  auto accumulation_data = std::array<u16, pixel_count * 4>{};
+  auto revealage_data = std::array<u8, pixel_count>{};
+  auto background_data = std::array<u16, pixel_count * 4>{};
+  auto pixels = std::array<WboitPixel, pixel_count>{};
+  for (auto index = 0_sz; index < pixel_count; index++) {
+    pixels[index] = wboit_accumulate(layers[index]);
+    for (auto channel = 0; channel < 4; channel++) {
+      accumulation_data[index * 4 + channel] = glm::packHalf1x16(pixels[index].accumulation[channel]);
+      background_data[index * 4 + channel] = glm::packHalf1x16(background[channel]);
+    }
+
+    revealage_data[index] = static_cast<u8>(std::lround(pixels[index].revealage * 255.0f));
+  }
+
+  const auto accumulation_upload = upload_bytes(accumulation_data.data(), sizeof(accumulation_data));
+  const auto revealage_upload = upload_bytes(revealage_data.data(), sizeof(revealage_data));
+  const auto background_upload = upload_bytes(background_data.data(), sizeof(background_data));
+  const auto final_readback = readback_buffer(sizeof(background_data));
+  const auto reactive_readback = readback_buffer(pixel_count);
+
+  const auto extent = vir::Extent3D{static_cast<u32>(pixel_count), 1, 1};
+  auto module = vir::Module{};
+  auto context = TransparencyContext{
+    .final_attachment = module.transient_image(
+      {.extent = extent, .format = vir::Format::RGBA16Sfloat, .name = "final"}
+    ),
+    .reactive_mask_attachment = module.transient_image(
+      {.extent = extent, .format = vir::Format::R8Unorm, .name = "reactive mask"}
+    ),
+    .accumulation_attachment = module.transient_image(
+      {.extent = extent, .format = vir::Format::RGBA16Sfloat, .name = "wboit accumulation"}
+    ),
+    .revealage_attachment = module.transient_image(
+      {.extent = extent, .format = vir::Format::R8Unorm, .name = "wboit revealage"}
+    ),
+  };
+  context.final_attachment = module.copy_buffer_to_image(
+    module.import_buffer(background_upload, vir::Access::HostWrite),
+    context.final_attachment
+  );
+  context.reactive_mask_attachment = module.clear(
+    context.reactive_mask_attachment,
+    vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f)
+  );
+  context.accumulation_attachment = module.copy_buffer_to_image(
+    module.import_buffer(accumulation_upload, vir::Access::HostWrite),
+    context.accumulation_attachment
+  );
+  context.revealage_attachment = module.copy_buffer_to_image(
+    module.import_buffer(revealage_upload, vir::Access::HostWrite),
+    context.revealage_attachment
+  );
+
+  RendererInstance::resolve_transparency(module, *render, context);
+
+  const auto final_downloaded = module.copy_image_to_buffer(
+    context.final_attachment,
+    module.import_buffer(final_readback, vir::Access::None)
+  );
+  const auto reactive_downloaded = module.copy_image_to_buffer(
+    context.reactive_mask_attachment,
+    module.import_buffer(reactive_readback, vir::Access::None)
+  );
+  module.export_to(final_downloaded, vir::Access::HostRead);
+  module.export_to(reactive_downloaded, vir::Access::HostRead);
+
+  const auto program = render->compile(std::move(module));
+  ASSERT_TRUE(program);
+  ASSERT_TRUE(render->execute_blocking(*program));
+
+  const auto final_pixels = read<u16>(final_readback, pixel_count * 4);
+  const auto reactive_pixels = read<u8>(reactive_readback, pixel_count);
+  auto resolved = std::array<glm::vec4, pixel_count>{};
+  for (auto index = 0_sz; index < pixel_count; index++) {
+    SCOPED_TRACE(index);
+    const auto expected = wboit_composite(pixels[index], background);
+    for (auto channel = 0; channel < 4; channel++) {
+      SCOPED_TRACE(channel);
+      resolved[index][channel] = glm::unpackHalf1x16(final_pixels[index * 4 + channel]);
+      EXPECT_NEAR(resolved[index][channel], expected[channel], 1e-3f + 2e-3f * std::abs(expected[channel]));
+    }
+
+    const auto expected_reactive = std::min(1.0f - pixels[index].revealage, 0.9f);
+    EXPECT_NEAR(static_cast<f32>(reactive_pixels[index]), expected_reactive * 255.0f, 1.0f);
+  }
+
+  for (auto channel = 0; channel < 4; channel++) {
+    EXPECT_EQ(final_pixels[channel], background_data[channel]);
+  }
+
+  EXPECT_EQ(reactive_pixels[0], 0);
+
+  for (auto channel = 0; channel < 4; channel++) {
+    // each order rounds revealage to an 8 bit step at a different point, so only a step's worth of drift is allowed
+    EXPECT_NEAR(resolved[3][channel], resolved[4][channel], 4e-3f + 4e-3f * std::abs(resolved[3][channel]));
+  }
+
+  EXPECT_NEAR(resolved[2].r, layer_opaque.color.r, 2e-3f);
+  EXPECT_NEAR(resolved[2].g, layer_opaque.color.g, 2e-3f);
+  EXPECT_NEAR(resolved[2].b, layer_opaque.color.b, 2e-3f);
 }
 
 TEST_F(TransparencyGPUTest, RefractorsRouteWithoutBlend) {

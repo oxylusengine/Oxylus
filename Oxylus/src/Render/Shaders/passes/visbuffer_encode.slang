@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import visbuffer;
+import meshlet;
 
 #include <defines.slang>
 
@@ -24,18 +25,12 @@ struct VertexOutput {
 [[shader("vertex")]]
 func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     let vis = VisBufferData(vertex_index);
-    let meshlet_instance = meshlet_instances[vis.meshlet_instance_index];
-    let mesh_instance = mesh_instances[meshlet_instance.mesh_instance_index];
-    var mesh = meshes[mesh_instance.mesh_index];
-    mesh.apply_skin(mesh_instance);
-    let mesh_lod = mesh.lods[mesh_instance.lod_index];
-    let transform = transforms[mesh_instance.transform_index];
-    let meshlet = mesh_lod.meshlets[meshlet_instance.meshlet_index];
+    let source = resolve_meshlet_source(meshes, mesh_instances, transforms, meshlet_instances[vis.meshlet_instance_index]);
 
-    let index = meshlet.index(mesh_lod, vis.triangle_index);
-    let vertex_pos = meshlet.position(mesh, index);
-    let tex_coord = meshlet.tex_coord(mesh, index);
-    let world_pos = transform.to_world_position(vertex_pos);
+    let index = source.meshlet.index(source.mesh_lod, vis.triangle_index);
+    let vertex_pos = source.meshlet.position(source.mesh, index);
+    let tex_coord = source.meshlet.tex_coord(source.mesh, index);
+    let world_pos = source.transform.to_world_position(vertex_pos);
     let clip_pos = camera.jitter_clip(mul(camera.projection_view, f32x4(world_pos.xyz, 1.0)));
 
     let encoded_vis = VisBufferData(vis.meshlet_instance_index, vis.triangle_index / 3);
@@ -44,7 +39,7 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
     output.position = clip_pos;
     output.tex_coord = tex_coord;
     output.vis_data = encoded_vis.encode();
-    output.material_index = mesh_instance.material_index;
+    output.material_index = source.mesh_instance.material_index;
 
     return output;
 }

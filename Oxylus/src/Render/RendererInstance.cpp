@@ -1941,6 +1941,9 @@ auto RendererInstance::record_frame(
     .use_hiz = true,
     .init_cull_meshes = true,
   };
+  if (shape.has_blend_meshes) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteBlend;
+  }
 
 
   // --- 3D ---
@@ -2095,6 +2098,7 @@ auto RendererInstance::record_frame(
 
     visbuffer_attachment = main_geometry_context.visbuffer_attachment;
     depth_attachment = main_geometry_context.depth_attachment;
+    hiz_attachment = main_geometry_context.hiz_attachment;
     overdraw_attachment = main_geometry_context.overdraw_attachment;
     albedo_attachment = main_geometry_context.albedo_attachment;
     normal_attachment = main_geometry_context.normal_attachment;
@@ -2337,6 +2341,68 @@ auto RendererInstance::record_frame(
     ddgi_distance_attachment = sssr_context.distance_attachment;
     sky_cubemap_attachment = sssr_context.sky_cubemap_attachment;
     sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
+  }
+
+  // --- transparency ---
+  if (shape.has_blend_meshes || shape.has_refractors) {
+    cull_geometry_context.hiz_attachment = hiz_attachment;
+    auto transparency_context = TransparencyContext{
+      .visibility_buffer = cull_geometry_context.visibility_buffer,
+      .hiz_attachment = cull_geometry_context.hiz_attachment,
+      .final_attachment = final_attachment,
+      .depth_attachment = depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
+      .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
+      .sky_aerial_perspective_lut_attachment = sky_aerial_perspective_attachment,
+      .sky_cubemap_attachment = sky_cubemap_attachment,
+      .lighting_buffer = pbr_context.lighting_buffer,
+      .light_grid_buffer = light_grid_buffer,
+      .pointspot_views_buffer = pointspot_views_buffer,
+      .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
+      .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+      .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
+      .probe_volumes_buffer = probe_volumes_buffer,
+      .probe_states_buffer = probe_states_buffer,
+      .irradiance_attachment = ddgi_irradiance_attachment,
+      .distance_attachment = ddgi_distance_attachment,
+    };
+    self.prepare_transparency(module, recording, transparency_context);
+
+    // the rear pair resolves over the scene first, so refractors see blended content behind them
+    if (shape.has_blend_meshes) {
+      transparency_context
+        .draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_geometry_context, false);
+      transparency_context.visibility_buffer = cull_geometry_context.visibility_buffer;
+      transparency_context.hiz_attachment = cull_geometry_context.hiz_attachment;
+      self.draw_transparency(module, recording, transparency_context);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
+    if (static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere)) {
+      values.atmosphere = transparency_context.atmosphere_buffer;
+    }
+
+    final_attachment = transparency_context.final_attachment;
+    depth_attachment = transparency_context.depth_attachment;
+    reactive_mask_attachment = transparency_context.reactive_mask_attachment;
+    hiz_attachment = transparency_context.hiz_attachment;
+    cull_geometry_context.visibility_buffer = transparency_context.visibility_buffer;
+    sky_transmittance_lut_attachment = transparency_context.sky_transmittance_lut_attachment;
+    sky_aerial_perspective_attachment = transparency_context.sky_aerial_perspective_lut_attachment;
+    sky_cubemap_attachment = transparency_context.sky_cubemap_attachment;
+    light_grid_buffer = transparency_context.light_grid_buffer;
+    pointspot_views_buffer = transparency_context.pointspot_views_buffer;
+    vsm_pointspot_page_table_attachment = transparency_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = transparency_context.vsm_physical_pages_attachment;
+    vsm_virtual_page_table_attachment = transparency_context.vsm_page_table_attachment;
+    vsm_directional_clipmaps_buffer = transparency_context.directional_clipmaps_buffer;
+    if (shape.has_ddgi) {
+      probe_volumes_buffer = transparency_context.probe_volumes_buffer;
+      probe_states_buffer = transparency_context.probe_states_buffer;
+      ddgi_irradiance_attachment = transparency_context.irradiance_attachment;
+      ddgi_distance_attachment = transparency_context.distance_attachment;
+    }
   }
 
   // --- 2D ---
