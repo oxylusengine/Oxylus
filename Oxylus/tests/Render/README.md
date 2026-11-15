@@ -18,8 +18,9 @@ Vulkan device is unavailable.
 
 `TestTransparencyGPU` runs the built `cull_meshes` and transparent-mode `cull_meshlets_hiz` pipelines on synthetic
 meshes and materials on a headless device. It checks that blend and refractor meshlets land in their own lists, that
-shadow culls count only opaque casters, that every routed meshlet survives the transparent meshlet cull, and that refractors
-route into the tail of the list without blend routing. Set
+shadow culls count only opaque casters, that every routed meshlet survives the transparent meshlet cull, that refractors
+route into the tail of the list without blend routing, and that the transmission source's compute mip chain matches a CPU
+[1 3 3 1] binomial filter. Set
 `OX_TRANSPARENCY_GPU_VALIDATION=1` to enable Vulkan validation and synchronization validation. It skips when a
 suitable Vulkan device is unavailable.
 

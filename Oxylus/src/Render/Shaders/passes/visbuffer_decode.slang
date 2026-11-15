@@ -49,71 +49,6 @@ func compute_velocity(in TriangleHit tri, in f32x3 bary, in TransformPrevious tr
     return delta_ndc * 0.5 * params.camera.resolution;
 }
 
-struct PartialDeriv {
-    f32x3 ddx;
-    f32x3 ddy;
-    f32x3 lambda;
-    bool is_back_facing;
-
-    func gradient_of(f32x2x3 v) -> UVGradient {
-        UVGradient grad;
-        grad.uv = mul(this.lambda, v);
-        grad.ddx = mul(this.ddx, v);
-        grad.ddy = mul(this.ddy, v);
-
-        return grad;
-    }
-};
-
-func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32x2 resolution) -> PartialDeriv {
-    PartialDeriv result;
-
-    let clip_pos_0 = mul(params.camera.projection_view, f32x4(world_positions[0].xyz, 1.0));
-    let clip_pos_1 = mul(params.camera.projection_view, f32x4(world_positions[1].xyz, 1.0));
-    let clip_pos_2 = mul(params.camera.projection_view, f32x4(world_positions[2].xyz, 1.0));
-
-    // Partial Derivatives
-    let inv_w = 1.0 / f32x3(clip_pos_0.w, clip_pos_1.w, clip_pos_2.w);
-    let ndc_0 = clip_pos_0.xy * inv_w[0];
-    let ndc_1 = clip_pos_1.xy * inv_w[1];
-    let ndc_2 = clip_pos_2.xy * inv_w[2];
-    // Inverse area of a triangle.
-    // https://cg.ivd.kit.edu/publications/2015/dais/DAIS.pdf
-    // Appendix A:
-    // D =
-    let det = determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
-    // same orientation as the 3x3 clip determinant in test_triangle_backface, scaled by 1/(w0*w1*w2) > 0
-    result.is_back_facing = det > 0.0;
-    let inv_det = 1.0 / det;
-    // Lambda 1 =
-    result.ddx = f32x3(ndc_1.y - ndc_2.y, ndc_2.y - ndc_0.y, ndc_0.y - ndc_1.y) * inv_det * inv_w;
-    // Lambda 2 =
-    result.ddy = f32x3(ndc_2.x - ndc_1.x, ndc_0.x - ndc_2.x, ndc_1.x - ndc_0.x) * inv_det * inv_w;
-    var ddx_sum = dot(result.ddx, 1.0);
-    var ddy_sum = dot(result.ddy, 1.0);
-
-    let delta_v = uv - ndc_0;
-    let interp_inv_w = inv_w.x + delta_v.x * ddx_sum + delta_v.y * ddy_sum;
-    let interp_w = 1.0 / interp_inv_w;
-    result.lambda = f32x3(
-        interp_w * (inv_w[0] + delta_v.x * result.ddx.x + delta_v.y * result.ddy.x),
-        interp_w * (delta_v.x * result.ddx.y + delta_v.y * result.ddy.y),
-        interp_w * (delta_v.x * result.ddx.z + delta_v.y * result.ddy.z)
-    );
-    let two_over_resolution = 2.0 / resolution;
-    result.ddx *= two_over_resolution.x;
-    result.ddy *= -two_over_resolution.y;
-    ddx_sum *= two_over_resolution.x;
-    ddy_sum *= -two_over_resolution.y;
-
-    let interp_ddx_w = 1.0 / (interp_inv_w + ddx_sum);
-    let interp_ddy_w = 1.0 / (interp_inv_w + ddy_sum);
-    result.ddx = interp_ddx_w * (result.lambda * interp_inv_w + result.ddx) - result.lambda;
-    result.ddy = interp_ddy_w * (result.lambda * interp_inv_w + result.ddy) - result.lambda;
-
-    return result;
-}
-
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> FragmentOutput {
     let texel = params.visbuffer.Load(u32x3(u32x2(input.position.xy), 0));
@@ -134,52 +69,10 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     // evaluate attributes at the same subpixel position used by visibility rasterization
     let sample_uv = input.tex_coord - params.camera.temporalaa_jitter / params.camera.resolution;
     let NDC = f32x3(sample_uv * 2.0 - 1.0, 1.0);
-    let deriv = compute_partial_derivatives(tri.world_positions, NDC.xy, params.camera.resolution);
-    var tex_coord_grad = deriv.gradient_of(tri.tex_coords);
-    material.transform_uv(tex_coord_grad);
-
-    const f32x3x3 camera_relative_world_positions = {
-        tri.world_positions[0].xyz - params.camera.position.xyz,
-        tri.world_positions[1].xyz - params.camera.position.xyz,
-        tri.world_positions[2].xyz - params.camera.position.xyz,
-    };
-
-    // a double sided triangle seen from behind shades with the normal facing the camera
-    let is_flipped = deriv.is_back_facing && material.is_double_sided();
-    let normal_sign = select(is_flipped, -1.0, 1.0);
-    const f32x3 world_normal = normal_sign * tri.interpolate_normal(deriv.lambda);
-    let position_dx = mul(deriv.ddx, camera_relative_world_positions);
-    let position_dy = mul(deriv.ddy, camera_relative_world_positions);
-    let uv_dx = tex_coord_grad.ddx;
-    let uv_dy = tex_coord_grad.ddy;
-    const TangentFrame frame = build_tangent_frame(world_normal, position_dx, position_dy, uv_dx, uv_dy);
-
-    // biased after the tangent frame, which needs the true uv derivatives
-    tex_coord_grad.apply_mip_bias(params.camera.texture_mip_bias);
-    var surface = shade_surface(material, frame, tex_coord_grad);
-
-    if (surface.roughness < 1.0) {
-        // evaluate this triangle's footprint explicitly: screen quad derivatives can cross
-        // unrelated triangles or discarded pixels in a visibility buffer decoder
-        f32x3 normal_derivatives[2];
-        [ForceUnroll]
-        for (i32 axis = 0; axis < 2; axis++) {
-            let bary_offset = axis == 0 ? deriv.ddx : deriv.ddy;
-            let interpolated_normal = normal_sign * mul(deriv.lambda + bary_offset, tri.world_normals);
-            let normal_length_sq = dot(interpolated_normal, interpolated_normal);
-            let vertex_normal = normal_length_sq > 1e-8 ? interpolated_normal * rsqrt(normal_length_sq) : world_normal;
-            var sample_normal = vertex_normal;
-            if (material.flags & MaterialFlag::HasNormalImage) {
-                var normal_sample = tex_coord_grad;
-                // the footprint stays one pixel wide even when texture lod is biased
-                normal_sample.uv += axis == 0 ? uv_dx : uv_dy;
-                let sample_frame = build_tangent_frame(vertex_normal, position_dx, position_dy, uv_dx, uv_dy);
-                sample_normal = sample_frame.to_world(material.sample_tangent_normal(normal_sample));
-            }
-            normal_derivatives[axis] = sample_normal - surface.normal;
-        }
-        surface.roughness = filter_specular_roughness(surface.roughness, normal_derivatives[0], normal_derivatives[1]);
-    }
+    let decoded = decode_triangle_surface(tri, material, NDC.xy, params.camera);
+    let deriv = decoded.triangle.deriv;
+    let world_normal = decoded.triangle.world_normal;
+    let surface = decoded.surface;
 
     output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);
     output.normal_color.xy = com::vec3_to_oct(surface.normal);

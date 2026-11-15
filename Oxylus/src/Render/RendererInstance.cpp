@@ -1945,6 +1945,12 @@ auto RendererInstance::record_frame(
     cull_geometry_context.cull_flags |= GPU::CullFlag::RouteBlend;
   }
 
+  if (shape.has_refractors) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteRefractors;
+  }
+
+  auto refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  auto refractor_depth_attachment = vir::ValueID::Invalid;
 
   // --- 3D ---
   if (shape.has_meshes || shape.has_terrain) {
@@ -2050,6 +2056,13 @@ auto RendererInstance::record_frame(
     self.generate_hiz(module, render_context, main_geometry_context);
     run_geometry_pass(true);
 
+    if (shape.has_refractors) {
+      std::tie(
+        refractor_visbuffer_attachment,
+        refractor_depth_attachment
+      ) = self.draw_refractor_visbuffer(module, recording, cull_geometry_context, main_geometry_context);
+    }
+
     std::tie(
       main_geometry_context.visbuffer_attachment,
       main_geometry_context.depth_attachment
@@ -2115,8 +2128,12 @@ auto RendererInstance::record_frame(
         .physical_page_table_attachment = vsm_physical_pages_attachment,
         .light_grid_buffer = light_grid_buffer,
         .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+        .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+        .refractor_depth_attachment = refractor_depth_attachment,
       };
       self.draw_virtual_shadowmap(module, recording, rmvsm_context);
+      refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
+      refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;
       light_grid_buffer = rmvsm_context.light_grid_buffer;
@@ -2366,6 +2383,8 @@ auto RendererInstance::record_frame(
       .probe_states_buffer = probe_states_buffer,
       .irradiance_attachment = ddgi_irradiance_attachment,
       .distance_attachment = ddgi_distance_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
     };
     self.prepare_transparency(module, recording, transparency_context);
 
@@ -2379,6 +2398,20 @@ auto RendererInstance::record_frame(
       resolve_transparency(module, render_context, transparency_context);
     }
 
+    if (shape.has_refractors) {
+      std::tie(
+        transparency_context.final_attachment,
+        transparency_context.transmission_attachment
+      ) = build_transmission_source(module, render_context, transparency_context.final_attachment);
+      self.shade_refractors(module, recording, transparency_context);
+    }
+
+    if (shape.has_blend_meshes && shape.has_refractors) {
+      std::swap(transparency_context.accumulation_attachment, transparency_context.accumulation_front_attachment);
+      std::swap(transparency_context.revealage_attachment, transparency_context.revealage_front_attachment);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
     if (static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere)) {
       values.atmosphere = transparency_context.atmosphere_buffer;
     }
@@ -2388,6 +2421,8 @@ auto RendererInstance::record_frame(
     reactive_mask_attachment = transparency_context.reactive_mask_attachment;
     hiz_attachment = transparency_context.hiz_attachment;
     cull_geometry_context.visibility_buffer = transparency_context.visibility_buffer;
+    refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment;
+    refractor_depth_attachment = transparency_context.refractor_depth_attachment;
     sky_transmittance_lut_attachment = transparency_context.sky_transmittance_lut_attachment;
     sky_aerial_perspective_attachment = transparency_context.sky_aerial_perspective_lut_attachment;
     sky_cubemap_attachment = transparency_context.sky_cubemap_attachment;

@@ -115,6 +115,16 @@ name = "wboit_resolve"
 path = "passes/wboit_resolve.slang"
 entry_points = ["vs_main", "fs_main"]
 
+[[shader_sessions.programs]]
+name = "refractor_shade"
+path = "passes/refractor_shade.slang"
+entry_points = ["vs_main", "fs_main"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
+name = "transmission_downsample"
+path = "passes/transmission_downsample.slang"
+entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
 name = "tlas_write_instances"

@@ -539,6 +539,9 @@ struct RMVSMContext {
   vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
   vir::ValueID pointspot_layer_dirty_mask_buffer = vir::ValueID::Invalid;
   vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
 };
 
 auto bind_vsm_pointspot_spec_constants(vir::Module& module) -> vir::Module&;
@@ -1214,6 +1217,13 @@ public:
   auto draw_for_visbuffer_ms(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
   ) -> void;
+  auto draw_refractor_visbuffer(
+    this RendererInstance& self,
+    vir::Module& module,
+    FrameRecording& recording,
+    CullGeometryContext& cull_context,
+    MainGeometryContext& main_context
+  ) -> std::pair<vir::ValueID, vir::ValueID>;
   auto decode_visbuffer(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
   ) -> void;
@@ -1340,6 +1350,12 @@ public:
   ) -> void;
   static auto resolve_transparency(vir::Module& module, RenderContext& render_context, TransparencyContext& context)
     -> void;
+  static auto build_transmission_source(
+    vir::Module& module, RenderContext& render_context, vir::ValueID final_attachment
+  ) -> std::pair<vir::ValueID, vir::ValueID>;
+  auto shade_refractors(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+  ) -> void;
   static auto generate_sssr_depth_hierarchy(
     vir::Module& module,
     RenderContext& render_context,

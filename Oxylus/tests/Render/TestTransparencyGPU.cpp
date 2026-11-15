@@ -251,7 +251,8 @@ protected:
       const auto* shader = std::get_if<ShaderPipelineData>(&entry.data);
       if (
         shader && (shader->module_name == "cull_meshes" || shader->module_name == "cull_meshlets_hiz" ||
-                   shader->module_name == "cull_triangles" || shader->module_name == "wboit_resolve")
+                   shader->module_name == "cull_triangles" || shader->module_name == "wboit_resolve" ||
+                   shader->module_name == "transmission_downsample")
       ) {
         ASSERT_TRUE(render->create_pipeline(*shader));
       }
@@ -260,6 +261,7 @@ protected:
     ASSERT_NE(render->pipeline("cull_meshlets_hiz"), vir::PipelineID::Invalid);
     ASSERT_NE(render->pipeline("cull_triangles"), vir::PipelineID::Invalid);
     ASSERT_NE(render->pipeline("wboit_resolve"), vir::PipelineID::Invalid);
+    ASSERT_NE(render->pipeline("transmission_downsample"), vir::PipelineID::Invalid);
 
     build_scene();
   }
@@ -1133,6 +1135,109 @@ TEST_F(TransparencyGPUTest, RefractorsRouteWithoutBlend) {
   std::ranges::sort(refractor_indices);
   for (auto index = 0_sz; index < refractor.size(); index++) {
     EXPECT_EQ(refractor_indices[index], capacity - refractor.size() + index);
+  }
+}
+
+TEST_F(TransparencyGPUTest, TransmissionSourceDownsamplesWithABinomialFilter) {
+  constexpr auto width = 16_u32;
+  constexpr auto height = 8_u32;
+  constexpr auto level_count = 4_u32;
+  auto source = std::vector<glm::vec4>(width * height);
+  auto source_halves = std::vector<u16>(source.size() * 4);
+  for (auto index = 0_sz; index < source.size(); index++) {
+    const auto x = static_cast<f32>(index % width);
+    const auto y = static_cast<f32>(index / width);
+    source[index] = glm::vec4(x * 0.25f + y, 3.0f - x * 0.125f, std::sin(x * 0.7f) * y, 0.1f * x + 0.05f * y);
+    for (auto channel = 0; channel < 4; channel++) {
+      source_halves[index * 4 + channel] = glm::packHalf1x16(source[index][channel]);
+      source[index][channel] = glm::unpackHalf1x16(source_halves[index * 4 + channel]);
+    }
+  }
+
+  const auto upload = upload_bytes(source_halves.data(), source_halves.size() * sizeof(u16));
+  auto mip_extents = std::array<glm::uvec2, level_count>{};
+  auto readbacks = std::array<vir::Buffer, level_count>{};
+  for (auto level = 0_u32; level < level_count; level++) {
+    mip_extents[level] = glm::uvec2(std::max(width >> level, 1_u32), std::max(height >> level, 1_u32));
+    readbacks[level] = readback_buffer(mip_extents[level].x * mip_extents[level].y * 4 * sizeof(u16));
+  }
+
+  auto module = vir::Module{};
+  auto final_image = module.transient_image(
+    {.extent = {width, height, 1}, .format = vir::Format::RGBA16Sfloat, .name = "transmission test final"}
+  );
+  final_image = module.copy_buffer_to_image(module.import_buffer(upload, vir::Access::HostWrite), final_image);
+
+  auto transmission = vir::ValueID::Invalid;
+  std::tie(final_image, transmission) = RendererInstance::build_transmission_source(module, *render, final_image);
+  EXPECT_EQ(module.image_extent(transmission).value_or(vir::Extent3D{}).width, width);
+
+  for (auto level = 0_u32; level < level_count; level++) {
+    const auto downloaded = module.copy_image_to_buffer(
+      module.mip(transmission, level),
+      module.import_buffer(readbacks[level], vir::Access::None)
+    );
+    module.export_to(downloaded, vir::Access::HostRead);
+  }
+
+  const auto program = render->compile(std::move(module));
+  ASSERT_TRUE(program);
+  ASSERT_TRUE(render->execute_blocking(*program));
+
+  auto expected = source;
+  auto expected_extent = glm::uvec2(width, height);
+  for (auto level = 0_u32; level < level_count; level++) {
+    SCOPED_TRACE(level);
+    const auto pixels = read<u16>(readbacks[level], expected.size() * 4);
+    for (auto index = 0_sz; index < expected.size(); index++) {
+      for (auto channel = 0; channel < 4; channel++) {
+        const auto actual = glm::unpackHalf1x16(pixels[index * 4 + channel]);
+        EXPECT_NEAR(actual, expected[index][channel], 2e-3f + 2e-3f * std::abs(expected[index][channel]))
+          << "pixel " << index << " channel " << channel;
+      }
+    }
+
+    if (level + 1 == level_count) {
+      break;
+    }
+
+    const auto next_extent = glm::uvec2(
+      std::max(expected_extent.x >> 1, 1_u32),
+      std::max(expected_extent.y >> 1, 1_u32)
+    );
+    auto next = std::vector<glm::vec4>(next_extent.x * next_extent.y);
+    for (auto y = 0_u32; y < next_extent.y; y++) {
+      for (auto x = 0_u32; x < next_extent.x; x++) {
+        // [1 3 3 1] / 8 per axis over source texels 2x - 1 .. 2x + 2, clamped at the edges
+        constexpr auto weights = std::array{1.0f, 3.0f, 3.0f, 1.0f};
+        auto averaged = glm::vec4(0.0f);
+        for (auto tap_y = 0; tap_y < 4; tap_y++) {
+          const auto source_y = std::clamp(
+            static_cast<i32>(y * 2) + tap_y - 1,
+            0,
+            static_cast<i32>(expected_extent.y) - 1
+          );
+          for (auto tap_x = 0; tap_x < 4; tap_x++) {
+            const auto source_x = std::clamp(
+              static_cast<i32>(x * 2) + tap_x - 1,
+              0,
+              static_cast<i32>(expected_extent.x) - 1
+            );
+            averaged += expected[static_cast<usize>(source_y) * expected_extent.x + static_cast<usize>(source_x)] *
+                        (weights[tap_x] * weights[tap_y] / 64.0f);
+          }
+        }
+
+        for (auto channel = 0; channel < 4; channel++) {
+          averaged[channel] = glm::unpackHalf1x16(glm::packHalf1x16(averaged[channel]));
+        }
+
+        next[y * next_extent.x + x] = averaged;
+      }
+    }
+
+    expected = std::move(next);
+    expected_extent = next_extent;
   }
 }
 } // namespace ox

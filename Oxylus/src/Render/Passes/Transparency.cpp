@@ -3,9 +3,11 @@
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Asset/Texture.hpp"
 #include "Core/Enum.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
+#include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
 
 namespace ox {
@@ -308,6 +310,183 @@ auto RendererInstance::resolve_transparency(
       .set_scissor(0, vir::Rect2D::framebuffer())
       .bind_image(0, 0, context.accumulation_attachment)
       .bind_image(0, 1, context.revealage_attachment)
+      .draw(3, 1)
+      .end_rendering()
+  );
+}
+
+auto RendererInstance::build_transmission_source(
+  vir::Module& module, RenderContext& render_context, vir::ValueID final_attachment
+) -> std::pair<vir::ValueID, vir::ValueID> {
+  ZoneScoped;
+
+  const auto extent = module.image_extent(final_attachment).value_or(vir::Extent3D{1, 1, 1});
+  // refractor_shade samples up to mip 7
+  const auto level_count = std::min(Texture::calculate_mip_count(extent), 8_u32);
+
+  // always rgba16f, the hdr target's B10G11R11 has no portable storage write and can't be copied into this
+  auto transmission = module.transient_image({
+    .extent = extent,
+    .format = vir::Format::RGBA16Sfloat,
+    .mip_levels = level_count,
+    .name = "transmission source",
+  });
+
+  auto destination_mip = module.mip(transmission, 0);
+  std::tie(final_attachment, destination_mip) = std::tuple_cat( //
+    module
+      .begin_compute({{final_attachment, vir::Access::ComputeSampled}, {destination_mip, vir::Access::ComputeWrite}})
+      .with_name("transmission copy")
+      .bind_compute_pipeline(render_context.pipeline("transmission_downsample"))
+      .specialize_constant(0, true)
+      .bind_image(0, 0, destination_mip)
+      .bind_image(0, 1, final_attachment)
+      .bind_sampler(0, 2, render_context.cached_sampler_handle(LinearSamplerClamped))
+      .push_constants(PushConstants(extent.width, extent.height))
+      .dispatch_invocations(extent.width, extent.height, 1)
+      .end_compute()
+  );
+  transmission = module.whole(destination_mip);
+
+  for (auto level = 1_u32; level < level_count; level++) {
+    const auto mip_width = std::max(1_u32, extent.width >> level);
+    const auto mip_height = std::max(1_u32, extent.height >> level);
+    auto source_mip = module.mip(transmission, level - 1);
+    destination_mip = module.mip(transmission, level);
+    std::tie(source_mip, destination_mip) = std::tuple_cat( //
+      module.begin_compute({{source_mip, vir::Access::ComputeSampled}, {destination_mip, vir::Access::ComputeWrite}})
+        .with_name("transmission downsample")
+        .bind_compute_pipeline(render_context.pipeline("transmission_downsample"))
+        .specialize_constant(0, false)
+        .bind_image(0, 0, destination_mip)
+        .bind_image(0, 1, source_mip)
+        .bind_sampler(0, 2, render_context.cached_sampler_handle(LinearSamplerClamped))
+        .push_constants(PushConstants(mip_width, mip_height))
+        .dispatch_invocations(mip_width, mip_height, 1)
+        .end_compute()
+    );
+    transmission = module.whole(destination_mip);
+  }
+
+  return {final_attachment, transmission};
+}
+
+auto RendererInstance::shade_refractors(
+  this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+) -> void {
+  ZoneScoped;
+  auto& prepared = recording.prepared;
+  auto& values = recording.values;
+  const auto& shape = recording.shape;
+
+  auto& render_context = *self.renderer.render_context;
+  const auto linear_clamped = render_context.cached_sampler_handle(LinearSamplerClamped);
+  const auto nearest_clamped = render_context.cached_sampler_handle(NearestSamplerClamped);
+  const auto scene_flags = std::to_underlying(shape.scene_flags);
+  const auto has_directional_shadows = static_cast<u32>(shape.has_directional_shadows && shape.has_meshes);
+
+  std::tie(
+    context.final_attachment,
+    context.reactive_mask_attachment,
+    values.camera,
+    values.meshes,
+    values.mesh_instances,
+    values.transparent_meshlet_instances,
+    values.transforms_world,
+    values.materials,
+    context.atmosphere_buffer,
+    context.sky_buffer,
+    context.lighting_buffer,
+    values.lights,
+    context.light_grid_buffer,
+    context.pointspot_views_buffer,
+    context.directional_clipmaps_buffer,
+    context.vsm_page_table_attachment,
+    context.pointspot_page_table_attachment,
+    context.vsm_physical_pages_attachment,
+    context.sky_transmittance_lut_attachment,
+    context.sky_aerial_perspective_lut_attachment,
+    context.sky_cubemap_attachment,
+    context.probe_volumes_buffer,
+    context.probe_states_buffer,
+    context.irradiance_attachment,
+    context.distance_attachment,
+    context.refractor_visbuffer_attachment,
+    context.refractor_depth_attachment,
+    context.depth_attachment,
+    context.transmission_attachment
+  ) = std::tuple_cat(                  //
+    bind_vsm_pointspot_spec_constants( //
+      module.begin_rendering(
+        {{context.final_attachment, vir::Access::ColorRW},
+         {context.reactive_mask_attachment, vir::Access::ColorRW},
+         {values.camera, vir::Access::FragmentUniformRead},
+         {values.meshes, vir::Access::FragmentRead},
+         {values.mesh_instances, vir::Access::FragmentRead},
+         {values.transparent_meshlet_instances, vir::Access::FragmentRead},
+         {values.transforms_world, vir::Access::FragmentRead},
+         {values.materials, vir::Access::FragmentRead},
+         {context.atmosphere_buffer, vir::Access::FragmentRead},
+         {context.sky_buffer, vir::Access::FragmentRead},
+         {context.lighting_buffer, vir::Access::FragmentRead},
+         {values.lights, vir::Access::FragmentRead},
+         {context.light_grid_buffer, vir::Access::FragmentRead},
+         {context.pointspot_views_buffer, vir::Access::FragmentRead},
+         {context.directional_clipmaps_buffer, vir::Access::FragmentRead},
+         {context.vsm_page_table_attachment, vir::Access::FragmentSampled},
+         {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
+         {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
+         {context.sky_transmittance_lut_attachment, vir::Access::FragmentSampled},
+         {context.sky_aerial_perspective_lut_attachment, vir::Access::FragmentSampled},
+         {context.sky_cubemap_attachment, vir::Access::FragmentSampled},
+         {context.probe_volumes_buffer, vir::Access::FragmentRead},
+         {context.probe_states_buffer, vir::Access::FragmentRead},
+         {context.irradiance_attachment, vir::Access::FragmentSampled},
+         {context.distance_attachment, vir::Access::FragmentSampled},
+         {context.refractor_visbuffer_attachment, vir::Access::FragmentSampled},
+         {context.refractor_depth_attachment, vir::Access::FragmentSampled},
+         {context.depth_attachment, vir::Access::FragmentSampled},
+         {context.transmission_attachment, vir::Access::FragmentSampled}}
+      )
+    )
+      .with_name("refractor shade")
+      .bind_graphics_pipeline(render_context.pipeline("refractor_shade"))
+      .set_color_blend(0, vir::ColorBlendAttachmentState{})
+      .set_color_blend(1, reactive_mask_blend_state())
+      .set_viewport(0, vir::Rect2D::framebuffer())
+      .set_scissor(0, vir::Rect2D::framebuffer())
+      .bind_sampler(0, 0, linear_clamped)
+      .bind_sampler(0, 1, nearest_clamped)
+      .bind_buffer(0, 2, values.camera)
+      .bind_buffer(0, 3, values.materials)
+      .bind_image(0, 4, context.vsm_page_table_attachment)
+      .bind_image(0, 5, context.pointspot_page_table_attachment)
+      .bind_image(0, 6, context.vsm_physical_pages_attachment)
+      .bind_image(0, 7, context.sky_transmittance_lut_attachment)
+      .bind_image(0, 8, context.sky_aerial_perspective_lut_attachment)
+      .bind_image(0, 9, context.sky_cubemap_attachment)
+      .bind_buffer(0, 10, context.probe_volumes_buffer)
+      .bind_buffer(0, 11, context.probe_states_buffer)
+      .bind_image(0, 12, context.irradiance_attachment)
+      .bind_image(0, 13, context.distance_attachment)
+      .bind_buffer(0, 14, values.meshes)
+      .bind_buffer(0, 15, values.mesh_instances)
+      .bind_buffer(0, 16, values.transparent_meshlet_instances)
+      .bind_buffer(0, 17, values.transforms_world)
+      .bind_image(0, 18, context.refractor_visbuffer_attachment)
+      .bind_image(0, 19, context.depth_attachment)
+      .bind_image(0, 20, context.refractor_depth_attachment)
+      .bind_image(0, 21, context.transmission_attachment)
+      .push_constant_address(0, context.atmosphere_buffer)
+      .push_constant_address(8, context.sky_buffer)
+      .push_constant_address(16, context.lighting_buffer)
+      .push_constant_address(24, values.lights)
+      .push_constant_address(32, context.light_grid_buffer)
+      .push_constant_address(40, context.pointspot_views_buffer)
+      .push_constant_address(48, context.directional_clipmaps_buffer)
+      .push_constants_from_at(56, prepared.ddgi.apply_push)
+      .specialize_constant(0, scene_flags)
+      .specialize_constant(1, has_directional_shadows)
       .draw(3, 1)
       .end_rendering()
   );
