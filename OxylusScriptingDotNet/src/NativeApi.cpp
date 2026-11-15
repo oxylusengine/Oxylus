@@ -34,8 +34,10 @@ static_assert(sizeof(OxValue) == 40 && offsetof(OxValue, text) == 24);
 static_assert(sizeof(OxUiEvent) == 40 && offsetof(OxUiEvent, mouse_x) == 32);
 static_assert(sizeof(OxNetClientState) == 32 && offsetof(OxNetClientState, rtt) == 16);
 static_assert(sizeof(OxVec4) == 16 && sizeof(OxCinematicState) == 8 && sizeof(OxWindowSize) == 16);
-static_assert(sizeof(OxMaterialData) == 160 && offsetof(OxMaterialData, alpha_mode) == 60);
-static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, albedo_texture) == 80);
+static_assert(sizeof(OxMaterialData) == 256 && offsetof(OxMaterialData, alpha_mode) == 60);
+static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, double_sided) == 80);
+static_assert(offsetof(OxMaterialData, water_flow) == 128 && offsetof(OxMaterialData, albedo_texture) == 144);
+static_assert(offsetof(OxMaterialData, transmission_texture) == 224);
 static_assert(sizeof(OxMeshSource) == 48 && offsetof(OxMeshSource, material) == 32);
 
 static auto component_dbs = ankerl::unordered_dense::map<ecs_world_t*, ComponentDB*>{};

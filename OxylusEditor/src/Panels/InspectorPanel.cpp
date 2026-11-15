@@ -583,6 +583,39 @@ auto InspectorPanel::draw_material_properties(
 
   bool dirty = false;
 
+  const auto preset_width = ImGui::GetContentRegionAvail().x / 2.0f;
+  if (UI::button("Glass preset", {preset_width, 0.0f})) {
+    material->alpha_mode = AlphaMode::Opaque;
+    material->shading_model = ShadingModel::Standard;
+    material->transmission_factor = 1.0f;
+    material->ior = 1.5f;
+    material->roughness_factor = 0.05f;
+    material->metallic_factor = 0.0f;
+    material->thickness_factor = 0.0f;
+    material->attenuation_color = {1.0f, 1.0f, 1.0f};
+    material->attenuation_distance = 0.0f;
+    material->double_sided = true;
+    dirty = true;
+  }
+
+  ImGui::SameLine();
+
+  if (UI::button("Water preset", {preset_width, 0.0f})) {
+    const auto defaults = Material{};
+    material->shading_model = ShadingModel::Water;
+    material->transmission_factor = 1.0f;
+    material->ior = 1.33f;
+    material->roughness_factor = 0.02f;
+    material->metallic_factor = 0.0f;
+    material->attenuation_color = {0.45f, 0.85f, 0.80f};
+    material->attenuation_distance = 4.0f;
+    material->water_scatter_color = defaults.water_scatter_color;
+    material->water_flow = defaults.water_flow;
+    material->water_detail_scale = defaults.water_detail_scale;
+    material->water_shore_fade = defaults.water_shore_fade;
+    dirty = true;
+  }
+
   UI::begin_properties(UI::default_properties_flags);
 
   const char* alpha_modes[] = {"Opaque", "Mask", "Blend"};
@@ -590,6 +623,8 @@ auto InspectorPanel::draw_material_properties(
   if (material->alpha_mode == AlphaMode::Mask) {
     dirty |= UI::property("Alpha cutoff", &material->alpha_cutoff, 0.0f, 1.0f);
   }
+
+  dirty |= UI::property("Two-sided", &material->double_sided);
 
   const char* samplers[] = {
     "LinearRepeated",
@@ -655,6 +690,31 @@ auto InspectorPanel::draw_material_properties(
   dirty |= UI::property("Metallic Factor", &material->metallic_factor, 0.0f, 1.0f);
   dirty |= texture_slot("Occlusion", material->occlusion_texture, false);
   dirty |= UI::property("Occlusion Strength", &material->occlusion_strength, 0.0f, 1.0f);
+
+  ImGui::SeparatorText("Transmission");
+  dirty |= UI::property("Transmission Factor", &material->transmission_factor, 0.0f, 1.0f);
+  dirty |= texture_slot("Transmission", material->transmission_texture, false);
+  dirty |= UI::property("IOR", &material->ior, 1.0f, 3.0f);
+  dirty |= UI::property("Thickness Factor", &material->thickness_factor, 0.0f, 1000.0f);
+  dirty |= texture_slot("Thickness", material->thickness_texture, false);
+  dirty |= UI::property_vector("Attenuation Color", material->attenuation_color, true, false);
+  dirty |= UI::property(
+    "Attenuation Distance",
+    &material->attenuation_distance,
+    0.0f,
+    1000.0f,
+    "0 means no attenuation"
+  );
+
+  const char* shading_models[] = {"Standard", "Water"};
+  dirty |= UI::property("Shading model", reinterpret_cast<int*>(&material->shading_model), shading_models, 2);
+  if (material->shading_model == ShadingModel::Water) {
+    dirty |= UI::property_vector("Water Scatter Color", material->water_scatter_color, true, false);
+    dirty |=
+      UI::property_vector<glm::vec2>("Water Flow", material->water_flow, false, false, nullptr, 0.01f, -10.0f, 10.0f);
+    dirty |= UI::property("Water Detail Scale", &material->water_detail_scale, 0.0f, 100.0f);
+    dirty |= UI::property("Water Shore Fade", &material->water_shore_fade, 0.0f, 100.0f);
+  }
 
   UI::end_properties();
 

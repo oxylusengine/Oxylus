@@ -223,6 +223,8 @@ public sealed class MaterialProbe : SceneBehaviour
     AssetId a;
     AssetId b;
     AssetId c;
+    AssetId d;
+    AssetId e;
 
     public override void OnStart()
     {
@@ -232,6 +234,8 @@ public sealed class MaterialProbe : SceneBehaviour
         a = Assets.Find("Textures/a.png");
         b = Assets.Find("Textures/b.png");
         c = Assets.Find("Textures/c.png");
+        d = Assets.Find("Textures/d.png");
+        e = Assets.Find("Textures/e.png");
 
         var listed = Assets.GetMaterials(model);
         Log.Info($"material list {listed.Length} stone first {listed.Length > 0 && listed[0] == stone}");
@@ -247,7 +251,14 @@ public sealed class MaterialProbe : SceneBehaviour
         Log.Info($"material read roughness {data.RoughnessFactor:F3} metallic {data.MetallicFactor:F3} normal {data.NormalScale:F2} " +
                  $"occlusion {data.OcclusionStrength:F2} alpha {data.AlphaMode} cutoff {data.AlphaCutoff:F2} sampling {data.SamplingMode} flip {data.FlipNormalY}");
         Log.Info($"material read albedo a {data.AlbedoTexture == a} normal c {data.NormalTexture == c} emissive {data.EmissiveTexture.IsValid}");
-        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material read transmission {data.TransmissionFactor:F3} ior {data.Ior:F3} thickness {data.ThicknessFactor:F3} doubleSided {data.DoubleSided}");
+        Log.Info($"material read attenuation {data.AttenuationColor.X:F2} {data.AttenuationColor.Y:F2} {data.AttenuationColor.Z:F2} " +
+                 $"distance {data.AttenuationDistance:F2} shading {data.ShadingModel}");
+        Log.Info($"material read water {data.WaterScatterColor.X:F3} {data.WaterScatterColor.Y:F3} {data.WaterScatterColor.Z:F3} " +
+                 $"flow {data.WaterFlow.X:F2} {data.WaterFlow.Y:F2} detail {data.WaterDetailScale:F3} shore {data.WaterShoreFade:F3}");
+        Log.Info($"material read transmission d {data.TransmissionTexture == d} thickness e {data.ThicknessTexture == e}");
+        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
 
         data.AlbedoColor = new Vector4(0.5f, 0.25f, 0.125f, 1.0f);
         data.UvSize = new Vector2(3.0f, 5.0f);
@@ -265,6 +276,19 @@ public sealed class MaterialProbe : SceneBehaviour
         data.AlbedoTexture = b;
         data.NormalTexture = a;
         data.EmissiveTexture = c;
+        data.DoubleSided = false;
+        data.TransmissionFactor = 0.25f;
+        data.Ior = 1.33f;
+        data.ThicknessFactor = 1.5f;
+        data.AttenuationColor = new Vector3(0.5f, 0.25f, 0.125f);
+        data.AttenuationDistance = 0.0f;
+        data.ShadingModel = ShadingModel.Standard;
+        data.WaterScatterColor = new Vector3(0.5f, 0.125f, 0.25f);
+        data.WaterFlow = new Vector2(0.25f, 0.125f);
+        data.WaterDetailScale = 0.25f;
+        data.WaterShoreFade = 0.375f;
+        data.TransmissionTexture = e;
+        data.ThicknessTexture = d;
         Assets.SetMaterial(stone, data);
 
         Assets.GetMaterial(stone, out var back);
@@ -274,17 +298,30 @@ public sealed class MaterialProbe : SceneBehaviour
         Log.Info($"material written roughness {back.RoughnessFactor:F3} metallic {back.MetallicFactor:F3} normal {back.NormalScale:F2} " +
                  $"occlusion {back.OcclusionStrength:F2} alpha {back.AlphaMode} cutoff {back.AlphaCutoff:F2} sampling {back.SamplingMode} flip {back.FlipNormalY}");
         Log.Info($"material written albedo b {back.AlbedoTexture == b} normal a {back.NormalTexture == a} emissive c {back.EmissiveTexture == c}");
-        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material written transmission {back.TransmissionFactor:F3} ior {back.Ior:F3} thickness {back.ThicknessFactor:F3} doubleSided {back.DoubleSided}");
+        Log.Info($"material written attenuation {back.AttenuationColor.X:F2} {back.AttenuationColor.Y:F2} {back.AttenuationColor.Z:F2} " +
+                 $"distance {back.AttenuationDistance:F2} shading {back.ShadingModel}");
+        Log.Info($"material written water {back.WaterScatterColor.X:F3} {back.WaterScatterColor.Y:F3} {back.WaterScatterColor.Z:F3} " +
+                 $"flow {back.WaterFlow.X:F2} {back.WaterFlow.Y:F3} detail {back.WaterDetailScale:F3} shore {back.WaterShoreFade:F3}");
+        Log.Info($"material written transmission e {back.TransmissionTexture == e} thickness d {back.ThicknessTexture == d}");
+        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
 
         var wrongSlot = data;
         wrongSlot.NormalTexture = stone;
         var wrongMode = data;
         wrongMode.AlphaMode = (AlphaMode)9;
+        var wrongShading = data;
+        wrongShading.ShadingModel = (ShadingModel)9;
+        var wrongThickness = data;
+        wrongThickness.ThicknessTexture = stone;
         Log.Info($"material refused idle {Throws(() => Assets.SetMaterial(idle, data))} texture {Throws(() => Assets.SetMaterial(a, data))} " +
                  $"unknown {Throws(() => Assets.SetMaterial(default, data))} slot {Throws(() => Assets.SetMaterial(stone, wrongSlot))} " +
-                 $"mode {Throws(() => Assets.SetMaterial(stone, wrongMode))}");
+                 $"mode {Throws(() => Assets.SetMaterial(stone, wrongMode))} shading {Throws(() => Assets.SetMaterial(stone, wrongShading))} " +
+                 $"thickness {Throws(() => Assets.SetMaterial(stone, wrongThickness))}");
         Log.Info($"material unread idle {Assets.GetMaterial(idle, out _)} texture {Assets.GetMaterial(a, out _)} unknown {Assets.GetMaterial(default, out _)}");
-        Log.Info($"material refs after refusals a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material refs after refusals a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
     }
 
     public override void OnStop()
@@ -293,8 +330,11 @@ public sealed class MaterialProbe : SceneBehaviour
         data.AlbedoTexture = default;
         data.NormalTexture = default;
         data.EmissiveTexture = default;
+        data.TransmissionTexture = default;
+        data.ThicknessTexture = default;
         Assets.SetMaterial(stone, data);
-        Log.Info($"material cleared refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material cleared refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
     }
 
     static bool Throws(Action action)

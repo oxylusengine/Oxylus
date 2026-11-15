@@ -105,6 +105,8 @@ struct MaterialAssets {
   ox::UUID texture_a = {};
   ox::UUID texture_b = {};
   ox::UUID texture_c = {};
+  ox::UUID texture_d = {};
+  ox::UUID texture_e = {};
 };
 
 // the stone material starts on textures a and c, and two holders put two references on each of them
@@ -120,6 +122,8 @@ static auto material_assets() -> MaterialAssets {
     .texture_a = ox::UUID::generate_random(),
     .texture_b = ox::UUID::generate_random(),
     .texture_c = ox::UUID::generate_random(),
+    .texture_d = ox::UUID::generate_random(),
+    .texture_e = ox::UUID::generate_random(),
   };
   const auto register_asset = [&assets, &root](const ox::UUID& uuid, ox::AssetType type, const c8* path) {
     assets.register_asset(uuid, type, root / path, root / path);
@@ -127,6 +131,8 @@ static auto material_assets() -> MaterialAssets {
   register_asset(content.texture_a, ox::AssetType::Texture, "Textures/a.png");
   register_asset(content.texture_b, ox::AssetType::Texture, "Textures/b.png");
   register_asset(content.texture_c, ox::AssetType::Texture, "Textures/c.png");
+  register_asset(content.texture_d, ox::AssetType::Texture, "Textures/d.png");
+  register_asset(content.texture_e, ox::AssetType::Texture, "Textures/e.png");
   register_asset(content.stone, ox::AssetType::Material, "Materials/stone.mat");
   register_asset(content.idle, ox::AssetType::Material, "Materials/idle.mat");
   register_asset(content.model, ox::AssetType::Model, "Models/crate.glb");
@@ -134,6 +140,8 @@ static auto material_assets() -> MaterialAssets {
   assets.publish_texture(content.texture_a, ox::Texture{});
   assets.publish_texture(content.texture_b, ox::Texture{});
   assets.publish_texture(content.texture_c, ox::Texture{});
+  assets.publish_texture(content.texture_d, ox::Texture{});
+  assets.publish_texture(content.texture_e, ox::Texture{});
   assets.set_pending_load_info(
     content.stone,
     ox::Material{
@@ -149,8 +157,21 @@ static auto material_assets() -> MaterialAssets {
       .alpha_cutoff = 0.75f,
       .sampling_mode = ox::SamplingMode::NearestClamped,
       .flip_normal_y = true,
+      .double_sided = true,
+      .transmission_factor = 0.625f,
+      .ior = 1.75f,
+      .thickness_factor = 0.5f,
+      .attenuation_color = {0.25f, 0.5f, 0.75f},
+      .attenuation_distance = 2.5f,
+      .shading_model = ox::ShadingModel::Water,
+      .water_scatter_color = {0.125f, 0.25f, 0.5f},
+      .water_flow = {0.5f, 0.75f},
+      .water_detail_scale = 0.625f,
+      .water_shore_fade = 0.875f,
       .albedo_texture = content.texture_a,
       .normal_texture = content.texture_c,
+      .transmission_texture = content.texture_d,
+      .thickness_texture = content.texture_e,
     }
   );
   assets.load_asset(content.stone);
@@ -908,6 +929,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   EXPECT_EQ(refs(content.texture_a), 2);
   EXPECT_EQ(refs(content.texture_b), 0);
   EXPECT_EQ(refs(content.texture_c), 2);
+  EXPECT_EQ(refs(content.texture_d), 2);
+  EXPECT_EQ(refs(content.texture_e), 2);
   std::ignore = assets.get_dirty_material_ids();
 
   ASSERT_TRUE(scene->add_script_type("SmokeGame.MaterialProbe").has_value());
@@ -925,22 +948,32 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     "NearestClamped flip True"
   );
   expect_log("material read albedo a True normal c True emissive False");
-  expect_log("material refs a 2 b 0 c 2");
+  expect_log("material read transmission 0.625 ior 1.750 thickness 0.500 doubleSided True");
+  expect_log("material read attenuation 0.25 0.50 0.75 distance 2.50 shading Water");
+  expect_log("material read water 0.125 0.250 0.500 flow 0.50 0.75 detail 0.625 shore 0.875");
+  expect_log("material read transmission d True thickness e True");
+  expect_log("material refs a 2 b 0 c 2 d 2 e 2");
   expect_log("material written color 0.50 0.25 0.125 1.00 uv 3.00 5.00 offset 0.50 0.75 emissive 4.0 5.0 6.0");
   expect_log(
     "material written roughness 0.500 metallic 0.875 normal 1.50 occlusion 0.25 alpha Blend cutoff 0.50 sampling "
     "LinearClamped flip False"
   );
   expect_log("material written albedo b True normal a True emissive c True");
-  expect_log("material refs a 2 b 2 c 2");
-  expect_log("material refused idle True texture True unknown True slot True mode True");
+  expect_log("material written transmission 0.250 ior 1.330 thickness 1.500 doubleSided False");
+  expect_log("material written attenuation 0.50 0.25 0.12 distance 0.00 shading Standard");
+  expect_log("material written water 0.500 0.125 0.250 flow 0.25 0.125 detail 0.250 shore 0.375");
+  expect_log("material written transmission e True thickness d True");
+  expect_log("material refs a 2 b 2 c 2 d 2 e 2");
+  expect_log("material refused idle True texture True unknown True slot True mode True shading True thickness True");
   expect_log("material unread idle False texture False unknown False");
-  expect_log("material refs after refusals a 2 b 2 c 2");
+  expect_log("material refs after refusals a 2 b 2 c 2 d 2 e 2");
 
   // every texture moved with the material's two references: b gained both, a and c only changed slots
   EXPECT_EQ(refs(content.texture_a), 2);
   EXPECT_EQ(refs(content.texture_b), 2);
   EXPECT_EQ(refs(content.texture_c), 2);
+  EXPECT_EQ(refs(content.texture_d), 2);
+  EXPECT_EQ(refs(content.texture_e), 2);
   {
     const auto stone = assets.get_material(content.stone);
     ASSERT_TRUE(static_cast<bool>(stone));
@@ -951,6 +984,19 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     EXPECT_EQ(stone->sampling_mode, ox::SamplingMode::LinearClamped);
     EXPECT_FALSE(stone->flip_normal_y);
     EXPECT_EQ(stone->albedo_color, glm::vec4(0.5f, 0.25f, 0.125f, 1.0f));
+    EXPECT_FALSE(stone->double_sided);
+    EXPECT_EQ(stone->transmission_factor, 0.25f);
+    EXPECT_EQ(stone->ior, 1.33f);
+    EXPECT_EQ(stone->thickness_factor, 1.5f);
+    EXPECT_EQ(stone->attenuation_color, glm::vec3(0.5f, 0.25f, 0.125f));
+    EXPECT_EQ(stone->attenuation_distance, 0.0f);
+    EXPECT_EQ(stone->shading_model, ox::ShadingModel::Standard);
+    EXPECT_EQ(stone->water_scatter_color, glm::vec3(0.5f, 0.125f, 0.25f));
+    EXPECT_EQ(stone->water_flow, glm::vec2(0.25f, 0.125f));
+    EXPECT_EQ(stone->water_detail_scale, 0.25f);
+    EXPECT_EQ(stone->water_shore_fade, 0.375f);
+    EXPECT_EQ(stone->transmission_texture, content.texture_e);
+    EXPECT_EQ(stone->thickness_texture, content.texture_d);
   }
 
   // the renderer re-uploads it once, and the refused writes marked nothing
@@ -960,8 +1006,9 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
 
   // dropping every texture gives back all the references they held for the material
   scene->runtime_stop();
-  expect_log("material cleared refs a 0 b 0 c 0");
-  for (const auto& texture : {content.texture_a, content.texture_b, content.texture_c}) {
+  expect_log("material cleared refs a 0 b 0 c 0 d 0 e 0");
+  for (const auto& texture :
+       {content.texture_a, content.texture_b, content.texture_c, content.texture_d, content.texture_e}) {
     EXPECT_EQ(refs(texture), 0);
     EXPECT_FALSE(assets.is_loaded(texture));
   }
@@ -972,6 +1019,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     EXPECT_FALSE(static_cast<bool>(stone->albedo_texture));
     EXPECT_FALSE(static_cast<bool>(stone->normal_texture));
     EXPECT_FALSE(static_cast<bool>(stone->emissive_texture));
+    EXPECT_FALSE(static_cast<bool>(stone->transmission_texture));
+    EXPECT_FALSE(static_cast<bool>(stone->thickness_texture));
   }
 
   EXPECT_EQ(assets.get_dirty_material_ids().size(), 1);
@@ -981,7 +1030,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   assets.unload_asset(content.stone);
   EXPECT_FALSE(assets.is_loaded(content.stone));
   EXPECT_FALSE(assets.is_loaded(content.model));
-  for (const auto& texture : {content.texture_a, content.texture_b, content.texture_c}) {
+  for (const auto& texture :
+       {content.texture_a, content.texture_b, content.texture_c, content.texture_d, content.texture_e}) {
     EXPECT_EQ(refs(texture), 0);
   }
 

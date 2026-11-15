@@ -124,6 +124,8 @@ static constexpr auto MATERIAL_TEXTURES = std::array{
   &Material::emissive_texture,
   &Material::metallic_roughness_texture,
   &Material::occlusion_texture,
+  &Material::transmission_texture,
+  &Material::thickness_texture,
 };
 
 static constexpr auto MATERIAL_TEXTURE_FIELDS = std::array{
@@ -132,6 +134,8 @@ static constexpr auto MATERIAL_TEXTURE_FIELDS = std::array{
   &OxMaterialData::emissive_texture,
   &OxMaterialData::metallic_roughness_texture,
   &OxMaterialData::occlusion_texture,
+  &OxMaterialData::transmission_texture,
+  &OxMaterialData::thickness_texture,
 };
 
 static auto to_material_data(const Material& material) -> OxMaterialData {
@@ -149,6 +153,18 @@ static auto to_material_data(const Material& material) -> OxMaterialData {
     .alpha_cutoff = material.alpha_cutoff,
     .sampling_mode = static_cast<u32>(material.sampling_mode),
     .flip_normal_y = material.flip_normal_y ? 1_u32 : 0_u32,
+    .double_sided = material.double_sided ? 1_u32 : 0_u32,
+    .transmission_factor = material.transmission_factor,
+    .ior = material.ior,
+    .thickness_factor = material.thickness_factor,
+    .attenuation_color = {material.attenuation_color.x, material.attenuation_color.y, material.attenuation_color.z},
+    .attenuation_distance = material.attenuation_distance,
+    .shading_model = static_cast<u32>(material.shading_model),
+    .water_scatter_color =
+      {material.water_scatter_color.x, material.water_scatter_color.y, material.water_scatter_color.z},
+    .water_flow = {material.water_flow.x, material.water_flow.y},
+    .water_detail_scale = material.water_detail_scale,
+    .water_shore_fade = material.water_shore_fade,
   };
   for (usize i = 0; i < MATERIAL_TEXTURES.size(); i++) {
     const auto& texture = material.*MATERIAL_TEXTURES[i];
@@ -172,6 +188,17 @@ static auto to_material(const OxMaterialData& data) -> Material {
     .alpha_cutoff = data.alpha_cutoff,
     .sampling_mode = static_cast<SamplingMode>(data.sampling_mode),
     .flip_normal_y = data.flip_normal_y != 0,
+    .double_sided = data.double_sided != 0,
+    .transmission_factor = data.transmission_factor,
+    .ior = data.ior,
+    .thickness_factor = data.thickness_factor,
+    .attenuation_color = {data.attenuation_color.x, data.attenuation_color.y, data.attenuation_color.z},
+    .attenuation_distance = data.attenuation_distance,
+    .shading_model = static_cast<ShadingModel>(data.shading_model),
+    .water_scatter_color = {data.water_scatter_color.x, data.water_scatter_color.y, data.water_scatter_color.z},
+    .water_flow = {data.water_flow.x, data.water_flow.y},
+    .water_detail_scale = data.water_detail_scale,
+    .water_shore_fade = data.water_shore_fade,
   };
   for (usize i = 0; i < MATERIAL_TEXTURES.size(); i++) {
     material.*MATERIAL_TEXTURES[i] = to_uuid(data.*MATERIAL_TEXTURE_FIELDS[i]);
@@ -226,7 +253,8 @@ static auto asset_material_get(const OxAssetId* material, OxMaterialData* data) 
 static auto is_valid_material(AssetManager& assets, const OxMaterialData& data) -> bool {
   if (
     data.alpha_mode > static_cast<u32>(AlphaMode::Blend) ||
-    data.sampling_mode > static_cast<u32>(SamplingMode::LinearRepeatedAnisotropy)
+    data.sampling_mode > static_cast<u32>(SamplingMode::LinearRepeatedAnisotropy) ||
+    data.shading_model > static_cast<u32>(ShadingModel::Water)
   ) {
     return false;
   }
@@ -520,8 +548,7 @@ static auto scene_spawn_model(ecs_world_t* world, const OxAssetId* model, u64 pa
     }
   }
 
-  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent)
-                                                                        : flecs::entity();
+  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent) : flecs::entity();
   return scene->create_model_entity(uuid, parent_entity).id();
 }
 

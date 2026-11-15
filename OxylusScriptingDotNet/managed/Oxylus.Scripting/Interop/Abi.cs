@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 18;
+    public const uint Version = 19;
 }
 
 public enum OxStatus : int
