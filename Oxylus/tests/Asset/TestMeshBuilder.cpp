@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <gtest/gtest.h>
+#include <meshoptimizer.h>
 #include <vector>
 
 #include "Asset/MeshBuilder.hpp"
@@ -121,6 +124,7 @@ TEST(MeshBuilderTest, BuildsARuntimeModelWithAMaterialPerMesh) {
   EXPECT_EQ(model->meshes[0].lod_count, 1);
   EXPECT_EQ(model->meshes[1].lod_count, 1);
   EXPECT_EQ(model->meshes[1].collision_indices.size(), 6);
+  EXPECT_FALSE(model->meshes[0].has_texture_coords);
 }
 
 TEST(MeshBuilderTest, LeavesOutMeshesWithoutTriangles) {
@@ -148,6 +152,68 @@ TEST(MeshBuilderTest, RefusesARuntimeMeshWithTheWrongNormalCount) {
 
   const auto meshes = std::array{
     RuntimeMeshSource{.positions = positions, .normals = normals, .indices = indices},
+  };
+
+  EXPECT_FALSE(build_runtime_model(meshes).has_value());
+}
+
+TEST(MeshBuilderTest, CarriesTheTextureCoordinatesOfARuntimeMesh) {
+  auto positions = std::vector<glm::vec3>();
+  auto normals = std::vector<glm::vec3>();
+  const auto indices = box_triangles(glm::vec3(1.0f), positions, normals);
+  auto texcoords = std::vector<glm::vec2>();
+  for (const auto& position : positions) {
+    texcoords.emplace_back(position.x * 0.25f + 0.5f, position.y * 0.25f + 0.5f);
+  }
+
+  const auto meshes = std::array{
+    RuntimeMeshSource{.positions = positions, .normals = normals, .texcoords = texcoords, .indices = indices},
+  };
+
+  const auto model = build_runtime_model(meshes);
+
+  ASSERT_TRUE(model.has_value());
+  ASSERT_EQ(model->meshes.size(), 1);
+  const auto& mesh = model->meshes[0];
+  ASSERT_TRUE(mesh.has_texture_coords);
+  ASSERT_EQ(mesh.vertex_count, positions.size());
+  ASSERT_LE(mesh.texture_coords_offset + mesh.vertex_count * sizeof(glm::u16vec2), mesh.blob.size());
+
+  // the build reorders vertices, so match each one back to a source vertex by its position
+  for (auto i = 0_sz; i < mesh.vertex_count; i++) {
+    auto quantized_position = glm::u16vec4();
+    std::memcpy(
+      &quantized_position,
+      mesh.blob.data() + mesh.vertex_positions_offset + i * sizeof(glm::u16vec4),
+      sizeof(glm::u16vec4)
+    );
+    auto quantized_texcoord = glm::u16vec2();
+    std::memcpy(
+      &quantized_texcoord,
+      mesh.blob.data() + mesh.texture_coords_offset + i * sizeof(glm::u16vec2),
+      sizeof(glm::u16vec2)
+    );
+
+    const auto source = std::ranges::find_if(positions, [&](const glm::vec3& position) {
+      return meshopt_quantizeHalf(position.x) == quantized_position.x &&
+             meshopt_quantizeHalf(position.y) == quantized_position.y &&
+             meshopt_quantizeHalf(position.z) == quantized_position.z;
+    });
+    ASSERT_NE(source, positions.end());
+    const auto& texcoord = texcoords[static_cast<usize>(source - positions.begin())];
+    EXPECT_EQ(quantized_texcoord.x, meshopt_quantizeHalf(texcoord.x));
+    EXPECT_EQ(quantized_texcoord.y, meshopt_quantizeHalf(texcoord.y));
+  }
+}
+
+TEST(MeshBuilderTest, RefusesARuntimeMeshWithTheWrongTexcoordCount) {
+  auto positions = std::vector<glm::vec3>();
+  auto normals = std::vector<glm::vec3>();
+  const auto indices = box_triangles(glm::vec3(1.0f), positions, normals);
+  const auto texcoords = std::vector<glm::vec2>(positions.size() - 1);
+
+  const auto meshes = std::array{
+    RuntimeMeshSource{.positions = positions, .normals = normals, .texcoords = texcoords, .indices = indices},
   };
 
   EXPECT_FALSE(build_runtime_model(meshes).has_value());

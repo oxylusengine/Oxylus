@@ -43,10 +43,12 @@ struct SkinBinding {
   std::span<const BoneTransform> inverse_bind_pose = {};
 };
 
-// one mesh of a model made at runtime, `material` names a loaded material asset or is null
+// one mesh of a model made at runtime, `normals` and `texcoords` empty or one per position, `material` names a loaded
+// material asset or is null
 struct RuntimeMeshSource {
   std::span<const glm::vec3> positions = {};
   std::span<const glm::vec3> normals = {};
+  std::span<const glm::vec2> texcoords = {};
   std::span<const u32> indices = {};
   UUID material = UUID(nullptr);
 };

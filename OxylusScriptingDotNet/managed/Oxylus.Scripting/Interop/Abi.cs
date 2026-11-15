@@ -302,6 +302,7 @@ public unsafe struct MeshSourceData
 {
     public Vector3* Positions;
     public Vector3* Normals;
+    public Vector2* TexCoords;
     public uint* Indices;
     public uint VertexCount;
     public uint IndexCount;

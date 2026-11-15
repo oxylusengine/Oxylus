@@ -38,7 +38,7 @@ static_assert(sizeof(OxMaterialData) == 256 && offsetof(OxMaterialData, alpha_mo
 static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, double_sided) == 80);
 static_assert(offsetof(OxMaterialData, water_flow) == 128 && offsetof(OxMaterialData, albedo_texture) == 144);
 static_assert(offsetof(OxMaterialData, transmission_texture) == 224);
-static_assert(sizeof(OxMeshSource) == 48 && offsetof(OxMeshSource, material) == 32);
+static_assert(sizeof(OxMeshSource) == 56 && offsetof(OxMeshSource, material) == 40);
 
 static auto component_dbs = ankerl::unordered_dense::map<ecs_world_t*, ComponentDB*>{};
 static auto frame_time = OxTime{};

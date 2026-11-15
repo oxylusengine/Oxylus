@@ -406,9 +406,14 @@ auto build_runtime_model(std::span<const RuntimeMeshSource> meshes) -> option<Mo
       return nullopt;
     }
 
+    if (!runtime_mesh.texcoords.empty() && runtime_mesh.texcoords.size() != runtime_mesh.positions.size()) {
+      return nullopt;
+    }
+
     const auto source = MeshView{
       .positions = runtime_mesh.positions,
       .normals = runtime_mesh.normals,
+      .texcoords = runtime_mesh.texcoords,
       .indices = runtime_mesh.indices,
     };
     auto mesh = build_mesh(source, {}, 1);
