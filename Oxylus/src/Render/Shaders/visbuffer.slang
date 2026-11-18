@@ -113,8 +113,10 @@ public func compute_partial_derivatives(
     // Appendix A:
     // D =
     let det = determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
-    // same orientation as the 3x3 clip determinant in test_triangle_backface, scaled by 1/(w0*w1*w2) > 0
-    result.is_back_facing = det > 0.0;
+    // the 3x3 clip determinant test_triangle_backface uses, scaled by 1/(w0*w1*w2), which turns negative when a
+    // vertex is behind the camera, as on a large floor or counter triangle passing under the eye
+    let is_w_product_negative = (clip_pos_0.w < 0.0) != (clip_pos_1.w < 0.0) != (clip_pos_2.w < 0.0);
+    result.is_back_facing = (det > 0.0) != is_w_product_negative;
     let inv_det = 1.0 / det;
     // Lambda 1 =
     result.ddx = f32x3(ndc_1.y - ndc_2.y, ndc_2.y - ndc_0.y, ndc_0.y - ndc_1.y) * inv_det * inv_w;
