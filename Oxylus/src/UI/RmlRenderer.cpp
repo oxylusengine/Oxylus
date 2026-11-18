@@ -8,6 +8,7 @@
 #include "Core/App.hpp"
 #include "Memory/SlotMap.hpp"
 #include "Render/RenderContext.hpp"
+#include "Render/Utils/TextureFormat.hpp"
 #include "UI/RmlFileInterface.hpp"
 #include "Utils/Log.hpp"
 
@@ -66,7 +67,7 @@ auto RmlRenderer::upload(this RmlRenderer& self, RenderContext& context) -> void
 }
 
 auto RmlRenderer::record(
-  this RmlRenderer& self, vir::Module& module, RenderContext& render_context, vir::ValueID target
+  this RmlRenderer& self, vir::Module& module, RenderContext& render_context, vir::ValueID target, vir::Extent3D extent
 ) -> vir::ValueID {
   ZoneScoped;
 
@@ -83,10 +84,10 @@ auto RmlRenderer::record(
   static constexpr auto sampler_info = vir::SamplerInfo{
     .mag_filter = VK_FILTER_LINEAR,
     .min_filter = VK_FILTER_LINEAR,
-    .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-    .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-    .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-    .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+    .address_mode_u = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    .address_mode_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    .address_mode_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
   };
   const auto sampler_index = SlotMap_decode_id(render_context.cached_sampler(sampler_info)).index;
 
@@ -115,25 +116,69 @@ auto RmlRenderer::record(
         f32 screen_size[2] = {};
         u32 image_index = 0;
         u32 sampler_index = 0;
+        u32 is_texture_srgb = 0;
+        u32 padding = 0;
       } push = {
         .vertices = self.vertex_buffer.device_address + cmd.vertex_offset * sizeof(Rml::Vertex),
         .translation = {cmd.translation.x, cmd.translation.y},
         .screen_size = {static_cast<f32>(area.extent.width), static_cast<f32>(area.extent.height)},
         .image_index = (texture ? *texture : self.white_texture).get_view_index(),
         .sampler_index = sampler_index,
+        .is_texture_srgb = texture && texture->is_srgb() ? 1_u32 : 0_u32,
       };
       std::memcpy(push.transform, cmd.transform.data(), sizeof(push.transform));
       recorder.push_constants(push).draw_indexed(cmd.index_count, 1, cmd.index_offset, 0, 0);
     }
   });
 
-  return module.begin_rendering({{target, vir::Access::ColorRW}})
-    .with_name("rmlui")
-    .bind_graphics_pipeline(render_context.pipeline("rmlui"))
-    .set_color_blend(0, blend_state)
+  const auto target_format =
+    module.image_format(target).value_or(std::pair{vir::Format::RGBA8Srgb, vir::Samples::e1}).first;
+  const auto is_target_srgb = to_unorm_format(target_format) != target_format;
+
+  auto layer_msaa = module.transient_image({
+    .extent = extent,
+    .format = vir::Format::RGBA8Unorm,
+    .samples = vir::Samples::e4,
+    .name = "rmlui layer msaa",
+  });
+  layer_msaa = module.clear(layer_msaa, vir::ClearValue::rgba_f32(0.0f, 0.0f, 0.0f, 0.0f));
+  layer_msaa = module.begin_rendering({{layer_msaa, vir::Access::ColorRW}})
+                 .with_name("rmlui")
+                 .bind_graphics_pipeline(render_context.pipeline("rmlui"))
+                 .set_color_blend(0, blend_state)
+                 .set_viewport(0, vir::Rect2D::framebuffer())
+                 .set_scissor(0, vir::Rect2D::framebuffer())
+                 .record_from(draws)
+                 .end_rendering()[0];
+
+  auto layer = module.transient_image({
+    .extent = extent,
+    .format = vir::Format::RGBA8Unorm,
+    .name = "rmlui layer",
+  });
+  layer = module.resolve(layer_msaa, layer);
+
+  auto scene_copy = module.transient_image({.extent = extent, .format = target_format, .name = "rmlui scene"});
+  scene_copy = module.copy_image(target, scene_copy);
+
+  struct CompositePush {
+    u32 is_target_srgb = 0;
+  } composite_push = {.is_target_srgb = is_target_srgb ? 1_u32 : 0_u32};
+
+  return module
+    .begin_rendering(
+      {{target, vir::Access::ColorWrite},
+       {scene_copy, vir::Access::FragmentSampled},
+       {layer, vir::Access::FragmentSampled}}
+    )
+    .with_name("rmlui composite")
+    .bind_graphics_pipeline(render_context.pipeline("rmlui_composite"))
     .set_viewport(0, vir::Rect2D::framebuffer())
     .set_scissor(0, vir::Rect2D::framebuffer())
-    .record_from(draws)
+    .bind_image(0, 0, scene_copy)
+    .bind_image(0, 1, layer)
+    .push_constants(composite_push)
+    .draw(3, 1)
     .end_rendering()[0];
 }
 

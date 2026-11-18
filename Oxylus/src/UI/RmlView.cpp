@@ -68,15 +68,16 @@ auto RmlView::upload(this RmlView& self, RenderContext& context) -> void {
   }
 }
 
-auto RmlView::record(this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target)
-  -> vir::ValueID {
+auto RmlView::record(
+  this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target, vir::Extent3D extent
+) -> vir::ValueID {
   ZoneScoped;
 
   if (!self.rml_context) {
     return target;
   }
 
-  return self.renderer->record(module, render_context, target);
+  return self.renderer->record(module, render_context, target, extent);
 }
 
 auto RmlView::set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 size, bool keyboard_focused_) -> void {

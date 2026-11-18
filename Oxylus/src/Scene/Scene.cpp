@@ -4047,7 +4047,12 @@ auto Scene::render(
     ri->add_stage_after(RenderStage::FinalOutput, "rmlui", [view = self.rml_view.get()](RenderStageContext& ctx) {
       ctx.set_image_resource(
         "result_attachment",
-        view->record(ctx.module, ctx.render_context, ctx.get_image_resource("result_attachment"))
+        view->record(
+          ctx.module,
+          ctx.render_context,
+          ctx.get_image_resource("result_attachment"),
+          {ctx.display_size.x, ctx.display_size.y, 1}
+        )
       );
     });
   }
