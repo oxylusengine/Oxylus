@@ -211,6 +211,8 @@ auto RendererInstance::decode_visbuffer(
     values.transforms_world,
     values.transforms_previous,
     values.materials,
+    values.decals,
+    values.decal_tiles,
     context.visbuffer_attachment,
     context.albedo_attachment,
     context.normal_attachment,
@@ -227,6 +229,8 @@ auto RendererInstance::decode_visbuffer(
          {values.transforms_world, vir::Access::FragmentRead},
          {values.transforms_previous, vir::Access::FragmentRead},
          {values.materials, vir::Access::FragmentRead},
+         {values.decals, vir::Access::FragmentRead},
+         {values.decal_tiles, vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::FragmentSampled},
          {context.albedo_attachment, vir::Access::ColorRW},
          {context.normal_attachment, vir::Access::ColorRW},
@@ -246,6 +250,9 @@ auto RendererInstance::decode_visbuffer(
       .bind_buffer(0, 5, values.transforms_previous)
       .bind_buffer(0, 6, values.materials)
       .bind_image(0, 7, context.visbuffer_attachment)
+      .push_constant_address(0, values.decals)
+      .push_constant_address(8, values.decal_tiles)
+      .push_constants_from_at(16, recording.prepared.decal_count)
       .draw_range(3, 1, 0, 1)
       .end_rendering()
   );

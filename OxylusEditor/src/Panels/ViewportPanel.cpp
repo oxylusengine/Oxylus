@@ -24,6 +24,7 @@
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Camera.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Upscaler.hpp"
@@ -1911,6 +1912,34 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
 
   if (selected_entity == flecs::entity::null())
     return;
+
+  if (selected_entity.has<DecalComponent>()) {
+    auto& debug_renderer = self.editor_scene->get_scene()->debug_renderer;
+    const glm::mat4 decal_world = Scene::get_world_transform(selected_entity);
+    const auto decal_color = glm::vec4(1.0f, 0.75f, 0.1f, 1.0f);
+
+    auto corners = std::array<glm::vec3, 8>{};
+    for (u32 i = 0; i < corners.size(); i++) {
+      const auto local = glm::vec3(
+        (i & 1) != 0 ? 0.5f : -0.5f,
+        (i & 2) != 0 ? 0.5f : -0.5f,
+        (i & 4) != 0 ? 0.5f : -0.5f
+      );
+      corners[i] = glm::vec3(decal_world * glm::vec4(local, 1.0f));
+    }
+
+    for (u32 i = 0; i < corners.size(); i++) {
+      for (const u32 bit : {1u, 2u, 4u}) {
+        if ((i & bit) == 0)
+          debug_renderer.draw_line(corners[i], corners[i | bit], 1.0f, decal_color, false);
+      }
+    }
+
+    const auto center = glm::vec3(decal_world[3]);
+    const auto direction = glm::normalize(glm::vec3(decal_world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+    const auto depth = glm::length(glm::vec3(decal_world[2]));
+    debug_renderer.draw_line(center, center + direction * depth, 1.0f, decal_color, false);
+  }
 
   const auto is_vertex_snapping = self.vertex_snap.update({
     .scene = self.editor_scene->get_scene().get(),

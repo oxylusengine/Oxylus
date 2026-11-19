@@ -132,6 +132,22 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = DecalComponent;
+    registry.bind<
+      &C::material,
+      &C::opacity,
+      &C::sort_order,
+      &C::angle_fade_start,
+      &C::angle_fade_end,
+      &C::depth_fade,
+      &C::layer_mask,
+      &C::affect_albedo,
+      &C::affect_normal,
+      &C::affect_metallic_roughness,
+      &C::affect_emissive>();
+  }
+
+  {
     using C = SkyComponent;
     registry.bind<&C::solid_color, &C::ambient_color, &C::texture>();
   }

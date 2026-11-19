@@ -786,6 +786,17 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  // the layer bits are copied into the mesh instance, so a layer edit reattaches the mesh
+  self.world.observer<LayerComponent, MeshComponent>()
+    .term_at<MeshComponent>()
+    .filter()
+    .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, LayerComponent&, MeshComponent& mc) {
+      if (mc.model_uuid) {
+        self.attach_mesh(it.entity(i), mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+      }
+    });
+
   // the general TransformComponent observer above owns world-transform propagation, so this one
   // only refreshes mesh-local derived data, with MeshComponent a filter so mesh edits do not run it
   self.world.observer<TransformComponent, MeshComponent>()
@@ -922,6 +933,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         App::mod<AssetManager>().unload_asset(c.lut);
       }
     });
+
+  self.world.observer<DecalComponent>().event(flecs::OnRemove).each([](flecs::iter&, usize, DecalComponent& c) {
+    if (c.material) {
+      App::mod<AssetManager>().unload_asset(c.material);
+    }
+  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -1686,6 +1703,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
         gpu_mesh_instance.flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows
                                                              : GPU::MeshInstanceFlag::None;
+        gpu_mesh_instance.layer_mask = mesh_instance.layer_mask;
 
         const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
         mesh_slot_to_gpu_index[static_cast<u32>(index)] = gpu_index;
@@ -2998,6 +3016,7 @@ auto Scene::attach_mesh(
     self.meshes_dirty = true;
   }
 
+  const auto* layer = entity.try_get<LayerComponent>();
   auto instance_id = self.mesh_instances.create_slot(
     MeshInstance{
       .model_uuid = model_uuid,
@@ -3006,6 +3025,7 @@ auto Scene::attach_mesh(
       .transform_id = transform_id,
       .animator_entity = animator_entity ? animator_entity.id() : 0,
       .cast_shadows = cast_shadows,
+      .layer_mask = layer ? static_cast<u32>(layer->layer) : 1_u32,
     }
   );
   self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);

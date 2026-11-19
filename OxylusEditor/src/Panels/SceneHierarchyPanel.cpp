@@ -628,6 +628,13 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
       to_select = self.scene_->create_entity("probe_volume", true).add<ProbeVolumeComponent>();
     }
 
+    if (ImGui::MenuItem("Decal")) {
+      to_select = self.scene_->create_entity("decal", true).add<DecalComponent>();
+      auto& decal_transform = to_select.get_mut<TransformComponent>();
+      decal_transform.rotation = glm::angleAxis(-glm::half_pi<f32>(), glm::vec3(1.0f, 0.0f, 0.0f));
+      decal_transform.scale = glm::vec3(2.0f, 2.0f, 1.0f);
+    }
+
     if (ImGui::BeginMenu("Light")) {
       if (ImGui::MenuItem("Light")) {
         to_select = self.scene_->create_entity("light", true).add<LightComponent>();

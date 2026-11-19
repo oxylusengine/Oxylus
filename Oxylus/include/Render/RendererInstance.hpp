@@ -312,6 +312,7 @@ struct FrameShape {
   bool has_blend_meshes = false;
   bool has_refractors = false;
   bool has_terrain = false;
+  bool has_decals = false;
   bool has_sprites = false;
   bool has_particles = false;
   bool has_atmosphere = false;
@@ -382,6 +383,8 @@ struct FrameValues {
   vir::ValueID camera = vir::ValueID::Invalid;
   vir::ValueID atmosphere = vir::ValueID::Invalid;
   vir::ValueID lights = vir::ValueID::Invalid;
+  vir::ValueID decals = vir::ValueID::Invalid;
+  vir::ValueID decal_tiles = vir::ValueID::Invalid;
   vir::ValueID exposure = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
@@ -458,6 +461,10 @@ struct MainGeometryContext {
 
 struct LightGridContext {
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+};
+
+struct DecalCullContext {
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
@@ -1050,6 +1057,8 @@ struct PreparedFrame {
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
   vir::ValueID probe_volumes = vir::ValueID::Invalid;
+  vir::ValueID decals = vir::ValueID::Invalid;
+  vir::ValueID decal_count = vir::ValueID::Invalid;
   vir::ValueID sprites = vir::ValueID::Invalid;
 
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
@@ -1253,6 +1262,9 @@ public:
   ) -> std::pair<vir::ValueID, vir::ValueID>;
   auto decode_visbuffer(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
+  ) -> void;
+  auto cull_decals(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, DecalCullContext& context
   ) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
@@ -1499,6 +1511,8 @@ private:
   ankerl::svector<GPU::ProbeVolume, 8> probe_volumes = {};
   ankerl::svector<ProbeVolumeKey, 8> probe_volume_keys = {};
   ankerl::svector<ProbeVolumeScroll, 8> probe_volume_scrolls = {};
+  std::vector<GPU::Decal> decals = {};
+  bool has_warned_decal_limit = false;
   GPU::Atmosphere atmosphere = {};
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;

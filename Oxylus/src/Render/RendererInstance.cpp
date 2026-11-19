@@ -15,11 +15,15 @@
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Enum.hpp"
+#include "Memory/SlotMap.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/BoundingVolume.hpp"
+#include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
@@ -481,6 +485,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_blend_meshes,
     shape.has_refractors,
     shape.has_terrain,
+    shape.has_decals,
     shape.has_sprites,
     shape.has_particles,
     shape.has_atmosphere,
@@ -1070,6 +1075,7 @@ auto RendererInstance::frame_shape(
     .has_blend_meshes = has_blend_meshes,
     .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
+    .has_decals = !self.decals.empty(),
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
     .has_atmosphere = static_cast<bool>(flags & GPU::SceneFlags::HasAtmosphere),
@@ -1377,6 +1383,18 @@ auto RendererInstance::bind_frame(
     }
     program.set(prepared.probe_volumes, staging.value_or(vir::Buffer{}));
   }
+
+  const auto has_decals = program.has_variable(prepared.decals);
+  if (has_decals) {
+    auto staging = render_context.upload_frame_buffer(host_bytes(self.decals), "decals");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "decals");
+    }
+    program.set(prepared.decals, staging.value_or(vir::Buffer{}));
+  }
+
+  program.set_bytes(prepared.decal_count, has_decals ? static_cast<u32>(self.decals.size()) : 0_u32);
+
   if (program.has_variable(prepared.sprites)) {
     auto staging = render_context.upload_frame_buffer(host_bytes(self.render_queue_2d.sprite_data), "sprites");
     if (!staging) {
@@ -1745,6 +1763,27 @@ auto RendererInstance::record_frame(
   );
   values.lights = record_upload(module, "lights upload", prepared.lights, prepared.lights_upload);
 
+  // both decode passes push the decal address, so a frame without decals points them at a stand in
+  if (shape.has_decals) {
+    prepared.decals = module.declare_buffer_var("decals", vir::Access::None);
+    values.decals = prepared.decals;
+  } else {
+    values.decals = module.transient_buffer({
+      .size = sizeof(GPU::Decal),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused decals",
+    });
+    values.decal_tiles = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused decal tiles",
+    });
+  }
+
+  prepared.decal_count = module.declare_bytes_var("decal count", sizeof(u32));
+
   prepared.meshlet_instance_visibility_mask = module.declare_buffer_var(
     "meshlet instance visibility mask",
     GPU_STATE_REST
@@ -2096,6 +2135,12 @@ auto RendererInstance::record_frame(
         main_geometry_context.depth_attachment,
         refractor_visbuffer_attachment
       );
+
+    if (shape.has_decals) {
+      auto decal_cull_context = DecalCullContext{.depth_attachment = main_geometry_context.depth_attachment};
+      self.cull_decals(module, recording, decal_cull_context);
+      main_geometry_context.depth_attachment = decal_cull_context.depth_attachment;
+    }
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -3200,6 +3245,98 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           glm::vec4(0, 1, 1, 1)
         );
       }
+    }
+  }
+
+  self.decals.clear();
+  {
+    struct PendingDecal {
+      i32 sort_order = 0;
+      u64 entity_id = 0;
+      GPU::Decal decal = {};
+    };
+
+    ankerl::svector<PendingDecal, 16> pending_decals = {};
+    const auto frustum = Camera::get_frustum(cam, cam.position);
+    self.scene.world
+      .query_builder<const TransformComponent, const DecalComponent>() //
+      .build()
+      .each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
+        if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
+          return;
+        }
+
+        auto material_index = 0_u32;
+        {
+          const auto asset = asset_man.get_asset(c.material);
+          if (!asset || asset->type != AssetType::Material) {
+            return;
+          }
+
+          material_index = SlotMap_decode_id(asset->material_id).index;
+        }
+
+        const auto world = self.scene.get_world_transform(e);
+        if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+          return;
+        }
+
+        const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+        if (!bounds.is_on_frustum(frustum)) {
+          return;
+        }
+
+        const auto angle_fade_start = glm::radians(std::clamp(c.angle_fade_start, 0.0f, 180.0f));
+        const auto angle_fade_end = std::max(
+          glm::radians(std::clamp(c.angle_fade_end, 0.0f, 180.0f)),
+          angle_fade_start
+        );
+        auto flags = GPU::DecalFlag::None;
+        if (c.affect_albedo) {
+          flags |= GPU::DecalFlag::AffectAlbedo;
+        }
+
+        if (c.affect_normal) {
+          flags |= GPU::DecalFlag::AffectNormal;
+        }
+
+        if (c.affect_metallic_roughness) {
+          flags |= GPU::DecalFlag::AffectMetallicRoughness;
+        }
+
+        if (c.affect_emissive) {
+          flags |= GPU::DecalFlag::AffectEmissive;
+        }
+
+        pending_decals.push_back({
+          .sort_order = c.sort_order,
+          .entity_id = static_cast<u64>(e.id()),
+          .decal = GPU::Decal{
+            .world_to_decal = glm::inverse(world),
+            .world_axis_z = glm::normalize(glm::vec3(world[2])),
+            .material_index = material_index,
+            .opacity = std::min(c.opacity, 1.0f),
+            .angle_fade_start_cos = std::cos(angle_fade_start),
+            .angle_fade_end_cos = std::cos(angle_fade_end),
+            .depth_fade = std::clamp(c.depth_fade, 0.0f, 0.5f),
+            .flags = flags,
+            .layer_mask = c.layer_mask,
+          },
+        });
+      });
+
+    std::ranges::sort(pending_decals, [](const PendingDecal& a, const PendingDecal& b) {
+      return a.sort_order != b.sort_order ? a.sort_order < b.sort_order : a.entity_id < b.entity_id;
+    });
+
+    if (pending_decals.size() > GPU::MAX_DECALS && !self.has_warned_decal_limit) {
+      OX_LOG_WARN("{} decals are visible, only the {} lowest sorted are drawn", pending_decals.size(), GPU::MAX_DECALS);
+      self.has_warned_decal_limit = true;
+    }
+
+    const auto decal_count = std::min<usize>(pending_decals.size(), GPU::MAX_DECALS);
+    for (const auto& pending : std::span(pending_decals).first(decal_count)) {
+      self.decals.push_back(pending.decal);
     }
   }
 

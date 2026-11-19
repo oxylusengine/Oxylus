@@ -217,6 +217,48 @@ public sealed class ContentProbe : SceneBehaviour
 
 // a model's materials and one material's parameters, against the assets TestDotNetScene registers. It leaves the
 // material pointing at textures a, b and c, and gives them up again when it stops
+// a DecalComponent's material through Entity.Decal, against the material and texture TestDotNetScene registers for it
+public sealed class DecalProbe : SceneBehaviour
+{
+    public override void OnStart()
+    {
+        var paint = Assets.Find("Materials/decal_paint.mat");
+        var texture = Assets.Find("Textures/decal_not_a_material.png");
+        var decal = World.Spawn("Decal").Add<DecalComponent>();
+        var defaults = decal.Get<DecalComponent>();
+        Log.Info($"decal defaults opacity {defaults.Opacity:F2} mask {defaults.LayerMask} albedo {defaults.AffectAlbedo} material {defaults.Material.IsValid}");
+
+        decal.Decal.SetMaterial(paint);
+        Log.Info($"decal set {decal.Decal.Material == paint} refs {Assets.Info(paint).RefCount}");
+        decal.Decal.SetMaterial(paint);
+        Log.Info($"decal set again refs {Assets.Info(paint).RefCount}");
+
+        var plain = World.Spawn("Plain");
+        Log.Info($"decal refused texture {Throws(() => decal.Decal.SetMaterial(texture))} plain {Throws(() => plain.Decal.SetMaterial(paint))} " +
+                 $"kept {decal.Decal.Material == paint} refs {Assets.Info(paint).RefCount}");
+
+        decal.Decal.SetMaterial(default);
+        Log.Info($"decal cleared {decal.Decal.Material.IsValid} refs {Assets.Info(paint).RefCount}");
+
+        decal.Decal.SetMaterial(paint);
+        decal.Destruct();
+        Log.Info($"decal destroyed refs {Assets.Info(paint).RefCount}");
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+}
+
 public sealed class MaterialProbe : SceneBehaviour
 {
     AssetId stone;

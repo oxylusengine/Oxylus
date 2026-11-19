@@ -35,6 +35,44 @@
 namespace ox {
 static UUID pending_save_material_uuid = {};
 
+// two rows of eight, layer 0 first
+static auto draw_layer_mask(const c8* label, u16* mask) -> bool {
+  UI::begin_property_grid(label, "One checkbox per layer, layer 0 is the default one");
+
+  auto is_changed = false;
+  for (u32 bit = 0; bit < 16; bit++) {
+    if (bit % 8 != 0) {
+      ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    }
+
+    ImGui::PushID(static_cast<i32>(bit));
+    auto is_set = ((*mask >> bit) & 1u) != 0;
+    if (ImGui::Checkbox("##layer", &is_set)) {
+      *mask = static_cast<u16>(*mask ^ (1u << bit));
+      is_changed = true;
+    }
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+      ImGui::SetTooltip("Layer %u", bit);
+    }
+
+    ImGui::PopID();
+  }
+
+  UI::end_property_grid();
+  return is_changed;
+}
+
+static auto collect_layered_descendants(flecs::entity entity, ankerl::svector<flecs::entity, 32>& descendants) -> void {
+  entity.children([&descendants](flecs::entity child) {
+    if (child.has<LayerComponent>()) {
+      descendants.push_back(child);
+    }
+
+    collect_layered_descendants(child, descendants);
+  });
+}
+
 // Components only carry a UUID, and nothing in the reflection says which kind of asset a field
 // points at, so an empty field is matched by the name the component gave it. A field that already
 // holds something uses the type of what it holds instead.
@@ -278,7 +316,9 @@ struct EntityInspector : IEntitySerializer {
         },
         [&](u16* v) {
           auto old_v = *v;
-          if (UI::property(name.data(), v)) {
+          // DecalComponent::layer_mask and LayerComponent::layer, the two layer bitmasks
+          const auto is_layer_mask = name == "layer_mask" || name == "layer";
+          if (is_layer_mask ? draw_layer_mask(name.data(), v) : UI::property(name.data(), v)) {
             undo_redo_system.execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, std::string(name));
             modified = true;
           }
@@ -872,6 +912,46 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       }
 
       UI::end_properties();
+
+      if (fid == world.id<LayerComponent>()) {
+        auto is_parent = false;
+        entity.children([&is_parent](flecs::entity) { is_parent = true; });
+        static constexpr auto APPLY_LAYER_TOOLTIP = "Copies this layer onto every descendant with a LayerComponent.\n"
+                                                    "An imported model keeps each mesh on its own child entity.";
+        if (
+          is_parent &&
+          UI::button(stack.format_char("{} Apply to children", ICON_MDI_FILE_TREE), {}, APPLY_LAYER_TOOLTIP)
+        ) {
+          auto descendants = ankerl::svector<flecs::entity, 32>{};
+          collect_layered_descendants(entity, descendants);
+
+          const auto layer = entity.get<LayerComponent>().layer;
+          auto group = undo_redo_system->begin_group("apply layer to children");
+          for (const auto child : descendants) {
+            const auto old_layer = child.get<LayerComponent>().layer;
+            if (old_layer == layer) {
+              continue;
+            }
+
+            // by value rather than through a pointer into flecs storage, which moves when archetypes change
+            group->add_command<LambdaCommand>(
+              [child, layer] {
+                if (child.is_alive()) {
+                  child.set<LayerComponent>({.layer = layer});
+                }
+              },
+              [child, old_layer] {
+                if (child.is_alive()) {
+                  child.set<LayerComponent>({.layer = old_layer});
+                }
+              },
+              "apply layer"
+            );
+          }
+
+          undo_redo_system->execute_group(std::move(group));
+        }
+      }
 
       if (fid == world.id<ColorGradingComponent>()) {
         static constexpr auto

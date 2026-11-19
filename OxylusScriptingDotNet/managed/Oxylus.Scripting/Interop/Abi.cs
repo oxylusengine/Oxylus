@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 19;
+    public const uint Version = 20;
 }
 
 public enum OxStatus : int
@@ -551,6 +551,8 @@ public unsafe struct NativeApi
     public delegate* unmanaged<nint, ulong, AudioState*, OxStatus> AudioState;
     public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> AudioSetSound;
     public delegate* unmanaged<AssetId*, float, Vector3*, OxStatus> AudioOneShot;
+
+    public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> DecalSetMaterial;
 
     public delegate* unmanaged<nint, StringView, ulong, ulong> SceneSpawn;
     public delegate* unmanaged<nint, AssetId*, ulong, ulong> SceneSpawnModel;

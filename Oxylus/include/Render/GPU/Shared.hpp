@@ -245,6 +245,8 @@ struct MeshInstance {
   // table. Meaningless unless `skinned_vertex_positions` is set
   u32 skinned_instance_index = 0;
   MeshInstanceFlag flags = MeshInstanceFlag::None;
+  // the entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   OX_PTR(u16x4) skinned_vertex_positions = {};
@@ -379,6 +381,37 @@ struct Light {
   // -1 disables shadows
   i32 shadow_map_index = -1;
   u32 pad = 0;
+};
+
+// --- Decals ---
+
+OX_CONST u32 MAX_DECALS = 256;
+// one cull thread per pixel of a tile and one per decal, so a tile has as many pixels as there are decals
+OX_CONST u32 DECAL_TILE_SIZE = 16;
+OX_CONST u32 DECAL_TILE_WORDS = MAX_DECALS / 32;
+
+enum class DecalFlag : u32 {
+  None = 0,
+  AffectAlbedo = 1 << 0,
+  AffectNormal = 1 << 1,
+  AffectMetallicRoughness = 1 << 2,
+  AffectEmissive = 1 << 3,
+};
+OX_BITMASK(DecalFlag)
+
+struct Decal {
+  // world to the unit box [-0.5, 0.5]^3, which projects along its -z
+  mat4 world_to_decal = {};
+  f32x3 world_axis_z = {};
+  u32 material_index = 0;
+  f32 opacity = 1.0f;
+  f32 angle_fade_start_cos = 0.0f;
+  f32 angle_fade_end_cos = 0.0f;
+  // in box space, so 0.5 fades over the whole half depth
+  f32 depth_fade = 0.0f;
+  DecalFlag flags = DecalFlag::None;
+  u32 layer_mask = ~0u;
+  u32x2 pad = {};
 };
 
 // --- DDGI ---
@@ -811,6 +844,8 @@ struct TerrainData {
   f32 triplanar_begin = 0.5f;
   u32x4 layer_material_indices = u32x4(TERRAIN_INVALID_LAYER_MATERIAL);
   f32 brush_radius = 0.0f;
+  // the terrain entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
 };
 
 // --- 2D ---
