@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 19u
+#define OX_DOTNET_ABI_VERSION 20u
 
 struct ecs_world_t;
 
@@ -604,6 +604,10 @@ struct OxNativeApi {
   auto (*audio_set_sound)(ecs_world_t* world, u64 entity, const OxAssetId* sound) -> OxStatus = nullptr;
   // a loaded audio asset, a null position plays it flat
   auto (*audio_one_shot)(const OxAssetId* sound, f32 volume, const OxVec3* position) -> OxStatus = nullptr;
+
+  // acquires `material` for the entity's DecalComponent and gives the reference its previous material held back, a
+  // default id clears it. NotFound without a DecalComponent or for an unknown id, InvalidArgument for a non-material
+  auto (*decal_set_material)(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus = nullptr;
 
   // a scene's entities, with the TransformComponent and LayerComponent every scene entity has, 0 on failure
   auto (*scene_spawn)(ecs_world_t* world, OxStringView name, u64 parent) -> u64 = nullptr;

@@ -494,6 +494,55 @@ static auto audio_set_sound(ecs_world_t* world, u64 entity, const OxAssetId* sou
   return OxStatus::Ok;
 }
 
+static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
+  ZoneScoped;
+
+  auto* assets = asset_manager();
+  if (!assets || entity == 0 || !ecs_is_alive(world, entity)) {
+    return OxStatus::NotFound;
+  }
+
+  const auto* decal = flecs::entity(world, entity).try_get<DecalComponent>();
+  if (!decal) {
+    return OxStatus::NotFound;
+  }
+
+  const auto uuid = to_uuid(*material);
+  if (uuid == decal->material) {
+    return OxStatus::Ok;
+  }
+
+  if (uuid) {
+    auto type = AssetType::None;
+    {
+      const auto asset = assets->get_asset(uuid);
+      if (!asset) {
+        return OxStatus::NotFound;
+      }
+
+      type = asset->type;
+    }
+
+    if (type != AssetType::Material) {
+      return OxStatus::InvalidArgument;
+    }
+
+    // the component owns a reference on whatever it names, its OnRemove gives back the last one
+    if (!assets->load_asset(uuid)) {
+      return OxStatus::NotFound;
+    }
+  }
+
+  auto updated = *decal;
+  if (updated.material) {
+    assets->unload_asset(updated.material);
+  }
+
+  updated.material = uuid;
+  flecs::entity(world, entity).set<DecalComponent>(updated);
+  return OxStatus::Ok;
+}
+
 static auto audio_one_shot(const OxAssetId* sound, f32 volume, const OxVec3* position) -> OxStatus {
   ZoneScoped;
 
@@ -844,6 +893,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.audio_state = audio_state;
   api.audio_set_sound = audio_set_sound;
   api.audio_one_shot = audio_one_shot;
+  api.decal_set_material = decal_set_material;
   api.scene_spawn = scene_spawn;
   api.scene_spawn_model = scene_spawn_model;
   api.scene_spawn_particles = scene_spawn_particles;
