@@ -35,6 +35,34 @@
 namespace ox {
 static UUID pending_save_material_uuid = {};
 
+// two rows of eight, layer 0 first
+static auto draw_layer_mask(const c8* label, u16* mask) -> bool {
+  UI::begin_property_grid(label, "One checkbox per layer, layer 0 is the default one");
+
+  auto is_changed = false;
+  for (u32 bit = 0; bit < 16; bit++) {
+    if (bit % 8 != 0) {
+      ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    }
+
+    ImGui::PushID(static_cast<i32>(bit));
+    auto is_set = ((*mask >> bit) & 1u) != 0;
+    if (ImGui::Checkbox("##layer", &is_set)) {
+      *mask = static_cast<u16>(*mask ^ (1u << bit));
+      is_changed = true;
+    }
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+      ImGui::SetTooltip("Layer %u", bit);
+    }
+
+    ImGui::PopID();
+  }
+
+  UI::end_property_grid();
+  return is_changed;
+}
+
 static auto collect_layered_descendants(flecs::entity entity, ankerl::svector<flecs::entity, 32>& descendants) -> void {
   entity.children([&descendants](flecs::entity child) {
     if (child.has<LayerComponent>()) {
@@ -288,7 +316,9 @@ struct EntityInspector : IEntitySerializer {
         },
         [&](u16* v) {
           auto old_v = *v;
-          if (UI::property(name.data(), v)) {
+          // DecalComponent::layer_mask and LayerComponent::layer, the two layer bitmasks
+          const auto is_layer_mask = name == "layer_mask" || name == "layer";
+          if (is_layer_mask ? draw_layer_mask(name.data(), v) : UI::property(name.data(), v)) {
             undo_redo_system.execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, std::string(name));
             modified = true;
           }
