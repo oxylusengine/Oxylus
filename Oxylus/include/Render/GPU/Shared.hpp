@@ -386,6 +386,9 @@ struct Light {
 // --- Decals ---
 
 OX_CONST u32 MAX_DECALS = 256;
+// one cull thread per pixel of a tile and one per decal, so a tile has as many pixels as there are decals
+OX_CONST u32 DECAL_TILE_SIZE = 16;
+OX_CONST u32 DECAL_TILE_WORDS = MAX_DECALS / 32;
 
 enum class DecalFlag : u32 {
   None = 0,

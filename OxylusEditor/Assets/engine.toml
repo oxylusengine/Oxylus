@@ -318,6 +318,11 @@ path = "passes/light_grid.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "decal_cull"
+path = "passes/decal_cull.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "hiz"
 path = "passes/hiz.slang"
 entry_points = ["cs_main"]

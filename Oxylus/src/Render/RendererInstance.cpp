@@ -1774,6 +1774,12 @@ auto RendererInstance::record_frame(
       .location = vir::MemoryLocation::GpuOnly,
       .name = "unused decals",
     });
+    values.decal_tiles = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused decal tiles",
+    });
   }
 
   prepared.decal_count = module.declare_bytes_var("decal count", sizeof(u32));
@@ -2129,6 +2135,12 @@ auto RendererInstance::record_frame(
         main_geometry_context.depth_attachment,
         refractor_visbuffer_attachment
       );
+
+    if (shape.has_decals) {
+      auto decal_cull_context = DecalCullContext{.depth_attachment = main_geometry_context.depth_attachment};
+      self.cull_decals(module, recording, decal_cull_context);
+      main_geometry_context.depth_attachment = decal_cull_context.depth_attachment;
+    }
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);

@@ -23,6 +23,7 @@ ParameterBlock<ShaderParameters> params;
 
 struct DecodePush {
     Decal *decals;
+    u32 *decal_tiles;
     u32 decal_count;
 };
 [[vk::push_constant]] DecodePush push;
@@ -215,7 +216,10 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
     apply_decals(
         target,
         push.decals,
+        push.decal_tiles,
         push.decal_count,
+        u32x2(uv * params.camera.resolution),
+        params.camera.resolution,
         params.materials,
         world_position,
         ddx_world,

@@ -384,6 +384,7 @@ struct FrameValues {
   vir::ValueID atmosphere = vir::ValueID::Invalid;
   vir::ValueID lights = vir::ValueID::Invalid;
   vir::ValueID decals = vir::ValueID::Invalid;
+  vir::ValueID decal_tiles = vir::ValueID::Invalid;
   vir::ValueID exposure = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
@@ -460,6 +461,10 @@ struct MainGeometryContext {
 
 struct LightGridContext {
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+};
+
+struct DecalCullContext {
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
@@ -1257,6 +1262,9 @@ public:
   ) -> std::pair<vir::ValueID, vir::ValueID>;
   auto decode_visbuffer(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
+  ) -> void;
+  auto cull_decals(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, DecalCullContext& context
   ) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
