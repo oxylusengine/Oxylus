@@ -3,6 +3,7 @@ import gpu;
 import scene;
 import visbuffer;
 import pbr;
+import decal;
 
 #include <fullscreen.slang>
 
@@ -19,6 +20,12 @@ struct ShaderParameters {
     StructuredBuffer<TerrainBrushHit> brush_hit;
 };
 ParameterBlock<ShaderParameters> params;
+
+struct DecodePush {
+    Decal *decals;
+    u32 decal_count;
+};
+[[vk::push_constant]] DecodePush push;
 
 struct FragmentOutput {
     f32x4 albedo_color : SV_Target0;
@@ -180,7 +187,7 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         bitangent = lerp(bitangent, f32x3(0.0, -1.0, 0.0), triplanar_amount);
     }
 
-    let shading_normal = terrain_shading_normal(surface.tangent_normal, geometric_normal, tangent, bitangent);
+    var shading_normal = terrain_shading_normal(surface.tangent_normal, geometric_normal, tangent, bitangent);
     let shading_normal_x = terrain_shading_normal(
         surface.tangent_normal_x,
         terrain_normal(params.terrain.world_to_uv(world_position.xz + ddx_world.xz)),
@@ -198,6 +205,28 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         shading_normal_x - shading_normal,
         shading_normal_y - shading_normal
     );
+
+    DecalTarget target;
+    target.albedo = surface.albedo.rgb;
+    target.normal = shading_normal;
+    target.emissive = surface.emissive;
+    target.metallic = surface.metallic_roughness.x;
+    target.roughness = surface.metallic_roughness.y;
+    apply_decals(
+        target,
+        push.decals,
+        push.decal_count,
+        params.materials,
+        world_position,
+        ddx_world,
+        ddy_world,
+        geometric_normal,
+        params.camera.texture_mip_bias
+    );
+    surface.albedo.rgb = target.albedo;
+    shading_normal = target.normal;
+    surface.emissive = target.emissive;
+    surface.metallic_roughness = f32x2(target.metallic, target.roughness);
 
     if (params.terrain.brush_radius > 0.0 && params.brush_hit[0].valid != 0u) {
         let ring_distance = distance(world_position.xz, params.brush_hit[0].world_position.xz);

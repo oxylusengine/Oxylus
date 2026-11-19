@@ -269,6 +269,8 @@ public struct DecodedSurface {
     public TriangleSample triangle;
     public TangentFrame frame;
     public UVGradient uv_grad;
+    public f32x3 position_dx;
+    public f32x3 position_dy;
 };
 
 public func decode_triangle_surface(
@@ -325,6 +327,8 @@ public func decode_triangle_surface(
     result.surface = surface;
     result.frame = frame;
     result.uv_grad = tex_coord_grad;
+    result.position_dx = position_dx;
+    result.position_dy = position_dy;
 
     return result;
 }

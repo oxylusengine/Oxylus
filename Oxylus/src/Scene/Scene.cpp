@@ -923,6 +923,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  self.world.observer<DecalComponent>().event(flecs::OnRemove).each([](flecs::iter&, usize, DecalComponent& c) {
+    if (c.material) {
+      App::mod<AssetManager>().unload_asset(c.material);
+    }
+  });
+
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
     .event(flecs::OnAdd)

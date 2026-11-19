@@ -471,6 +471,7 @@ auto RendererInstance::decode_terrain(
   std::tie(
     values.camera,
     values.materials,
+    values.decals,
     context.terrain_buffer,
     context.brush_hit_buffer,
     context.visbuffer_attachment,
@@ -487,6 +488,7 @@ auto RendererInstance::decode_terrain(
       .begin_rendering(
         {{values.camera, vir::Access::FragmentUniformRead},
          {values.materials, vir::Access::FragmentRead},
+         {values.decals, vir::Access::FragmentRead},
          {context.terrain_buffer, vir::Access::FragmentUniformRead},
          {context.brush_hit_buffer, vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::FragmentSampled},
@@ -512,6 +514,8 @@ auto RendererInstance::decode_terrain(
       .bind_image(0, 6, context.splatmap_attachment)
       .bind_sampler(0, 7, render_context.cached_sampler_handle(LinearSamplerClamped))
       .bind_buffer(0, 8, context.brush_hit_buffer)
+      .push_constant_address(0, values.decals)
+      .push_constants_from_at(8, recording.prepared.decal_count)
       .draw_range(3, 1, 0, 1)
       .end_rendering()
   );

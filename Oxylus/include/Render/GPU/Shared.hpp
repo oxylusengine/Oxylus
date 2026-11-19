@@ -381,6 +381,33 @@ struct Light {
   u32 pad = 0;
 };
 
+// --- Decals ---
+
+OX_CONST u32 MAX_DECALS = 256;
+
+enum class DecalFlag : u32 {
+  None = 0,
+  AffectAlbedo = 1 << 0,
+  AffectNormal = 1 << 1,
+  AffectMetallicRoughness = 1 << 2,
+  AffectEmissive = 1 << 3,
+};
+OX_BITMASK(DecalFlag)
+
+struct Decal {
+  // world to the unit box [-0.5, 0.5]^3, which projects along its -z
+  mat4 world_to_decal = {};
+  f32x3 world_axis_z = {};
+  u32 material_index = 0;
+  f32 opacity = 1.0f;
+  f32 angle_fade_start_cos = 0.0f;
+  f32 angle_fade_end_cos = 0.0f;
+  // in box space, so 0.5 fades over the whole half depth
+  f32 depth_fade = 0.0f;
+  DecalFlag flags = DecalFlag::None;
+  u32x3 pad = {};
+};
+
 // --- DDGI ---
 
 OX_CONST u32 DDGI_MAX_IMAGE_DIMENSION = 16384;

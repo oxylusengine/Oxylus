@@ -206,6 +206,23 @@ struct ProbeVolumeComponent {
   bool follow_camera = true;
 };
 
+// projects `material` along the entity's -Z through a unit box scaled by its transform
+struct DecalComponent {
+  UUID material = {};
+  f32 opacity = 1.0f;
+  // higher draws over lower
+  i32 sort_order = 0;
+  // degrees between the surface normal and the decal's +Z
+  f32 angle_fade_start = 60.0f;
+  f32 angle_fade_end = 80.0f;
+  // fraction of the box depth faded out at its front and back
+  f32 depth_fade = 0.1f;
+  bool affect_albedo = true;
+  bool affect_normal = true;
+  bool affect_metallic_roughness = true;
+  bool affect_emissive = false;
+};
+
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
   glm::vec3 ambient_color = glm::vec3{0.03f};

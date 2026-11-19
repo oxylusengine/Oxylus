@@ -4,6 +4,7 @@ import scene;
 import visbuffer;
 import hit;
 import pbr;
+import decal;
 
 #include <fullscreen.slang>
 
@@ -19,6 +20,12 @@ struct ShaderParameters {
     Image2D<u32> visbuffer;
 };
 ParameterBlock<ShaderParameters> params;
+
+struct DecodePush {
+    Decal *decals;
+    u32 decal_count;
+};
+[[vk::push_constant]] DecodePush push;
 
 struct FragmentOutput {
     f32x4 albedo_color : SV_Target0;
@@ -74,11 +81,29 @@ func fs_main(VertexOutput input) -> FragmentOutput {
     let world_normal = decoded.triangle.world_normal;
     let surface = decoded.surface;
 
-    output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);
-    output.normal_color.xy = com::vec3_to_oct(surface.normal);
+    DecalTarget target;
+    target.albedo = surface.albedo.rgb;
+    target.normal = surface.normal;
+    target.emissive = surface.emissive;
+    target.metallic = surface.metallic;
+    target.roughness = surface.roughness;
+    apply_decals(
+        target,
+        push.decals,
+        push.decal_count,
+        params.materials,
+        tri.interpolate_position(deriv.lambda),
+        decoded.position_dx,
+        decoded.position_dy,
+        world_normal,
+        params.camera.texture_mip_bias
+    );
+
+    output.albedo_color = f32x4(target.albedo, surface.occlusion);
+    output.normal_color.xy = com::vec3_to_oct(target.normal);
     output.normal_color.zw = com::vec3_to_oct(world_normal);
-    output.emission_color = surface.emissive;
-    output.metallic_roughness_color = f32x2(surface.metallic, surface.roughness);
+    output.emission_color = target.emissive;
+    output.metallic_roughness_color = f32x2(target.metallic, target.roughness);
     output.velocity = compute_velocity(tri, deriv.lambda, params.transforms_previous[tri.transform_index]);
 
     return output;
