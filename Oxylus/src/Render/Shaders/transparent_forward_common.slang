@@ -6,6 +6,7 @@ import scene;
 import ddgi;
 import hit;
 import lighting;
+import fog;
 
 #include <defines.slang>
 
@@ -262,6 +263,8 @@ func shade_transparent(in ForwardVertex input, bool is_front_face, in ForwardPus
     let light = light_surface(
         surface, material.get_ior(), smooth_normal, input.world_position, input.position.xy, input.position.z, push);
     var color = light.diffuse + light.specular + surface.emissive + light.aerial_perspective;
+    // the opaque scene behind already carries its own fog, so the surface takes only what lies in front of it
+    color = evaluate_height_fog(camera.fog, camera.position.xyz, input.world_position).apply(color);
 
     // the resolve divides by the summed weight so only its ratios matter, scaled to peak at 1 so fp16 keeps the hdr range
     let view_distance = length(relative_position);

@@ -323,6 +323,11 @@ path = "passes/decal_cull.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "height_fog"
+path = "passes/height_fog.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
 name = "hiz"
 path = "passes/hiz.slang"
 entry_points = ["cs_main"]

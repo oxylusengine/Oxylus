@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import particles;
+import fog;
 
 #include <defines.slang>
 
@@ -154,8 +155,14 @@ FragmentOutput fs_main(VOutput input) {
     let coverage = color.a;
 
     color.rgb *= color.a;
+    // what lies behind is already fogged. An additive particle covers nothing, so it only loses light to the fog
+    let world_position = camera.unproject_uv(input.position.xy / max(camera.resolution, f32x2(1.0)), input.position.z);
+    let fog = evaluate_height_fog(camera.fog, camera.position.xyz, world_position);
+    color.rgb *= fog.transmittance;
     if (HAS_FLAG(input.flags, ParticleEmitterFlags.Additive)) {
         color.a = 0.0;
+    } else {
+        color.rgb += fog.inscatter * color.a;
     }
 
     FragmentOutput output;

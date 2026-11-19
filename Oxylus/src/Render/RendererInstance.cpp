@@ -81,6 +81,42 @@ static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atm
          a.atmos_radius == b.atmos_radius;
 }
 
+// the same integral the sky_transmittance pass bakes, over MediumScattering in sky.slang, so the fog's sun
+// matches what surfaces get from the LUT. One ray a frame, so it runs on the host where every shader can share it
+static auto sun_transmittance(const GPU::Atmosphere& atmosphere, f32 eye_radius, f32 sun_cos_theta) -> glm::vec3 {
+  constexpr auto STEP_COUNT = 64;
+  constexpr auto MIN_SCALE_HEIGHT = 1e-3f;
+
+  const auto origin = glm::vec3(0.0f, eye_radius, 0.0f);
+  const auto direction = glm::vec3(
+    std::sqrt(std::max(1.0f - sun_cos_theta * sun_cos_theta, 0.0f)),
+    sun_cos_theta,
+    0.0f
+  );
+  // the ray starts inside the atmosphere, so the far root is where it leaves
+  const auto b = glm::dot(origin, direction);
+  const auto c = glm::dot(origin, origin) - atmosphere.atmos_radius * atmosphere.atmos_radius;
+  const auto step = (-b + std::sqrt(std::max(b * b - c, 0.0f))) / static_cast<f32>(STEP_COUNT);
+
+  auto optical_depth = glm::vec3(0.0f);
+  for (auto i = 0; i < STEP_COUNT; i++) {
+    const auto position = origin + direction * ((static_cast<f32>(i) + 0.5f) * step);
+    const auto height = std::max(glm::length(position) - atmosphere.planet_radius, 0.0f);
+    const auto rayleigh = std::exp(-height / std::max(atmosphere.rayleigh_density, MIN_SCALE_HEIGHT));
+    const auto mie_boundary = std::exp(-height / std::max(atmosphere.mie_density, MIN_SCALE_HEIGHT));
+    const auto mie_haze = std::exp(-height / std::max(atmosphere.mie_haze_scale_height, MIN_SCALE_HEIGHT));
+    const auto mie = glm::mix(mie_boundary, mie_haze, glm::clamp(atmosphere.mie_haze_amount, 0.0f, 1.0f));
+    const auto ozone_distance = std::abs(height - atmosphere.ozone_height);
+    const auto ozone = 1.0f -
+                       glm::smoothstep(0.0f, std::max(atmosphere.ozone_thickness, MIN_SCALE_HEIGHT), ozone_distance);
+    optical_depth += (atmosphere.rayleigh_scatter * rayleigh + glm::vec3(atmosphere.mie_extinction * mie) +
+                      atmosphere.ozone_absorption * ozone) *
+                     step;
+  }
+
+  return glm::exp(-optical_depth);
+}
+
 static auto shadow_light_priority(const GPU::Light& light) -> f32 {
   if (light.range <= 0.0f) {
     return -1.0f;
@@ -486,6 +522,7 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_refractors,
     shape.has_terrain,
     shape.has_decals,
+    shape.has_height_fog,
     shape.has_sprites,
     shape.has_particles,
     shape.has_atmosphere,
@@ -1076,6 +1113,7 @@ auto RendererInstance::frame_shape(
     .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
     .has_decals = !self.decals.empty(),
+    .has_height_fog = self.camera_data.fog.density > 0.0f,
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
     .has_atmosphere = static_cast<bool>(flags & GPU::SceneFlags::HasAtmosphere),
@@ -2462,6 +2500,18 @@ auto RendererInstance::record_frame(
     sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
   }
 
+  // --- height fog ---
+  // after every pass that adds opaque light and before anything blends over it, which fogs itself
+  if (shape.has_height_fog) {
+    auto height_fog_context = HeightFogContext{
+      .depth_attachment = depth_attachment,
+      .final_attachment = final_attachment
+    };
+    self.apply_height_fog(module, recording, height_fog_context);
+    depth_attachment = height_fog_context.depth_attachment;
+    final_attachment = height_fog_context.final_attachment;
+  }
+
   // --- transparency ---
   auto wboit_revealage_attachment = vir::ValueID::Invalid;
   auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
@@ -3126,6 +3176,49 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.sky_data.ambient_color = sky_info.ambient_color;
       self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
     });
+
+  self.camera_data.fog = {};
+  {
+    auto is_fog_found = false;
+    self.scene.world
+      .query_builder<const TransformComponent, const HeightFogComponent>() //
+      .build()
+      .each([&self, &is_fog_found](flecs::entity e, const TransformComponent&, const HeightFogComponent& c) {
+        if (is_fog_found || !e.enabled() || c.density <= 0.0f) {
+          return;
+        }
+
+        is_fog_found = true;
+        auto sun_illuminance = glm::vec3(0.0f);
+        if ((self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) != 0) {
+          sun_illuminance = glm::vec3(self.directional_light.intensity);
+          // the lighting passes attenuate the sun the same way, and leave it whole without an atmosphere
+          if ((self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0) {
+            const auto sun_cos_theta = glm::clamp(self.directional_light.direction.y, -1.0f, 1.0f);
+            const auto min_radius = self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
+            const auto eye_radius = std::max(
+              self.camera_data.position.y * GPU::CAMERA_SCALE_UNIT + min_radius,
+              min_radius
+            );
+            sun_illuminance *= sun_transmittance(self.atmosphere, eye_radius, sun_cos_theta) *
+                               glm::smoothstep(-0.1f, 0.3f, sun_cos_theta);
+          }
+        }
+
+        self.camera_data.fog = GPU::HeightFog{
+          .ambient_radiance = c.albedo * std::max(c.ambient_intensity, 0.0f),
+          .density = c.density,
+          .sun_radiance = c.albedo * sun_illuminance * std::max(c.sun_scattering, 0.0f),
+          .height_falloff = std::max(c.height_falloff, 0.0f),
+          .sun_direction = self.directional_light.direction,
+          .base_height = self.scene.get_world_transform(e)[3].y,
+          .start_distance = std::max(c.start_distance, 0.0f),
+          .max_opacity = std::clamp(c.max_opacity, 0.0f, 1.0f),
+          .anisotropy = std::clamp(c.anisotropy, -0.95f, 0.95f),
+          .sky_distance = std::max(c.sky_distance, 0.0f),
+        };
+      });
+  }
 
   if (
     (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&

@@ -291,6 +291,23 @@ struct Sky {
   u32 has_texture = 0;
 };
 
+// exponential in height, so a ray's optical depth through it has a closed form
+struct HeightFog {
+  f32x3 ambient_radiance = {};
+  // 0 when the scene has no fog
+  f32 density = 0.0f;
+  // the sun's illuminance after the atmosphere, times albedo and the scattering scale
+  f32x3 sun_radiance = {};
+  f32 height_falloff = 0.0f;
+  // toward the sun
+  f32x3 sun_direction = {};
+  f32 base_height = 0.0f;
+  f32 start_distance = 0.0f;
+  f32 max_opacity = 1.0f;
+  f32 anisotropy = 0.0f;
+  f32 sky_distance = 0.0f;
+};
+
 struct Camera {
   f32x4 position = {};
 
@@ -324,6 +341,7 @@ struct Camera {
   f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
   // negative when upscaling, so material textures keep display resolution detail
   f32 texture_mip_bias = 0.0f;
+  HeightFog fog = {};
 };
 
 struct CullCamera {

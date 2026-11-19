@@ -148,6 +148,20 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = HeightFogComponent;
+    registry.bind<
+      &C::density,
+      &C::height_falloff,
+      &C::albedo,
+      &C::ambient_intensity,
+      &C::sun_scattering,
+      &C::anisotropy,
+      &C::start_distance,
+      &C::max_opacity,
+      &C::sky_distance>();
+  }
+
+  {
     using C = SkyComponent;
     registry.bind<&C::solid_color, &C::ambient_color, &C::texture>();
   }

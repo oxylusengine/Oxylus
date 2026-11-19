@@ -628,6 +628,10 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
       to_select = self.scene_->create_entity("probe_volume", true).add<ProbeVolumeComponent>();
     }
 
+    if (ImGui::MenuItem("Height Fog")) {
+      to_select = self.scene_->create_entity("height_fog", true).add<HeightFogComponent>();
+    }
+
     if (ImGui::MenuItem("Decal")) {
       to_select = self.scene_->create_entity("decal", true).add<DecalComponent>();
       auto& decal_transform = to_select.get_mut<TransformComponent>();

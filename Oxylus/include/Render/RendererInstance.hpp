@@ -313,6 +313,7 @@ struct FrameShape {
   bool has_refractors = false;
   bool has_terrain = false;
   bool has_decals = false;
+  bool has_height_fog = false;
   bool has_sprites = false;
   bool has_particles = false;
   bool has_atmosphere = false;
@@ -465,6 +466,11 @@ struct LightGridContext {
 
 struct DecalCullContext {
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
+};
+
+struct HeightFogContext {
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID final_attachment = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
@@ -1265,6 +1271,9 @@ public:
   ) -> void;
   auto cull_decals(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, DecalCullContext& context
+  ) -> void;
+  auto apply_height_fog(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, HeightFogContext& context
   ) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context

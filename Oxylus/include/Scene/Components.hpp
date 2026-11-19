@@ -226,6 +226,25 @@ struct DecalComponent {
   bool affect_emissive = false;
 };
 
+// the first enabled one in the scene applies, its densest point is the entity's world height
+struct HeightFogComponent {
+  // extinction per meter at the base height
+  f32 density = 0.02f;
+  // per meter above the base, the fog thins by 1/e every 1 / falloff meters
+  f32 height_falloff = 0.2f;
+  // tints everything the fog scatters
+  glm::vec3 albedo = {0.8f, 0.85f, 0.9f};
+  // radiance the fog scatters toward the eye from the sky, before albedo
+  f32 ambient_intensity = 1.0f;
+  f32 sun_scattering = 1.0f;
+  // Henyey-Greenstein g, positive glows toward the sun
+  f32 anisotropy = 0.6f;
+  f32 start_distance = 0.0f;
+  f32 max_opacity = 1.0f;
+  // the sky is fogged as if it were this far away, 0 leaves it clear
+  f32 sky_distance = 5000.0f;
+};
+
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
   glm::vec3 ambient_color = glm::vec3{0.03f};
