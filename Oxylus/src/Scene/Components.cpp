@@ -140,6 +140,7 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::angle_fade_start,
       &C::angle_fade_end,
       &C::depth_fade,
+      &C::layer_mask,
       &C::affect_albedo,
       &C::affect_normal,
       &C::affect_metallic_roughness,

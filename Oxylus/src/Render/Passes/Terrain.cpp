@@ -11,6 +11,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/Log.hpp"
 
@@ -39,6 +40,7 @@ auto RendererInstance::bind_terrain_variables(
   }
 
   auto& terrain = *self.scene.terrain;
+  const auto* layer = self.scene.terrain_entity ? self.scene.terrain_entity.try_get<LayerComponent>() : nullptr;
   program.set_bytes(
     variables.data,
     GPU::TerrainData{
@@ -54,6 +56,7 @@ auto RendererInstance::bind_terrain_variables(
       .triplanar_begin = terrain.triplanar_begin,
       .layer_material_indices = terrain.layer_material_indices,
       .brush_radius = self.frame_params.is_terrain_brush_active ? terrain.brush.radius_world : 0.0f,
+      .layer_mask = layer ? static_cast<u32>(layer->layer) : 1_u32,
     }
   );
 

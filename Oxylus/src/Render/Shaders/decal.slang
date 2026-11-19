@@ -23,10 +23,15 @@ public func apply_decals(
     f32x3 position_dx,
     f32x3 position_dy,
     f32x3 geometric_normal,
+    u32 receiver_layer_mask,
     f32 mip_bias
 ) {
     for (u32 i = 0; i < decal_count; i++) {
         let decal = decals[i];
+        if ((decal.layer_mask & receiver_layer_mask) == 0) {
+            continue;
+        }
+
         let local = mul(decal.world_to_decal, f32x4(world_position, 1.0)).xyz;
         if (any(abs(local) > 0.5)) {
             continue;

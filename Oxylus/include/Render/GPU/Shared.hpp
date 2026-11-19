@@ -245,6 +245,8 @@ struct MeshInstance {
   // table. Meaningless unless `skinned_vertex_positions` is set
   u32 skinned_instance_index = 0;
   MeshInstanceFlag flags = MeshInstanceFlag::None;
+  // the entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   OX_PTR(u16x4) skinned_vertex_positions = {};
@@ -405,7 +407,8 @@ struct Decal {
   // in box space, so 0.5 fades over the whole half depth
   f32 depth_fade = 0.0f;
   DecalFlag flags = DecalFlag::None;
-  u32x3 pad = {};
+  u32 layer_mask = ~0u;
+  u32x2 pad = {};
 };
 
 // --- DDGI ---
@@ -838,6 +841,8 @@ struct TerrainData {
   f32 triplanar_begin = 0.5f;
   u32x4 layer_material_indices = u32x4(TERRAIN_INVALID_LAYER_MATERIAL);
   f32 brush_radius = 0.0f;
+  // the terrain entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
 };
 
 // --- 2D ---

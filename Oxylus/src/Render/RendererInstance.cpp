@@ -3250,7 +3250,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       .query_builder<const TransformComponent, const DecalComponent>() //
       .build()
       .each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
-        if (!e.enabled() || !c.material || c.opacity <= 0.0f || !asset_man.is_loaded(c.material)) {
+        if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
           return;
         }
 
@@ -3308,6 +3308,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
             .angle_fade_end_cos = std::cos(angle_fade_end),
             .depth_fade = std::clamp(c.depth_fade, 0.0f, 0.5f),
             .flags = flags,
+            .layer_mask = c.layer_mask,
           },
         });
       });

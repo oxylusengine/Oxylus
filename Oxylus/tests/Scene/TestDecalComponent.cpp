@@ -14,6 +14,7 @@ TEST(DecalComponentTest, SurvivesReflectionJsonRoundTrip) {
     .angle_fade_start = 30.0f,
     .angle_fade_end = 55.0f,
     .depth_fade = 0.25f,
+    .layer_mask = 0b1010,
     .affect_albedo = false,
     .affect_normal = false,
     .affect_metallic_roughness = false,
@@ -32,6 +33,7 @@ TEST(DecalComponentTest, SurvivesReflectionJsonRoundTrip) {
   EXPECT_FLOAT_EQ(decal.angle_fade_start, 30.0f);
   EXPECT_FLOAT_EQ(decal.angle_fade_end, 55.0f);
   EXPECT_FLOAT_EQ(decal.depth_fade, 0.25f);
+  EXPECT_EQ(decal.layer_mask, 0b1010);
   EXPECT_FALSE(decal.affect_albedo);
   EXPECT_FALSE(decal.affect_normal);
   EXPECT_FALSE(decal.affect_metallic_roughness);

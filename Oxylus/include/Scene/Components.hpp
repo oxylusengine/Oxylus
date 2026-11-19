@@ -19,6 +19,7 @@ struct TransformComponent {
   }
 };
 
+// a bitmask, bit 0 is the default layer
 struct LayerComponent {
   u16 layer = 1;
 };
@@ -217,6 +218,8 @@ struct DecalComponent {
   f32 angle_fade_end = 80.0f;
   // fraction of the box depth faded out at its front and back
   f32 depth_fade = 0.1f;
+  // only lands on entities whose LayerComponent shares a bit with this
+  u16 layer_mask = ~0_u16;
   bool affect_albedo = true;
   bool affect_normal = true;
   bool affect_metallic_roughness = true;

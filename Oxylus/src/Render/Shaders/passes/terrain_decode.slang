@@ -221,6 +221,7 @@ func decode_terrain(f32x2 uv) -> FragmentOutput {
         ddx_world,
         ddy_world,
         geometric_normal,
+        params.terrain.layer_mask,
         params.camera.texture_mip_bias
     );
     surface.albedo.rgb = target.albedo;

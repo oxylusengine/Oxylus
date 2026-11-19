@@ -96,6 +96,7 @@ func fs_main(VertexOutput input) -> FragmentOutput {
         decoded.position_dx,
         decoded.position_dy,
         world_normal,
+        params.mesh_instances[tri.mesh_instance_index].layer_mask,
         params.camera.texture_mip_bias
     );
 
