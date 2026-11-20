@@ -39,6 +39,8 @@ public:
   auto get_scene(this const SceneHierarchyPanel& self) -> EditorScene*;
 
 private:
+  enum class EntityView : u8 { Hierarchy, SearchResult };
+
   EditorScene* current_scene = nullptr;
   Scene* scene_ = nullptr;
 
@@ -48,6 +50,7 @@ private:
   auto draw_entity_node(
     this SceneHierarchyPanel& self,
     flecs::entity entity,
+    EntityView view = EntityView::Hierarchy,
     u32 depth = 0,
     bool force_expand_tree = false,
     bool is_part_of_prefab = false

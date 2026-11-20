@@ -1,5 +1,7 @@
 #include "SceneHierarchyPanel.hpp"
 
+#include <algorithm>
+#include <array>
 #include <glm/geometric.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/trigonometric.hpp>
@@ -7,6 +9,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <span>
+#include <string_view>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
@@ -15,6 +19,7 @@
 #include "Editor.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Scene/ComponentRegistry.hpp"
 #ifdef OX_DOTNET
   #include "Scripting/DotNetScripting.hpp"
 #endif
@@ -23,6 +28,164 @@
 #include "Utils/ImGuiScoped.hpp"
 
 namespace ox {
+static constexpr auto COMPONENT_SEARCH_PREFIX = std::string_view("component:");
+
+struct ComponentSearchAlias {
+  const c8* name;
+  const c8* description;
+  bool (*matches)(flecs::entity);
+};
+
+template <auto Member, auto Value>
+static auto matches_component_value(flecs::entity entity) -> bool {
+  const auto* component = entity.try_get<refl::member_owner_t<Member>>();
+  return component && (component->*Member) == Value;
+}
+
+static constexpr auto COMPONENT_SEARCH_ALIASES = std::to_array<ComponentSearchAlias>({
+  {"DirectionalLightComponent",
+   "Lights with type Directional",
+   matches_component_value<&LightComponent::type, LightComponent::Directional>},
+  {"SpotLightComponent", "Lights with type Spot", matches_component_value<&LightComponent::type, LightComponent::Spot>},
+  {"PointLightComponent",
+   "Lights with type Point",
+   matches_component_value<&LightComponent::type, LightComponent::Point>},
+  {"PerspectiveCameraComponent",
+   "Cameras with perspective projection",
+   matches_component_value<&CameraComponent::projection, CameraComponent::Perspective>},
+  {"OrthographicCameraComponent",
+   "Cameras with orthographic projection",
+   matches_component_value<&CameraComponent::projection, CameraComponent::Orthographic>},
+  {"StaticRigidBodyComponent",
+   "Rigid bodies with type Static",
+   matches_component_value<&RigidBodyComponent::type, RigidBodyComponent::Static>},
+  {"KinematicRigidBodyComponent",
+   "Rigid bodies with type Kinematic",
+   matches_component_value<&RigidBodyComponent::type, RigidBodyComponent::Kinematic>},
+  {"DynamicRigidBodyComponent",
+   "Rigid bodies with type Dynamic",
+   matches_component_value<&RigidBodyComponent::type, RigidBodyComponent::Dynamic>},
+  {"SensorRigidBodyComponent",
+   "Rigid bodies with Is Sensor enabled",
+   matches_component_value<&RigidBodyComponent::is_sensor, true>},
+  {"ConvexMeshColliderComponent",
+   "Mesh colliders configured to use a convex hull",
+   matches_component_value<&MeshColliderComponent::convex, true>},
+  {"TriangleMeshColliderComponent",
+   "Mesh colliders configured to use triangles",
+   matches_component_value<&MeshColliderComponent::convex, false>},
+  {"AudioSource3DComponent",
+   "Audio sources with spatialization enabled",
+   matches_component_value<&AudioSourceComponent::spatialization, true>},
+  {"AudioSource2DComponent",
+   "Audio sources with spatialization disabled",
+   matches_component_value<&AudioSourceComponent::spatialization, false>},
+  {"FrontWheelDriveVehicleComponent",
+   "Vehicles with front-wheel drive",
+   matches_component_value<&VehicleComponent::drive_mode, VehicleComponent::FrontWheelDrive>},
+  {"RearWheelDriveVehicleComponent",
+   "Vehicles with rear-wheel drive",
+   matches_component_value<&VehicleComponent::drive_mode, VehicleComponent::RearWheelDrive>},
+  {"AllWheelDriveVehicleComponent",
+   "Vehicles with all-wheel drive",
+   matches_component_value<&VehicleComponent::drive_mode, VehicleComponent::AllWheelDrive>},
+});
+
+static auto draw_component_search_help(f32 button_size) -> void {
+  UI::button(ICON_MDI_HELP_CIRCLE_OUTLINE "###HierarchySearchHelp", {button_size, button_size});
+  if (!ImGui::BeginItemTooltip()) {
+    return;
+  }
+
+  ImGui::TextUnformatted("Plain text matches entity names. Component queries accept partial names and ignore case.");
+  ImGui::TextUnformatted("Aliases match a setting on an existing component.");
+
+  constexpr auto table_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings;
+  if (ImGui::BeginTable("ComponentSearchExamples", 2, table_flags)) {
+    ImGui::TableSetupColumn("Query");
+    ImGui::TableSetupColumn("Matches");
+    ImGui::TableHeadersRow();
+
+    const auto example = [](const c8* name, const c8* description) -> void {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::Text("%s%s", COMPONENT_SEARCH_PREFIX.data(), name);
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(description);
+    };
+    example("CameraComponent", "Any camera");
+    example("LightComponent", "Any light type");
+    example("Collider", "Any collider component");
+    for (const auto& alias : COMPONENT_SEARCH_ALIASES) {
+      example(alias.name, alias.description);
+    }
+    ImGui::EndTable();
+  }
+  ImGui::EndTooltip();
+}
+
+static auto component_search_term(std::string_view query) -> option<std::string_view> {
+  constexpr auto whitespace = std::string_view(" \t");
+  const auto first = query.find_first_not_of(whitespace);
+  if (first == std::string_view::npos) {
+    return nullopt;
+  }
+
+  query.remove_prefix(first);
+  if (
+    query.size() < COMPONENT_SEARCH_PREFIX.size() ||
+    ImStrnicmp(query.data(), COMPONENT_SEARCH_PREFIX.data(), COMPONENT_SEARCH_PREFIX.size()) != 0
+  ) {
+    return nullopt;
+  }
+
+  query.remove_prefix(COMPONENT_SEARCH_PREFIX.size());
+  const auto name_start = query.find_first_not_of(whitespace);
+  if (name_start == std::string_view::npos) {
+    return std::string_view{};
+  }
+  return query.substr(name_start, query.find_last_not_of(whitespace) - name_start + 1);
+}
+
+struct ComponentSearch {
+  std::span<const flecs::id> components = {};
+  std::span<const ComponentSearchAlias* const> aliases = {};
+
+  auto matches(this const ComponentSearch& self, flecs::entity entity) -> bool {
+    return std::ranges::any_of(self.components, [entity](flecs::id component) { return entity.has(component); }) ||
+           std::ranges::any_of(self.aliases, [entity](const auto* alias) { return alias->matches(entity); });
+  }
+};
+
+static auto resolve_component_search(
+  std::span<const flecs::id> registered_components, std::string_view term, memory::ScopedStack& stack
+) -> ComponentSearch {
+  if (term.empty()) {
+    return {};
+  }
+
+  const auto matches_name = [term](const c8* name) {
+    return name && ImStristr(name, nullptr, term.data(), term.data() + term.size()) != nullptr;
+  };
+
+  auto ids = stack.alloc<flecs::id>(registered_components.size());
+  usize count = 0;
+  for (const auto component : registered_components) {
+    if (matches_name(component.entity().name().c_str())) {
+      ids[count++] = component;
+    }
+  }
+
+  auto aliases = stack.alloc<const ComponentSearchAlias*>(COMPONENT_SEARCH_ALIASES.size());
+  usize alias_count = 0;
+  for (const auto& alias : COMPONENT_SEARCH_ALIASES) {
+    if (matches_name(alias.name)) {
+      aliases[alias_count++] = &alias;
+    }
+  }
+  return {.components = ids.first(count), .aliases = aliases.first(alias_count)};
+}
+
 static auto has_mesh_in_hierarchy(flecs::entity entity) -> bool {
   if (entity.has<MeshComponent>()) {
     return true;
@@ -272,16 +435,25 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       ImGui::TreePop();
     }
 
-    filter_cursor_pos_x = ImGui::GetCursorPosX();
-
     if (ImGui::TreeNodeEx("Entities", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen)) {
-      self.entities_filter_.Draw(
-        "###HierarchyFilter",
-        ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + UI::scale(20.0f))
-      );
+      const auto button_size = ImGui::GetFrameHeight();
+      const auto buttons_width = 2.0f * (button_size + ImGui::GetStyle().ItemSpacing.x);
+      ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x - buttons_width));
+      if (
+        ImGui::InputTextWithHint(
+          "###HierarchyFilter",
+          ICON_MDI_MAGNIFY " Search name or component:...",
+          self.entities_filter_.InputBuf,
+          sizeof(self.entities_filter_.InputBuf)
+        )
+      ) {
+        self.entities_filter_.Build();
+      }
+      ImGui::SameLine();
+      draw_component_search_help(button_size);
       ImGui::SameLine();
 
-      if (UI::button(stack.format_char("{}###AddEntity", ICON_MDI_PLUS)))
+      if (UI::button(ICON_MDI_PLUS "###AddEntity", {button_size, button_size}))
         ImGui::OpenPopup("scene_h_entities_context_window");
 
       if (
@@ -292,13 +464,6 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       ) {
         self.draw_entities_context_menu();
         ImGui::EndPopup();
-      }
-
-      if (!self.entities_filter_.IsActive()) {
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
-        auto search_txt = fmt::format("  {} Search entities...", ICON_MDI_MAGNIFY);
-        ImGui::TextUnformatted(search_txt.c_str());
       }
 
       const ImVec2 cursor_pos = ImGui::GetCursorPos();
@@ -332,14 +497,41 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
         ImGui::TableSetupColumn(vis_colon.c_str(), ImGuiTableColumnFlags_WidthFixed, line_height * 2.0f);
 
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-        self.scene_->world.query_builder<TransformComponent>()
-          .with(flecs::Disabled)
-          .optional()
-          .build()
-          .each([&self](const flecs::entity e, TransformComponent) {
-            if (e.parent() == flecs::entity::null())
-              self.draw_entity_node(e);
+        const auto
+          entities = self.scene_->world.query_builder<TransformComponent>().with(flecs::Disabled).optional().build();
+        if (const auto term = component_search_term(self.entities_filter_.InputBuf)) {
+          const auto search = resolve_component_search(self.scene_->component_db.get_components(), *term, stack);
+          bool found_match = false;
+          const auto draw_matches = [&](this const auto& visit, flecs::entity entity) -> void {
+            if (entity.has<Hidden>()) {
+              return;
+            }
+            if (search.matches(entity)) {
+              ImGuiScoped::ID result_id(reinterpret_cast<const void*>(entity.raw_id()));
+              self.draw_entity_node(entity, EntityView::SearchResult);
+              found_match = true;
+            }
+            entity.children([&visit](flecs::entity child) { visit(child); });
+          };
+          if (!search.components.empty() || !search.aliases.empty()) {
+            entities.each([&draw_matches](flecs::entity entity, TransformComponent) {
+              if (entity.parent() == flecs::entity::null()) {
+                draw_matches(entity);
+              }
+            });
+          }
+          if (!found_match) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", term->empty() ? "Enter a component name" : "No matching entities");
+          }
+        } else {
+          entities.each([&self](flecs::entity entity, TransformComponent) {
+            if (entity.parent() == flecs::entity::null()) {
+              self.draw_entity_node(entity);
+            }
           });
+        }
         ImGui::PopStyleVar();
 
         if (
@@ -382,7 +574,12 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
 }
 
 auto SceneHierarchyPanel::draw_entity_node(
-  this SceneHierarchyPanel& self, flecs::entity entity, u32 depth, bool force_expand_tree, bool is_part_of_prefab
+  this SceneHierarchyPanel& self,
+  flecs::entity entity,
+  EntityView view,
+  u32 depth,
+  bool force_expand_tree,
+  bool is_part_of_prefab
 ) -> ImRect {
   ZoneScoped;
 
@@ -392,9 +589,12 @@ auto SceneHierarchyPanel::draw_entity_node(
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
 
-  const auto child_count = self.scene_->world.count(flecs::ChildOf, entity);
+  const auto is_search_result = view == EntityView::SearchResult;
+  const auto child_count = is_search_result ? 0 : self.scene_->world.count(flecs::ChildOf, entity);
 
-  if (self.entities_filter_.IsActive() && !self.entities_filter_.PassFilter(entity.name().c_str())) {
+  if (
+    !is_search_result && self.entities_filter_.IsActive() && !self.entities_filter_.PassFilter(entity.name().c_str())
+  ) {
     entity.children([&self](flecs::entity child) { self.draw_entity_node(child); });
     return {0, 0, 0, 0};
   }
@@ -440,6 +640,11 @@ auto SceneHierarchyPanel::draw_entity_node(
   // Select
   if (!ImGui::IsItemToggledOpen() && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
     self.selected_entity_.set(entity);
+  }
+
+  if (is_search_result && ImGui::BeginItemTooltip()) {
+    ImGui::TextUnformatted(entity.path().c_str());
+    ImGui::EndTooltip();
   }
 
   // Expand recursively
@@ -561,7 +766,7 @@ auto SceneHierarchyPanel::draw_entity_node(
   // Open
   const ImRect node_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
   {
-    if (opened && !entity_deleted) {
+    if (opened && child_count > 0 && !entity_deleted) {
       ImColor tree_line_color;
       depth %= 4;
       switch (depth) {
@@ -579,7 +784,13 @@ auto SceneHierarchyPanel::draw_entity_node(
           self.scene_->world.count(flecs::ChildOf, child) > 0 ? 9.0f : 18.0f
         );
         // chosen arbitrarily
-        const ImRect child_rect = self.draw_entity_node(child, depth + 1, force_expand_tree, is_part_of_prefab);
+        const ImRect child_rect = self.draw_entity_node(
+          child,
+          EntityView::Hierarchy,
+          depth + 1,
+          force_expand_tree,
+          is_part_of_prefab
+        );
 
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 vertical_line_end = vertical_line_start;
