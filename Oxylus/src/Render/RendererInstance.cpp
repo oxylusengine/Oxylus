@@ -1031,8 +1031,21 @@ auto RendererInstance::frame_shape(
   if (cvar.cvar_vbgtao_enable.as_bool() || has_rtao) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
   }
-  if (cvar.cvar_contact_shadows_enabled.as_bool()) {
-    self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+  if (
+    cvar.cvar_contact_shadows_enabled.as_bool() &&
+    (has_meshes || (self.scene.terrain && self.scene.terrain->is_baked())) &&
+    cvar.cvar_contact_shadows_length.get() > 0.0f && cvar.cvar_contact_shadows_thickness.get() > 0.0f
+  ) {
+    if (
+      (self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) && self.directional_contact_shadow_strength > 0.0f
+    ) {
+      self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+    }
+    if (std::ranges::any_of(self.frame_data.lights, [](const GPU::Light& light) {
+          return light.contact_shadow_strength > 0.0f;
+        })) {
+      self.gpu_scene_flags |= GPU::SceneFlags::HasLocalContactShadows;
+    }
   }
   if (cvar.cvar_transparent_background.as_bool()) {
     self.gpu_scene_flags |= GPU::SceneFlags::TransparentBackground;
@@ -3045,6 +3058,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       const auto world_position = world_transform[3];
       const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
+      const auto* contact = e.try_get<ContactShadowsComponent>();
+      const auto strength = lc.cast_shadows && contact ? std::clamp(contact->strength, 0.0f, 1.0f) : 0.0f;
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
@@ -3056,6 +3071,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
+        self.directional_contact_shadow_strength = strength;
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
@@ -3073,6 +3089,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                 .outer_cone_angle = lc.outer_cone_angle,
                 .kind = kind,
                 .shadow_map_index = -1,
+                .contact_shadow_strength = strength,
               },
             .entity_id = static_cast<u64>(e.id()),
             .cast_shadows = lc.cast_shadows,

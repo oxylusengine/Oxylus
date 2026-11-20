@@ -1517,9 +1517,21 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
   );
 
   ui.section({.name = "Contact Shadows", .toggle = &cvar_sys.cvar_contact_shadows_enabled}, [&] {
-    ui.drag("Steps", cvar_sys.cvar_contact_shadows_steps, 1, 64);
-    ui.drag("Thickness", cvar_sys.cvar_contact_shadows_thickness, 0.0f, 5.0f);
-    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f);
+    ui.drag(
+      "Max steps",
+      cvar_sys.cvar_contact_shadows_steps,
+      1,
+      static_cast<i32>(GPU::CONTACT_SHADOW_MAX_STEPS),
+      "Maximum distance in render pixels to search toward each light with Contact Shadows"
+    );
+    ui.drag(
+      "Thickness",
+      cvar_sys.cvar_contact_shadows_thickness,
+      0.0f,
+      5.0f,
+      "Assumed depth of a caster in world units"
+    );
+    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f, "Maximum shadow ray length in world units");
   });
 }
 

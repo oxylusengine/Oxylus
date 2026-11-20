@@ -378,9 +378,9 @@ struct Light {
   f32 inner_cone_angle = 0.0f; // spot only (radians)
   f32 outer_cone_angle = 0.0f; // spot only (radians)
   LightKind kind = LightKind::Point;
-  // -1 disables shadows
+  // -1 disables virtual shadow maps
   i32 shadow_map_index = -1;
-  u32 pad = 0;
+  f32 contact_shadow_strength = 0.0f;
 };
 
 // --- Decals ---
@@ -491,6 +491,7 @@ enum class SceneFlags : u32 {
   HasTemporalUpscaler = 1 << 17,
   HasSSSR = 1 << 18,
   HasColorGrading = 1 << 19,
+  HasLocalContactShadows = 1 << 20,
 };
 OX_BITMASK(SceneFlags)
 
@@ -678,6 +679,20 @@ struct VSMContext {
   f32x3 directional_light_dir = {};
 };
 
+OX_CONST u32 CONTACT_SHADOW_MAX_STEPS = 64;
+
+struct ContactShadowTraceSettings {
+  f32x3 depth_unpack = {};
+  f32 length_ws = 0.0f;
+  f32 thickness = 0.0f;
+  u32 steps = 0;
+};
+
+struct ContactShadowSettings {
+  f32x4 light_clip = {};
+  ContactShadowTraceSettings trace = {};
+};
+
 struct PBRLighting {
   VSMContext vsm = {};
   f32x3 sun_direction = {};
@@ -686,12 +701,11 @@ struct PBRLighting {
   u32 light_count = 0;
   f32x3 light_grid_origin = {};
   u32 vsm_mip_bias_min = 0;
-  u32 contact_shadow_steps = 0;
-  f32 contact_shadow_thickness = 0.0f;
-  f32 contact_shadow_length = 0.0f;
   u32 frame_index = 0;
   // seconds, wrapped hourly so f32 keeps sub-millisecond precision
   f32 time = 0.0f;
+  ContactShadowTraceSettings contact_shadows = {};
+  f32 sun_contact_shadow_strength = 0.0f;
 };
 
 struct VirtualClipmap {

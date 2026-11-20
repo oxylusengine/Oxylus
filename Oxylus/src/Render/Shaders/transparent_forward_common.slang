@@ -28,6 +28,7 @@ import lighting;
 [[vk::binding(12, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(13, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(20, 0)]] Texture2D<f32> refractor_depth;
+[[vk::binding(23, 0)]] Texture2D<f32> opaque_depth;
 
 struct ForwardPush {
     // the sky instead when the scene has no atmosphere, the shaders never read both
@@ -91,6 +92,9 @@ func light_surface(
         vsm_pointspot_page_tables,
         vsm_physical_pages,
         nearest_clamp_sampler,
+        opaque_depth,
+        (scene_flags & SceneFlags::HasLocalContactShadows) != 0,
+        false,
         camera,
         push.lighting,
         push.lights,
@@ -119,6 +123,11 @@ func light_surface(
             world_position,
             has_directional_light
         );
+        if ((scene_flags & SceneFlags::HasContactShadows) != 0 && visibility > 0.0) {
+            ContactReceiver receiver = {};
+            visibility = min(visibility, lighting_contact_visibility(lighting_resources, uv, depth, world_position,
+                smooth_normal, L, push.lighting.contact_shadows.length_ws, push.lighting.sun_contact_shadow_strength, receiver));
+        }
     }
 
     let sun_cos_theta = dot(L, f32x3(0.0, 1.0, 0.0));

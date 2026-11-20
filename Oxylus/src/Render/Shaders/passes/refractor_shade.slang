@@ -14,7 +14,6 @@ import refractor;
 [[vk::binding(16, 0)]] StructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(17, 0)]] StructuredBuffer<TransformWorld> transforms;
 [[vk::binding(18, 0)]] Texture2D<u32> refractor_visbuffer;
-[[vk::binding(19, 0)]] Texture2D<f32> opaque_depth;
 [[vk::binding(21, 0)]] Texture2D<f32x4> transmission_source;
 [[vk::binding(22, 0)]] Texture2D<u32x4> refractor_reflection;
 

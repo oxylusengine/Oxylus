@@ -2,7 +2,6 @@ import gpu;
 import common;
 import pbr;
 import scene;
-import raymarch;
 import lighting;
 
 [[vk::constant_id(0)]] const u32 scene_flags = 0;
@@ -22,6 +21,8 @@ import lighting;
 [[vk::binding(11)]] Texture2DArray<u32> vsm_pointspot_page_tables;
 [[vk::binding(12)]] Texture2D<f32> vsm_physical_pages;
 
+[[vk::binding(17)]] Texture2D<f32> contact_visibility;
+
 func make_lighting_resources(
     PBRLighting *lighting,
     Light *lights,
@@ -34,6 +35,9 @@ func make_lighting_resources(
         vsm_pointspot_page_tables,
         vsm_physical_pages,
         nearest_clamp_sampler,
+        depth_image,
+        (scene_flags & SceneFlags::HasLocalContactShadows) != 0,
+        true,
         camera,
         lighting,
         lights,
@@ -41,45 +45,6 @@ func make_lighting_resources(
         vsm_pointspot_views,
         vsm_clipmaps
     );
-}
-
-func contact_shadow_visibility(f32x2 uv, in PBRLighting lighting) -> f32 {
-    u32 width, height, levels;
-    depth_image.GetDimensions(0, width, height, levels);
-    let image_size = u32x2(width, height);
-
-    f32 shadow = 0;
-    f32 raymarch_jitter = 1.0;
-
-    f32 depth_sample = depth_image.SampleLevel(nearest_clamp_sampler, uv, 0);
-
-    const f32x3 cs = f32x3(uv * 2.0 - 1.0, depth_sample);
-    const f32x3 ws = camera.unproject_uv(uv, depth_sample);
-
-    f32 rcp_near_plane_distance = 1.0f / camera.near_clip;
-
-    f32x3 shadow_direction = normalize(lighting.sun_direction);
-    f32x3 shadow_end = ws + shadow_direction * lighting.contact_shadow_length;
-    // march in the jittered grid that the depth texture was rasterized into
-    var jittered_projection = camera.projection;
-    jittered_projection[0] += (2.0 * camera.temporalaa_jitter.x / camera.resolution.x) * camera.projection[3];
-    jittered_projection[1] += (2.0 * camera.temporalaa_jitter.y / camera.resolution.y) * camera.projection[3];
-
-    DepthRayMarchResult raymarch_result = DepthRayMarch
-      ::new_from_depth(image_size)
-      .from_cs(cs)
-      .to_ws(shadow_end, camera.view, jittered_projection)
-      .with_linear_steps(lighting.contact_shadow_steps)
-      .with_depth_thickness(lighting.contact_shadow_thickness)
-      .with_jitter(raymarch_jitter)
-      .with_march_behind_surfaces(false)
-      .march(depth_image, linear_clamp_sampler, nearest_clamp_sampler, rcp_near_plane_distance);
-
-    if (raymarch_result.hit) {
-        shadow = smoothstep(1.0, 0.3, raymarch_result.hit_penetration_frac);
-    }
-
-    return 1.0 - shadow;
 }
 
 func sun_visibility(
@@ -96,8 +61,8 @@ func sun_visibility(
 
     var contact = 1.0;
     if ((scene_flags & SceneFlags::HasContactShadows) != 0) {
-        contact = contact_shadow_visibility(uv, *resources.lighting);
+        contact = lerp(1.0, contact_visibility.Load(int3(int2(frag_coord), 0)), resources.lighting.sun_contact_shadow_strength);
     }
 
-    return directional * contact;
+    return min(directional, contact);
 }
