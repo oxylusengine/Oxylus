@@ -1,5 +1,7 @@
 #include "SceneHierarchyPanel.hpp"
 
+#include <glm/geometric.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/trigonometric.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
@@ -80,16 +82,39 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
     self.selected_entity_.entity = flecs::entity::null();
   }
 
-  if (self.selected_entity_.get() != flecs::entity::null()) {
-    if (auto* cam = self.selected_entity_.get().try_get<CameraComponent>(); cam && self.scene_) {
+  const auto selected = self.selected_entity_.get();
+  if (selected != flecs::entity::null()) {
+    if (auto* cam = selected.try_get<CameraComponent>(); cam && self.scene_) {
       const auto proj = cam->get_projection_matrix() * cam->get_view_matrix();
       self.scene_->debug_renderer.draw_frustum(proj, glm::vec4(0, 1, 0, 1), cam->near_clip, cam->far_clip);
     }
-    if (auto* light = self.selected_entity_.get().try_get<LightComponent>()) {
-      const glm::vec3 world_pos = Scene::get_world_position(self.selected_entity_.get());
-      if (light->type == LightComponent::Point && self.scene_) {
-        self.scene_->debug_renderer.draw_sphere(light->radius, world_pos, glm::vec4(0, 1.f, 0.f, 1.f));
-      } else if (light->type == LightComponent::Spot) {
+    if (auto* light = selected.try_get<LightComponent>(); light && self.scene_ && selected.has<TransformComponent>()) {
+      constexpr auto color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+      if (light->type == LightComponent::Point) {
+        self.scene_->debug_renderer.draw_sphere(light->radius, Scene::get_world_position(selected), color);
+      } else if (light->type == LightComponent::Spot && light->radius > 0.0f) {
+        const auto world_transform = Scene::get_world_transform(selected);
+        const auto forward = -glm::vec3(world_transform[2]);
+        if (glm::dot(forward, forward) > 0.0f) {
+          const auto direction = glm::normalize(forward);
+          const auto rotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), direction);
+          const auto position = glm::vec3(world_transform[3]);
+          auto& debug_renderer = self.scene_->debug_renderer;
+
+          const auto draw_cutoff = [&](f32 cutoff, const glm::vec4& cone_color) {
+            // use the shader's cosine cutoff and end the rim at the light's radial range
+            const auto half_angle = glm::acos(glm::cos(cutoff));
+            if (half_angle == 0.0f) {
+              debug_renderer.draw_line(position, position + direction * light->radius, 1.0f, cone_color);
+              return;
+            }
+
+            const auto length = light->radius * glm::cos(half_angle);
+            debug_renderer.draw_cone(32, 4, 2.0f * half_angle, length, position, rotation, cone_color);
+          };
+          draw_cutoff(light->outer_cone_angle, color);
+          draw_cutoff(light->inner_cone_angle, glm::vec4(1.0f, 0.85f, 0.0f, 1.0f));
+        }
       }
     }
 
