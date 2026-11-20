@@ -253,7 +253,11 @@ static auto draw_add_component_popup(ComponentDB& component_db, flecs::entity en
   });
 
   const auto add_component = [&entity](const AddComponentEntry& entry) {
-    entity.add(entry.component);
+    App::mod<Editor>().undo_redo_system->execute_command<ComponentAddCommand>(
+      entity,
+      entry.component,
+      fmt::format("Add {}", entry.display_name)
+    );
     ImGui::CloseCurrentPopup();
   };
 
@@ -1130,7 +1134,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 
   const auto add_component_label = ICON_MDI_PLUS " Add";
 
-  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_component_label).x + UI::scale(20.0f)));
+  ImGui::PushItemWidth(
+    ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_component_label).x + UI::scale(20.0f))
+  );
   std::string new_name = entity.name().c_str();
   if (self.rename_entity_)
     ImGui::SetKeyboardFocusHere();

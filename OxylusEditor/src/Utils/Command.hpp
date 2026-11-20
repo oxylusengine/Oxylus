@@ -224,6 +224,34 @@ private:
   std::string id_;
 };
 
+class ComponentAddCommand : public Command {
+public:
+  ComponentAddCommand(flecs::entity entity, flecs::id_t component_id, std::string id)
+      : entity_(entity),
+        component_id_(component_id),
+        id_(std::move(id)) {}
+
+  // the entity can be gone by now, a deleted entity comes back from undo under a new id
+  auto execute() -> void override {
+    if (entity_.is_alive()) {
+      entity_.add(component_id_);
+    }
+  }
+
+  auto undo() -> void override {
+    if (entity_.is_alive()) {
+      entity_.remove(component_id_);
+    }
+  }
+
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  flecs::entity entity_;
+  flecs::id_t component_id_;
+  std::string id_;
+};
+
 class ComponentCopyCommand : public Command {
 public:
   ComponentCopyCommand(flecs::entity src, flecs::entity dst, flecs::id_t comp_id, std::string id)
