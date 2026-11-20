@@ -417,11 +417,6 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
-    if (auto s = self.editor_scene ? self.editor_scene->get_scene() : nullptr) {
-      self.runtime_console.set_scene_cvar_system(reinterpret_cast<CVarSystem*>(&s->renderer_cvar));
-      self.runtime_console.render();
-    }
-
     if (ImGui::BeginPopupContextItem("viewport context")) {
       if (self.editor_scene && !self.editor_scene->is_playing()) {
         if (ImGui::MenuItem("Unload Scene")) {

@@ -3,13 +3,17 @@
 #include <ankerl/unordered_dense.h>
 #include <charconv>
 #include <functional>
-#include <imgui.h>
-#include <mutex>
+#include <optional>
+#include <shared_mutex>
 
-#include "Utils/CVars.hpp"
+#include "Core/Types.hpp"
 #include "Utils/Log.hpp"
 
+struct ImGuiInputTextCallbackData;
+
 namespace ox {
+class CVarSystem;
+
 class RuntimeConsole {
 public:
   struct ParsedCommandValue {
@@ -70,9 +74,8 @@ public:
   // writer of `text_buffer`, and `render` calls it.
   auto drain_pending(this RuntimeConsole& self) -> void;
 
-  auto set_scene_cvar_system(this RuntimeConsole& self, CVarSystem* system) -> void { self.scene_cvar_system = system; }
-
-  auto render(this RuntimeConsole& self) -> void;
+  auto toggle(this RuntimeConsole& self) -> void;
+  auto render(this RuntimeConsole& self, CVarSystem* scene_cvars = nullptr) -> void;
 
 private:
   struct ConsoleText {
@@ -106,9 +109,10 @@ private:
   static constexpr uint32_t MAX_TEXT_BUFFER_SIZE = 32;
   i32 history_position = -1;
   std::vector<ConsoleText> text_buffer = {};
-  std::mutex pending_mutex = {};
+  std::shared_mutex pending_mutex = {};
   std::vector<ConsoleText> pending = {};
   std::vector<std::string> input_log = {};
+  std::string input_buffer;
   bool request_scroll_to_bottom = true;
   bool request_keyboard_focus = true;
   bool auto_scroll = true;

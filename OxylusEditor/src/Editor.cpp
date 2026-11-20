@@ -270,7 +270,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   // panels render their scenes as they draw, each one ahead of this frame's UI on the same queue
   self.render(*frame);
 
-  imgui_renderer.end_frame();
+  auto* scene = self.get_selected_scene();
+  imgui_renderer.end_frame(scene ? &scene->renderer_cvar.system : nullptr);
 
   // the UI over the swapchain image, recorded again only when the swapchain is replaced
   if (!self.frame_program || self.frame_program_generation != frame->generation) {

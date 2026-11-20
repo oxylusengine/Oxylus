@@ -19,8 +19,8 @@ auto MainViewportPanel::init(this MainViewportPanel& self) -> void {
   self.app_close_handler = event_system
                              .subscribe<AppCloseEvent>([&self](const AppCloseEvent& e) {
                                for (auto& v : self.viewport_panels) {
-                                 if (v->get_scene()->is_playing()) {
-                                   v->get_scene()->stop();
+                                 if (auto* scene = v->get_scene(); scene && scene->is_playing()) {
+                                   scene->stop();
                                  }
                                }
                              })
