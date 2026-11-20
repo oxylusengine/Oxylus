@@ -37,6 +37,7 @@ public:
 
   auto set_scene(this SceneHierarchyPanel& self, EditorScene* scene) -> void;
   auto get_scene(this const SceneHierarchyPanel& self) -> EditorScene*;
+  auto find_component(this SceneHierarchyPanel& self, flecs::entity component) -> void;
 
 private:
   enum class EntityView : u8 { Hierarchy, SearchResult };
@@ -46,6 +47,11 @@ private:
 
   ImGuiTextFilter scripts_filter_;
   ImGuiTextFilter entities_filter_;
+  flecs::entity search_root_ = {};
+  usize selected_suggestion_ = 0;
+  bool focus_search_ = false;
+
+  auto draw_entity_search(this SceneHierarchyPanel& self) -> void;
 
   auto draw_entity_node(
     this SceneHierarchyPanel& self,

@@ -770,6 +770,13 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
   auto copy_component_txt = stack.format("{} Copy Component", ICON_MDI_CONTENT_COPY);
   auto paste_component_txt = stack.format("{} Paste Component", ICON_MDI_CONTENT_PASTE);
 
+  if (fid.is_entity() && scene_ && scene_->component_db.is_component_known(fid)) {
+    if (ImGui::MenuItem("Find Entities With This Component")) {
+      App::mod<Editor>().editor_panel_registry.get<SceneHierarchyPanel>().find_component(fid.entity());
+    }
+    ImGui::Separator();
+  }
+
   if (ImGui::MenuItem(remove_component_txt.data())) {
     remove_component = true;
   }

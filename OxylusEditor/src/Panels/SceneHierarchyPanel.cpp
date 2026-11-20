@@ -11,6 +11,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
@@ -99,6 +100,8 @@ static auto draw_component_search_help(f32 button_size) -> void {
 
   ImGui::TextUnformatted("Plain text matches entity names. Component queries accept partial names and ignore case.");
   ImGui::TextUnformatted("Aliases match a setting on an existing component.");
+  ImGui::TextUnformatted("Combine filters with spaces. Prefix a filter with - to exclude its matches.");
+  ImGui::TextUnformatted("Use quotes for an exact component name. Use Up/Down and Tab to complete component names.");
 
   constexpr auto table_flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings;
   if (ImGui::BeginTable("ComponentSearchExamples", 2, table_flags)) {
@@ -109,42 +112,123 @@ static auto draw_component_search_help(f32 button_size) -> void {
     const auto example = [](const c8* name, const c8* description) -> void {
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
-      ImGui::Text("%s%s", COMPONENT_SEARCH_PREFIX.data(), name);
+      ImGui::TextUnformatted(name);
       ImGui::TableNextColumn();
       ImGui::TextUnformatted(description);
     };
-    example("CameraComponent", "Any camera");
-    example("LightComponent", "Any light type");
-    example("Collider", "Any collider component");
+    example("component:CameraComponent", "Any camera");
+    example("component:LightComponent", "Any light type");
+    example("component:Collider", "Any collider component");
+    example("component:LightComponent state:disabled", "Disabled lights");
+    example("component:MeshComponent -component:Collider", "Meshes without a collider");
+    example("name:\"Main Camera\"", "Entity names containing Main Camera");
+    memory::ScopedStack stack;
     for (const auto& alias : COMPONENT_SEARCH_ALIASES) {
-      example(alias.name, alias.description);
+      example(stack.format_char("{}{}", COMPONENT_SEARCH_PREFIX, alias.name), alias.description);
     }
     ImGui::EndTable();
   }
   ImGui::EndTooltip();
 }
 
-static auto component_search_term(std::string_view query) -> option<std::string_view> {
-  constexpr auto whitespace = std::string_view(" \t");
-  const auto first = query.find_first_not_of(whitespace);
-  if (first == std::string_view::npos) {
+enum class SearchField : u8 { Text, Name, Component, State };
+
+struct SearchWord {
+  usize begin;
+  usize end;
+};
+
+struct SearchTerm {
+  SearchField field = SearchField::Text;
+  std::string_view value;
+  bool exclude = false;
+  bool quoted = false;
+};
+
+static constexpr auto SEARCH_WHITESPACE = std::string_view(" \t");
+
+static auto next_search_word(std::string_view query, usize offset) -> option<SearchWord> {
+  const auto begin = query.find_first_not_of(SEARCH_WHITESPACE, offset);
+  if (begin == std::string_view::npos) {
     return nullopt;
   }
 
-  query.remove_prefix(first);
-  if (
-    query.size() < COMPONENT_SEARCH_PREFIX.size() ||
-    ImStrnicmp(query.data(), COMPONENT_SEARCH_PREFIX.data(), COMPONENT_SEARCH_PREFIX.size()) != 0
-  ) {
+  auto end = begin;
+  bool in_quotes = false;
+  for (; end < query.size(); ++end) {
+    if (query[end] == '"') {
+      in_quotes = !in_quotes;
+    } else if (!in_quotes && SEARCH_WHITESPACE.contains(query[end])) {
+      break;
+    }
+  }
+  return SearchWord{begin, end};
+}
+
+static auto starts_with_query_prefix(std::string_view value, std::string_view prefix) -> bool {
+  return value.size() >= prefix.size() && ImStrnicmp(value.data(), prefix.data(), prefix.size()) == 0;
+}
+
+static auto contains_search_text(const c8* name, std::string_view value) -> bool {
+  return name && ImStristr(name, nullptr, value.data(), value.data() + value.size()) != nullptr;
+}
+
+static auto parse_search_term(std::string_view word) -> SearchTerm {
+  auto term = SearchTerm{};
+  if (word.starts_with('-')) {
+    term.exclude = true;
+    word.remove_prefix(1);
+  }
+
+  constexpr auto fields = std::array{
+    std::pair{SearchField::Component, COMPONENT_SEARCH_PREFIX},
+    std::pair{SearchField::State, std::string_view("state:")},
+    std::pair{SearchField::Name, std::string_view("name:")},
+  };
+  for (const auto& [kind, prefix] : fields) {
+    if (starts_with_query_prefix(word, prefix)) {
+      term.field = kind;
+      word.remove_prefix(prefix.size());
+      break;
+    }
+  }
+
+  if (word.starts_with('"')) {
+    term.quoted = true;
+    word.remove_prefix(1);
+    if (word.ends_with('"')) {
+      word.remove_suffix(1);
+    }
+  }
+  term.value = word;
+  return term;
+}
+
+struct ParsedSearchTerm {
+  SearchWord word;
+  SearchTerm term;
+};
+
+static auto next_search_term(std::string_view query, usize offset) -> option<ParsedSearchTerm> {
+  const auto word = next_search_word(query, offset);
+  if (!word) {
     return nullopt;
   }
 
-  query.remove_prefix(COMPONENT_SEARCH_PREFIX.size());
-  const auto name_start = query.find_first_not_of(whitespace);
-  if (name_start == std::string_view::npos) {
-    return std::string_view{};
+  auto parsed = ParsedSearchTerm{*word, parse_search_term(query.substr(word->begin, word->end - word->begin))};
+  if (parsed.term.field != SearchField::Text && parsed.term.value.empty() && !parsed.term.quoted) {
+    if (const auto value_word = next_search_word(query, word->end)) {
+      const auto value = parse_search_term(query.substr(value_word->begin, value_word->end - value_word->begin));
+      if (value.field == SearchField::Text && !value.exclude) {
+        parsed.term.value = value.value;
+        parsed.term.quoted = value.quoted;
+        parsed.word.end = value_word->end;
+      }
+    } else {
+      parsed.word.end = query.size();
+    }
   }
-  return query.substr(name_start, query.find_last_not_of(whitespace) - name_start + 1);
+  return parsed;
 }
 
 struct ComponentSearch {
@@ -158,24 +242,33 @@ struct ComponentSearch {
 };
 
 static auto resolve_component_search(
-  std::span<const flecs::id> registered_components, std::string_view term, memory::ScopedStack& stack
+  std::span<const flecs::id> registered_components, const SearchTerm& term, memory::ScopedStack& stack
 ) -> ComponentSearch {
-  if (term.empty()) {
-    return {};
-  }
-
-  const auto matches_name = [term](const c8* name) {
-    return name && ImStristr(name, nullptr, term.data(), term.data() + term.size()) != nullptr;
+  const auto matches_name = [&term](const c8* name) {
+    if (!name) {
+      return false;
+    }
+    if (!term.quoted) {
+      return contains_search_text(name, term.value);
+    }
+    const auto candidate = std::string_view(name);
+    return candidate.size() == term.value.size() && starts_with_query_prefix(candidate, term.value);
   };
 
   auto ids = stack.alloc<flecs::id>(registered_components.size());
   usize count = 0;
   for (const auto component : registered_components) {
-    if (matches_name(component.entity().name().c_str())) {
+    const auto component_entity = component.entity();
+    const auto matches = term.quoted && term.value.contains("::") ? matches_name(component_entity.path().c_str())
+                                                                  : matches_name(component_entity.name().c_str());
+    if (matches) {
       ids[count++] = component;
     }
   }
 
+  if (term.quoted && count != 0) {
+    return {.components = ids.first(count)};
+  }
   auto aliases = stack.alloc<const ComponentSearchAlias*>(COMPONENT_SEARCH_ALIASES.size());
   usize alias_count = 0;
   for (const auto& alias : COMPONENT_SEARCH_ALIASES) {
@@ -184,6 +277,179 @@ static auto resolve_component_search(
     }
   }
   return {.components = ids.first(count), .aliases = aliases.first(alias_count)};
+}
+
+struct SearchClause {
+  SearchTerm term;
+  ComponentSearch components;
+  bool enabled = true;
+
+  auto matches(this const SearchClause& self, flecs::entity entity) -> bool {
+    bool matches = false;
+    switch (self.term.field) {
+      case SearchField::Component: matches = self.components.matches(entity); break;
+      case SearchField::State    : matches = entity.enabled() == self.enabled; break;
+      case SearchField::Text     :
+      case SearchField::Name     : matches = contains_search_text(entity.name().c_str(), self.term.value); break;
+    }
+    return matches != self.term.exclude;
+  }
+};
+
+struct HierarchySearch {
+  std::span<const SearchClause> clauses;
+  const c8* error = nullptr;
+  bool structured = false;
+};
+
+static auto compile_hierarchy_search(
+  std::string_view query, std::span<const flecs::id> components, memory::ScopedStack& stack
+) -> HierarchySearch {
+  auto clauses = stack.alloc<SearchClause>(query.size() / 2 + 1);
+  usize count = 0;
+  auto search = HierarchySearch{};
+  for (usize offset = 0; const auto parsed = next_search_term(query, offset);) {
+    offset = parsed->word.end;
+    search.structured = search.structured || parsed->term.field != SearchField::Text;
+    clauses[count++].term = parsed->term;
+  }
+  if (!search.structured) {
+    return search;
+  }
+
+  for (auto& clause : clauses.first(count)) {
+    const auto& term = clause.term;
+    if (term.value.empty()) {
+      search.error = "Enter a value after the search prefix";
+      return search;
+    }
+    if (term.field == SearchField::Component) {
+      clause.components = resolve_component_search(components, term, stack);
+    } else if (term.field == SearchField::State) {
+      if (term.value.size() == 7 && starts_with_query_prefix(term.value, "enabled")) {
+        clause.enabled = true;
+      } else if (term.value.size() == 8 && starts_with_query_prefix(term.value, "disabled")) {
+        clause.enabled = false;
+      } else {
+        search.error = "Use state:enabled or state:disabled";
+        return search;
+      }
+    }
+  }
+  search.clauses = clauses.first(count);
+  return search;
+}
+
+struct SearchSuggestion {
+  const c8* name;
+  const c8* description;
+  bool prefix_match;
+};
+
+struct SearchCompletions {
+  SearchWord word = {};
+  SearchTerm term = {};
+  std::span<const SearchSuggestion> items;
+};
+
+static auto component_completions(
+  std::string_view query, usize cursor, std::span<const flecs::id> components, memory::ScopedStack& stack
+) -> SearchCompletions {
+  for (usize offset = 0; const auto parsed = next_search_term(query, offset);) {
+    const auto& word = parsed->word;
+    offset = word.end;
+    if (cursor <= word.begin) {
+      break;
+    }
+    if (cursor > word.end) {
+      continue;
+    }
+    const auto typed = next_search_term(query.substr(0, cursor), word.begin);
+    if (!typed || typed->term.field != SearchField::Component) {
+      break;
+    }
+    const auto& term = typed->term;
+
+    auto candidates = stack.alloc<SearchSuggestion>(components.size() + COMPONENT_SEARCH_ALIASES.size());
+    usize count = 0;
+    const auto add = [&](const c8* name, const c8* description) {
+      if (name && name[0] && (term.value.empty() || contains_search_text(name, term.value))) {
+        candidates[count++] = {name, description, starts_with_query_prefix(name, term.value)};
+      }
+    };
+    for (const auto component : components) {
+      add(component.entity().name().c_str(), nullptr);
+    }
+    for (const auto& alias : COMPONENT_SEARCH_ALIASES) {
+      add(alias.name, alias.description);
+    }
+
+    auto items = candidates.first(count);
+    std::ranges::sort(items, [](const SearchSuggestion& a, const SearchSuggestion& b) {
+      if (a.prefix_match != b.prefix_match) {
+        return a.prefix_match;
+      }
+      return ImStricmp(b.name, a.name) < 0;
+    });
+    const auto duplicates = std::ranges::unique(items, [](const SearchSuggestion& a, const SearchSuggestion& b) {
+      return ImStricmp(a.name, b.name) == 0;
+    });
+    constexpr usize max_suggestions = 6;
+    return {word, term, items.first(std::min(max_suggestions, static_cast<usize>(duplicates.begin() - items.begin())))};
+  }
+  return {};
+}
+
+static auto complete_search_word(
+  const SearchCompletions& completions, usize item, bool at_end, memory::ScopedStack& stack
+) -> std::string_view {
+  const auto name = std::string_view(completions.items[item].name);
+  const auto quote = completions.term.quoted || name.find_first_of(SEARCH_WHITESPACE) != std::string_view::npos ? "\""
+                                                                                                                : "";
+  return stack.format(
+    "{}{}{}{}{}{}",
+    completions.term.exclude ? "-" : "",
+    COMPONENT_SEARCH_PREFIX,
+    quote,
+    name,
+    quote,
+    at_end ? " " : ""
+  );
+}
+
+struct SearchCompletionInput {
+  std::span<const flecs::id> components;
+  usize& selected;
+};
+
+static auto hierarchy_input_callback(ImGuiInputTextCallbackData* data) -> int {
+  auto& input = *static_cast<SearchCompletionInput*>(data->UserData);
+  memory::ScopedStack stack;
+  const auto query = std::string_view(data->Buf, static_cast<usize>(data->BufTextLen));
+  const auto completions = component_completions(query, static_cast<usize>(data->CursorPos), input.components, stack);
+  if (completions.items.empty()) {
+    input.selected = 0;
+    return 0;
+  }
+
+  input.selected = std::min(input.selected, completions.items.size() - 1);
+  if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+    if (data->EventKey == ImGuiKey_UpArrow) {
+      input.selected = (input.selected + completions.items.size() - 1) % completions.items.size();
+    } else {
+      input.selected = (input.selected + 1) % completions.items.size();
+    }
+    return 0;
+  }
+
+  const auto [begin, end] = completions.word;
+  const auto replacement = complete_search_word(completions, input.selected, end == query.size(), stack);
+  if (query.size() - (end - begin) + replacement.size() < static_cast<usize>(data->BufSize)) {
+    data->DeleteChars(static_cast<int>(begin), static_cast<int>(end - begin));
+    data->InsertChars(static_cast<int>(begin), replacement.data(), replacement.data() + replacement.size());
+    input.selected = 0;
+  }
+  return 0;
 }
 
 static auto has_mesh_in_hierarchy(flecs::entity entity) -> bool {
@@ -308,12 +574,93 @@ auto SceneHierarchyPanel::on_update(this SceneHierarchyPanel& self) -> void {
   }
 }
 
+auto SceneHierarchyPanel::draw_entity_search(this SceneHierarchyPanel& self) -> void {
+  const auto button_size = ImGui::GetFrameHeight();
+  const auto buttons_width = 2.0f * (button_size + ImGui::GetStyle().ItemSpacing.x);
+  auto& filter = self.entities_filter_;
+  const auto input_id = ImGui::GetID("###HierarchyFilter");
+  if (self.focus_search_) {
+    if (auto* state = ImGui::GetInputTextState(input_id)) {
+      state->ReloadUserBufAndMoveToEnd();
+    }
+    ImGui::SetKeyboardFocusHere();
+    self.focus_search_ = false;
+  }
+
+  auto completion_input = SearchCompletionInput{self.scene_->component_db.get_components(), self.selected_suggestion_};
+  constexpr auto input_flags = ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory;
+  ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x - buttons_width));
+  if (
+    ImGui::InputTextWithHint(
+      "###HierarchyFilter",
+      ICON_MDI_MAGNIFY " Search name or component:...",
+      filter.InputBuf,
+      sizeof(filter.InputBuf),
+      input_flags,
+      hierarchy_input_callback,
+      &completion_input
+    )
+  ) {
+    filter.Build();
+    self.selected_suggestion_ = 0;
+  }
+
+  const auto show_suggestions = ImGui::IsItemActive() || ImGui::IsItemDeactivated();
+  ImGui::SameLine();
+  draw_component_search_help(button_size);
+  ImGui::SameLine();
+  if (UI::button(ICON_MDI_PLUS "###AddEntity", {button_size, button_size})) {
+    ImGui::OpenPopup("scene_h_entities_context_window");
+  }
+
+  if (!show_suggestions) {
+    self.selected_suggestion_ = 0;
+    return;
+  }
+  const auto* input_state = ImGui::GetInputTextState(input_id);
+  if (!input_state) {
+    return;
+  }
+
+  memory::ScopedStack stack;
+  const auto query = std::string_view(filter.InputBuf);
+  const auto cursor = std::min(query.size(), static_cast<usize>(input_state->GetCursorPos()));
+  const auto completions = component_completions(query, cursor, completion_input.components, stack);
+  if (completions.items.empty()) {
+    self.selected_suggestion_ = 0;
+    return;
+  }
+
+  self.selected_suggestion_ = std::min(self.selected_suggestion_, completions.items.size() - 1);
+  for (usize i = 0; i < completions.items.size(); ++i) {
+    const auto& item = completions.items[i];
+    const auto* label = item.description ? stack.format_char("{}  ({})", item.name, item.description) : item.name;
+    constexpr auto flags = ImGuiSelectableFlags_SelectOnClick | ImGuiSelectableFlags_NoHoldingActiveID;
+    if (ImGui::Selectable(label, i == self.selected_suggestion_, flags)) {
+      const auto [begin, end] = completions.word;
+      const auto replacement = complete_search_word(completions, i, end == query.size(), stack);
+      const auto updated = stack.format("{}{}{}", query.substr(0, begin), replacement, query.substr(end));
+      if (updated.size() < sizeof(filter.InputBuf)) {
+        ImStrncpy(filter.InputBuf, updated.data(), sizeof(filter.InputBuf));
+        filter.Build();
+        self.selected_suggestion_ = 0;
+        self.focus_search_ = true;
+      }
+      break;
+    }
+    UI::tooltip_hover(item.description);
+  }
+}
+
 auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
   memory::ScopedStack stack;
 
   ImGuiScoped::StyleVar cellpad(ImGuiStyleVar_CellPadding, {0, 0});
 
+  if (self.focus_search_) {
+    ImGui::SetNextWindowFocus();
+  }
   if (ImGui::Begin(self.id.c_str(), &self.visible, ImGuiWindowFlags_NoCollapse)) {
     if (!self.scene_) {
       const auto warning_text = "No scene!";
@@ -435,26 +782,27 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
       ImGui::TreePop();
     }
 
+    if (self.focus_search_) {
+      ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    }
     if (ImGui::TreeNodeEx("Entities", ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen)) {
-      const auto button_size = ImGui::GetFrameHeight();
-      const auto buttons_width = 2.0f * (button_size + ImGui::GetStyle().ItemSpacing.x);
-      ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x - buttons_width));
-      if (
-        ImGui::InputTextWithHint(
-          "###HierarchyFilter",
-          ICON_MDI_MAGNIFY " Search name or component:...",
-          self.entities_filter_.InputBuf,
-          sizeof(self.entities_filter_.InputBuf)
-        )
-      ) {
-        self.entities_filter_.Build();
-      }
-      ImGui::SameLine();
-      draw_component_search_help(button_size);
-      ImGui::SameLine();
+      self.draw_entity_search();
 
-      if (UI::button(ICON_MDI_PLUS "###AddEntity", {button_size, button_size}))
-        ImGui::OpenPopup("scene_h_entities_context_window");
+      if (self.search_root_ && !self.search_root_.is_alive()) {
+        self.search_root_ = {};
+      }
+      if (self.search_root_) {
+        if (ImGui::SmallButton("Clear Scope")) {
+          self.search_root_ = {};
+        } else {
+          ImGui::SameLine();
+          ImGui::Text("Searching %s", self.search_root_.name().c_str());
+          if (ImGui::BeginItemTooltip()) {
+            ImGui::TextUnformatted(self.search_root_.path().c_str());
+            ImGui::EndTooltip();
+          }
+        }
+      }
 
       if (
         ImGui::BeginPopupContextWindow(
@@ -497,40 +845,55 @@ auto SceneHierarchyPanel::on_render(this SceneHierarchyPanel& self, const Swapch
         ImGui::TableSetupColumn(vis_colon.c_str(), ImGuiTableColumnFlags_WidthFixed, line_height * 2.0f);
 
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-        const auto
-          entities = self.scene_->world.query_builder<TransformComponent>().with(flecs::Disabled).optional().build();
-        if (const auto term = component_search_term(self.entities_filter_.InputBuf)) {
-          const auto search = resolve_component_search(self.scene_->component_db.get_components(), *term, stack);
+        const auto query = compile_hierarchy_search(
+          self.entities_filter_.InputBuf,
+          self.scene_->component_db.get_components(),
+          stack
+        );
+        const auto visit_roots = [&self](auto&& visit) {
+          if (self.search_root_) {
+            visit(self.search_root_);
+            return;
+          }
+          self.scene_->world.query_builder<const TransformComponent>()
+            .with(flecs::Disabled)
+            .optional()
+            .build()
+            .each([&visit](flecs::entity entity, const TransformComponent&) {
+              if (entity.parent() == flecs::entity::null()) {
+                visit(entity);
+              }
+            });
+        };
+        if (query.structured || self.search_root_) {
           bool found_match = false;
           const auto draw_matches = [&](this const auto& visit, flecs::entity entity) -> void {
             if (entity.has<Hidden>()) {
               return;
             }
-            if (search.matches(entity)) {
+            const auto matches = query.structured
+                                   ? std::ranges::all_of(
+                                       query.clauses,
+                                       [entity](const SearchClause& clause) { return clause.matches(entity); }
+                                     )
+                                   : self.entities_filter_.PassFilter(entity.name().c_str());
+            if (matches) {
               ImGuiScoped::ID result_id(reinterpret_cast<const void*>(entity.raw_id()));
               self.draw_entity_node(entity, EntityView::SearchResult);
               found_match = true;
             }
             entity.children([&visit](flecs::entity child) { visit(child); });
           };
-          if (!search.components.empty() || !search.aliases.empty()) {
-            entities.each([&draw_matches](flecs::entity entity, TransformComponent) {
-              if (entity.parent() == flecs::entity::null()) {
-                draw_matches(entity);
-              }
-            });
+          if (!query.error) {
+            visit_roots(draw_matches);
           }
           if (!found_match) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", term->empty() ? "Enter a component name" : "No matching entities");
+            ImGui::TextDisabled("%s", query.error ? query.error : "No matching entities");
           }
         } else {
-          entities.each([&self](flecs::entity entity, TransformComponent) {
-            if (entity.parent() == flecs::entity::null()) {
-              self.draw_entity_node(entity);
-            }
-          });
+          visit_roots([&self](flecs::entity entity) { self.draw_entity_node(entity); });
         }
         ImGui::PopStyleVar();
 
@@ -654,6 +1017,10 @@ auto SceneHierarchyPanel::draw_entity_node(
   bool entity_deleted = false;
 
   if (ImGui::BeginPopupContextItem()) {
+    if (ImGui::MenuItem("Search This Subtree")) {
+      self.search_root_ = entity;
+      self.focus_search_ = true;
+    }
     if (ImGui::MenuItem("Rename", "F2"))
       self.renaming_entity_ = entity;
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
@@ -956,12 +1323,37 @@ auto SceneHierarchyPanel::set_scene(this SceneHierarchyPanel& self, EditorScene*
 
   self.current_scene = scene;
   self.scene_ = scene != nullptr ? scene->get_scene().get() : nullptr;
+  self.search_root_ = {};
 
   self.selected_entity_.reset();
   self.renaming_entity_ = {};
   self.dragged_entity_ = {};
   self.dragged_entity_target_ = {};
   self.deleted_entity_ = {};
+}
+
+auto SceneHierarchyPanel::find_component(this SceneHierarchyPanel& self, flecs::entity component) -> void {
+  if (!self.scene_ || component.world().c_ptr() != self.scene_->world.c_ptr()) {
+    return;
+  }
+
+  const auto name = component.name();
+  const auto components = self.scene_->component_db.get_components();
+  const auto ambiguous = std::ranges::any_of(components, [&](flecs::id other) {
+    return other != component && ImStricmp(other.entity().name().c_str(), name.c_str()) == 0;
+  });
+
+  memory::ScopedStack stack;
+  const auto path = ambiguous ? component.path() : flecs::string{};
+  const auto query = stack.format("{}\"{}\"", COMPONENT_SEARCH_PREFIX, ambiguous ? path.c_str() : name.c_str());
+  if (query.size() < sizeof(self.entities_filter_.InputBuf)) {
+    ImStrncpy(self.entities_filter_.InputBuf, query.data(), sizeof(self.entities_filter_.InputBuf));
+    self.entities_filter_.Build();
+    self.search_root_ = {};
+    self.selected_suggestion_ = 0;
+    self.focus_search_ = true;
+    self.visible = true;
+  }
 }
 
 auto SceneHierarchyPanel::get_scene(this const SceneHierarchyPanel& self) -> EditorScene* {
