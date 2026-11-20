@@ -586,13 +586,40 @@ static auto draw_scene_script(const Scene& scene, const std::string& type_name) 
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
+  flecs::entity inspected_entity;
+  flecs::id_t component_id;
+  const u8* component_base;
   bool modified;
 
-  EntityInspector(flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_)
+  EntityInspector(
+    flecs::world& world_,
+    UndoRedoSystem& undo_redo_system_,
+    InspectorPanel& inspector_panel_,
+    flecs::entity entity_,
+    flecs::id_t component_id_,
+    const void* component_base_
+  )
       : IEntitySerializer(world_),
         undo_redo_system(undo_redo_system_),
         inspector_panel(inspector_panel_),
+        inspected_entity(entity_),
+        component_id(component_id_),
+        component_base(static_cast<const u8*>(component_base_)),
         modified(false) {}
+
+  template <typename T>
+  auto record_change(this EntityInspector& self, std::string_view name, const T* field, const T& old_value) -> void {
+    const auto offset = static_cast<usize>(reinterpret_cast<const u8*>(field) - self.component_base);
+    self.undo_redo_system.execute_command<ComponentFieldChangeCommand<T>>(
+      self.inspected_entity,
+      self.component_id,
+      offset,
+      old_value,
+      *field,
+      std::string(name)
+    );
+    self.modified = true;
+  }
 
   auto on_primitive(std::string_view name, Primitive primitive) -> void override {
     std::visit(
@@ -601,39 +628,33 @@ struct EntityInspector : IEntitySerializer {
         [&](bool* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system //
-              .set_merge_enabled(false)
-              .execute_command<PropertyChangeCommand<bool>>(v, old_v, *v, std::string(name))
-              .set_merge_enabled(true);
-            modified = true;
+            undo_redo_system.set_merge_enabled(false);
+            record_change(name, v, old_v);
+            undo_redo_system.set_merge_enabled(true);
           }
         },
         [&](c8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<c8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i16* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i16>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u16* v) {
@@ -641,50 +662,43 @@ struct EntityInspector : IEntitySerializer {
           // DecalComponent::layer_mask and LayerComponent::layer, the two layer bitmasks
           const auto is_layer_mask = name == "layer_mask" || name == "layer";
           if (is_layer_mask ? draw_layer_mask(name.data(), v) : UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](f32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<f32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](f64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
       },
@@ -715,22 +729,19 @@ struct EntityInspector : IEntitySerializer {
         auto* v = static_cast<glm::vec2*>(base);
         auto old_v = *v;
         if (UI::draw_vec2_control(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec2>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::vec3>()) {
         auto* v = static_cast<glm::vec3*>(base);
         auto old_v = *v;
         if (UI::draw_vec3_control(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::vec4>()) {
         auto* v = static_cast<glm::vec4*>(base);
         auto old_v = *v;
         if (UI::property_vector(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec4>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::quat>()) {
         auto* v = static_cast<glm::quat*>(base);
@@ -743,9 +754,7 @@ struct EntityInspector : IEntitySerializer {
         if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {
           auto old_v_cmd = *v;
           *v = glm::quat(glm::radians(inspector_panel.euler_cache.value()));
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::quat>>(v, old_v_cmd, *v, std::string(name));
-
-          modified = true;
+          record_change(name, v, old_v_cmd);
         }
       } else {
         serialize_ops(ops + 1, op_count - 1, base);
@@ -1207,8 +1216,8 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       UI::begin_properties(properties_flags);
 
       auto world = entity.world();
-      auto inspector = EntityInspector(world, *undo_redo_system.get(), self);
       auto* component = entity.get_mut(fid);
+      auto inspector = EntityInspector(world, *undo_redo_system.get(), self, entity, fid, component);
       inspector.serialize(ty, component);
       if (inspector.modified) {
         entity.modified(fid);

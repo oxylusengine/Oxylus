@@ -2006,6 +2006,7 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
                                          : glm::mat4(1.0f);
 
         const glm::mat4 inv_parent = glm::inverse(parent_world);
+        const auto old_tc = *tc;
         if (self.gizmo_type == ImGuizmo::TRANSLATE) {
           tc->position += glm::vec3(inv_parent * glm::vec4(delta_translation, 0.0f));
         } else if (self.gizmo_type == ImGuizmo::ROTATE) {
@@ -2014,10 +2015,8 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
           tc->scale *= delta_scale;
         }
 
-        auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
           selected_entity,
-          tc,
           old_tc,
           *tc,
           "gizmo transform"

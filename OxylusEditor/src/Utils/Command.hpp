@@ -1,10 +1,12 @@
 #pragma once
 
 #include <chrono>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <simdjson.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Core/UUID.hpp"
@@ -72,79 +74,111 @@ private:
   std::string id_;
 };
 
-template <typename T>
-class PropertyChangeCommand : public Command {
-public:
-  PropertyChangeCommand(T* target, T old_val, T new_val, std::string id)
-      : target_(target),
-        old_value_(old_val),
-        new_value_(new_val),
-        id_(id) {}
+// commands look the component up through its entity every time they run, flecs moves component storage whenever
+// the entity's archetype changes, so a pointer taken when the command was recorded can point at another entity
 
-  auto execute() -> void override { *target_ = new_value_; }
-  auto undo() -> void override { *target_ = old_value_; }
+// a field of any component the inspector reflects, addressed by its byte offset into the component
+template <typename T>
+class ComponentFieldChangeCommand : public Command {
+public:
+  ComponentFieldChangeCommand(
+    flecs::entity entity, flecs::id_t component_id, usize offset, T old_value, T new_value, std::string id
+  )
+      : entity_(entity),
+        component_id_(component_id),
+        offset_(offset),
+        old_value_(old_value),
+        new_value_(new_value),
+        id_(std::move(id)) {}
+
+  // the inspector already wrote the value and notifies the scene once per edit itself
+  auto execute() -> void override {
+    if (std::exchange(is_recorded_, false)) {
+      return;
+    }
+
+    apply(new_value_);
+  }
+
+  auto undo() -> void override { apply(old_value_); }
 
   auto get_id() const -> std::string_view override { return id_; }
 
   auto can_merge(const Command& other) const -> bool override {
-    if (auto* other_cmd = dynamic_cast<const PropertyChangeCommand<T>*>(&other)) {
-      return target_ == other_cmd->target_ && get_id() == other_cmd->get_id();
+    if (const auto* other_cmd = dynamic_cast<const ComponentFieldChangeCommand<T>*>(&other)) {
+      return entity_ == other_cmd->entity_ && component_id_ == other_cmd->component_id_ &&
+             offset_ == other_cmd->offset_ && get_id() == other_cmd->get_id();
     }
+
     return false;
   }
 
   auto merge(std::unique_ptr<Command> other) -> std::unique_ptr<Command> override {
-    if (auto other_cmd = dynamic_cast<PropertyChangeCommand<T>*>(other.get())) {
-      auto merged = std::make_unique<PropertyChangeCommand<T>>(target_, old_value_, other_cmd->new_value_, id_);
+    if (const auto* other_cmd = dynamic_cast<ComponentFieldChangeCommand<T>*>(other.get())) {
+      auto merged = std::make_unique<ComponentFieldChangeCommand<T>>(
+        entity_,
+        component_id_,
+        offset_,
+        old_value_,
+        other_cmd->new_value_,
+        id_
+      );
+      // a merged command replaces one already on the stack and never goes through its first execute
+      merged->is_recorded_ = false;
       return merged;
     }
+
     return nullptr;
   }
 
 private:
-  T* target_;
+  flecs::entity entity_;
+  flecs::id_t component_id_;
+  usize offset_;
   T old_value_;
   T new_value_;
   std::string id_;
+  bool is_recorded_ = true;
+
+  auto apply(const T& value) -> void {
+    if (!entity_.is_alive()) {
+      return;
+    }
+
+    auto* component = static_cast<u8*>(entity_.try_get_mut(component_id_));
+    if (!component) {
+      return;
+    }
+
+    std::memcpy(component + offset_, &value, sizeof(T));
+    entity_.modified(component_id_);
+  }
 };
 
-// Difference between this and PropertyChangeCommand is, this calls modified on given entity with the given component
 template <typename T>
 class ComponentChangeCommand : public Command {
 public:
-  ComponentChangeCommand(flecs::entity e, T* target, T old_val, T new_val, std::string id)
+  ComponentChangeCommand(flecs::entity e, T old_val, T new_val, std::string id)
       : entity_(e),
-        target_(target),
         old_value_(old_val),
         new_value_(new_val),
         id_(id) {}
 
-  auto execute() -> void override {
-    *target_ = new_value_;
-    if (entity_.is_valid()) {
-      entity_.modified<T>();
-    }
-  }
-  auto undo() -> void override {
-    *target_ = old_value_;
-    if (entity_.is_valid()) {
-      entity_.modified<T>();
-    }
-  }
+  auto execute() -> void override { apply(new_value_); }
+  auto undo() -> void override { apply(old_value_); }
 
   auto get_id() const -> std::string_view override { return id_; }
 
   auto can_merge(const Command& other) const -> bool override {
     if (auto* other_cmd = dynamic_cast<const ComponentChangeCommand<T>*>(&other)) {
-      return target_ == other_cmd->target_ && get_id() == other_cmd->get_id();
+      return entity_ == other_cmd->entity_ && get_id() == other_cmd->get_id();
     }
     return false;
   }
 
   auto merge(std::unique_ptr<Command> other) -> std::unique_ptr<Command> override {
     if (auto other_cmd = dynamic_cast<ComponentChangeCommand<T>*>(other.get())) {
-      auto
-        merged = std::make_unique<ComponentChangeCommand<T>>(entity_, target_, old_value_, other_cmd->new_value_, id_);
+      auto merged = std::make_unique<ComponentChangeCommand<T>>(entity_, old_value_, other_cmd->new_value_, id_);
       return merged;
     }
     return nullptr;
@@ -152,10 +186,20 @@ public:
 
 private:
   flecs::entity entity_;
-  T* target_;
   T old_value_;
   T new_value_;
   std::string id_;
+
+  auto apply(const T& value) -> void {
+    if (!entity_.is_alive()) {
+      return;
+    }
+
+    if (auto* component = entity_.template try_get_mut<T>()) {
+      *component = value;
+      entity_.template modified<T>();
+    }
+  }
 };
 
 class EntityDeleteCommand : public Command {
