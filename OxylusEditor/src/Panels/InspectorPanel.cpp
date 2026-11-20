@@ -1281,6 +1281,13 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     if (remove_component) {
       if (fid == entity.world().component<TransformComponent>().type_id()) {
         OX_LOG_ERROR("Can't remove TransformComponent!");
+      } else if (fid.is_entity()) {
+        undo_redo_system->execute_command<ComponentRemoveCommand>(
+          self.scene_,
+          entity,
+          fid.entity(),
+          fmt::format("Remove {}", component_name.c_str())
+        );
       } else {
         entity.remove(fid);
       }

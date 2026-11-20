@@ -296,6 +296,44 @@ private:
   std::string id_;
 };
 
+// the fields go through the scene's JSON round trip, which releases and reacquires the asset refs they own
+class ComponentRemoveCommand : public Command {
+public:
+  ComponentRemoveCommand(Scene* scene, flecs::entity entity, flecs::entity component, std::string id)
+      : scene_(scene),
+        entity_(entity),
+        component_(component),
+        id_(std::move(id)) {}
+
+  auto execute() -> void override {
+    is_removed_ = entity_.is_alive() && component_.is_alive() && entity_.has(component_);
+    if (!is_removed_) {
+      return;
+    }
+
+    serialized_component_ = Scene::component_to_json(entity_, component_);
+    entity_.remove(component_);
+  }
+
+  auto undo() -> void override {
+    if (!is_removed_ || !entity_.is_alive() || !component_.is_alive() || entity_.has(component_)) {
+      return;
+    }
+
+    scene_->json_to_component(entity_, component_, serialized_component_);
+  }
+
+  auto get_id() const -> std::string_view override { return id_; }
+
+private:
+  Scene* scene_;
+  flecs::entity entity_;
+  flecs::entity component_;
+  std::string serialized_component_;
+  std::string id_;
+  bool is_removed_ = false;
+};
+
 class ComponentCopyCommand : public Command {
 public:
   ComponentCopyCommand(flecs::entity src, flecs::entity dst, flecs::id_t comp_id, std::string id)
