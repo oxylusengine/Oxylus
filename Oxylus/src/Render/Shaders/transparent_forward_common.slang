@@ -17,6 +17,7 @@ import fog;
 [[vk::binding(0, 0)]] Sampler linear_clamp_sampler;
 [[vk::binding(1, 0)]] Sampler nearest_clamp_sampler;
 [[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
+[[vk::binding(23, 0)]] Texture3D<f32x4> froxels;
 [[vk::binding(3, 0)]] StructuredBuffer<Material> materials;
 [[vk::binding(4, 0)]] Texture2DArray<u32> vsm_page_table;
 [[vk::binding(5, 0)]] Texture2DArray<u32> vsm_pointspot_page_tables;
@@ -264,7 +265,8 @@ func shade_transparent(in ForwardVertex input, bool is_front_face, in ForwardPus
         surface, material.get_ior(), smooth_normal, input.world_position, input.position.xy, input.position.z, push);
     var color = light.diffuse + light.specular + surface.emissive + light.aerial_perspective;
     // the opaque scene behind already carries its own fog, so the surface takes only what lies in front of it
-    color = evaluate_height_fog(camera.fog, camera.position.xyz, input.world_position).apply(color);
+    let screen_uv = input.position.xy / camera.resolution;
+    color = evaluate_fog(camera, input.world_position, screen_uv, froxels, linear_clamp_sampler).apply(color);
 
     // the resolve divides by the summed weight so only its ratios matter, scaled to peak at 1 so fp16 keeps the hdr range
     let view_distance = length(relative_position);

@@ -9,6 +9,8 @@ import fog;
 
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] Image2D<f32> depth_image;
+[[vk::binding(2, 0)]] Texture3D<f32x4> froxels;
+[[vk::binding(3, 0)]] SamplerState froxel_sampler;
 
 // blended as `src + dst * src.a`, so rgb is the fog's inscatter and alpha what it lets through
 [[shader("fragment")]]
@@ -23,9 +25,9 @@ func fs_main(VertexOutput input) -> f32x4 {
         }
 
         let direction = normalize(camera.unproject_uv(input.tex_coord, 0.5) - camera_position);
-        fog = evaluate_height_fog_sky(camera.fog, camera_position, direction);
+        fog = evaluate_fog_sky(camera, direction, input.tex_coord, froxels, froxel_sampler);
     } else {
-        fog = evaluate_height_fog(camera.fog, camera_position, camera.unproject_uv(input.tex_coord, depth));
+        fog = evaluate_fog(camera, camera.unproject_uv(input.tex_coord, depth), input.tex_coord, froxels, froxel_sampler);
     }
 
     return f32x4(fog.inscatter, fog.transmittance);

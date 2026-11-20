@@ -162,6 +162,7 @@ auto RendererInstance::draw_transparency(
          TransparencyBinding{&context.probe_states_buffer, vir::Access::FragmentRead},
          TransparencyBinding{&context.irradiance_attachment, vir::Access::FragmentSampled},
          TransparencyBinding{&context.distance_attachment, vir::Access::FragmentSampled},
+         TransparencyBinding{&context.froxel_attachment, vir::Access::FragmentSampled},
          TransparencyBinding{&context.accumulation_attachment, vir::Access::ColorRW},
          TransparencyBinding{&context.revealage_attachment, vir::Access::ColorRW},
        }) {
@@ -211,6 +212,7 @@ auto RendererInstance::draw_transparency(
                  .bind_buffer(0, 16, values.transparent_meshlet_instances)
                  .bind_buffer(0, 17, values.transforms_world)
                  .bind_image(0, 20, context.refractor_depth_attachment)
+                 .bind_image(0, 23, context.froxel_attachment)
                  .push_constant_address(push_base + 0, context.environment_buffer)
                  .push_constant_address(push_base + 8, context.lighting_buffer)
                  .push_constant_address(push_base + 16, values.lights)
@@ -382,7 +384,8 @@ auto RendererInstance::shade_refractors(
          {context.refractor_depth_attachment, vir::Access::FragmentSampled},
          {context.depth_attachment, vir::Access::FragmentSampled},
          {context.transmission_attachment, vir::Access::FragmentSampled},
-         {context.refractor_reflection_attachment, vir::Access::FragmentSampled}}
+         {context.refractor_reflection_attachment, vir::Access::FragmentSampled},
+         {context.froxel_attachment, vir::Access::FragmentSampled}}
       )
     )
       .with_name("refractor shade")
@@ -414,6 +417,7 @@ auto RendererInstance::shade_refractors(
       .bind_image(0, 20, context.refractor_depth_attachment)
       .bind_image(0, 21, context.transmission_attachment)
       .bind_image(0, 22, context.refractor_reflection_attachment)
+      .bind_image(0, 23, context.froxel_attachment)
       .push_constant_address(0, context.environment_buffer)
       .push_constant_address(8, context.lighting_buffer)
       .push_constant_address(16, values.lights)
@@ -453,7 +457,8 @@ auto RendererInstance::shade_refractors(
     context.refractor_depth_attachment,
     context.depth_attachment,
     context.transmission_attachment,
-    context.refractor_reflection_attachment
+    context.refractor_reflection_attachment,
+    context.froxel_attachment
   ) = std::tuple_cat(pass.draw(3, 1).end_rendering());
 }
 } // namespace ox

@@ -4,6 +4,7 @@
 
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
+#include "Render/Utils/Samplers.hpp"
 
 namespace ox {
 // the pass writes the fog's inscatter and what it lets through, so this is `inscatter + scene * transmittance`
@@ -24,23 +25,29 @@ auto RendererInstance::apply_height_fog(
   auto& values = recording.values;
   auto& render_context = *self.renderer.render_context;
 
-  std::tie(values.camera, context.depth_attachment, context.final_attachment) = std::tuple_cat(
-    module
-      .begin_rendering(
-        {{values.camera, vir::Access::FragmentUniformRead},
-         {context.depth_attachment, vir::Access::FragmentSampled},
-         {context.final_attachment, vir::Access::ColorRW}}
-      )
-      .with_name("height fog")
-      .bind_graphics_pipeline(render_context.pipeline("height_fog"))
-      .set_color_blend(0, HEIGHT_FOG_BLEND)
-      .set_viewport(0, vir::Rect2D::framebuffer())
-      .set_scissor(0, vir::Rect2D::framebuffer())
-      .bind_buffer(0, 0, values.camera)
-      .bind_image(0, 1, context.depth_attachment)
-      .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
-      .draw(3, 1)
-      .end_rendering()
-  );
+  std::tie(
+    values.camera,
+    context.depth_attachment,
+    context.froxel_attachment,
+    context.final_attachment
+  ) = std::tuple_cat(module
+                       .begin_rendering(
+                         {{values.camera, vir::Access::FragmentUniformRead},
+                          {context.depth_attachment, vir::Access::FragmentSampled},
+                          {context.froxel_attachment, vir::Access::FragmentSampled},
+                          {context.final_attachment, vir::Access::ColorRW}}
+                       )
+                       .with_name("height fog")
+                       .bind_graphics_pipeline(render_context.pipeline("height_fog"))
+                       .set_color_blend(0, HEIGHT_FOG_BLEND)
+                       .set_viewport(0, vir::Rect2D::framebuffer())
+                       .set_scissor(0, vir::Rect2D::framebuffer())
+                       .bind_buffer(0, 0, values.camera)
+                       .bind_image(0, 1, context.depth_attachment)
+                       .bind_image(0, 2, context.froxel_attachment)
+                       .bind_sampler(0, 3, render_context.cached_sampler_handle(LinearSamplerClamped))
+                       .specialize_constant(0, std::to_underlying(recording.shape.scene_flags))
+                       .draw(3, 1)
+                       .end_rendering());
 }
 } // namespace ox

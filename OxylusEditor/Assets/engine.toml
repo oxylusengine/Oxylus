@@ -149,6 +149,11 @@ entry_points = ["vs_main", "fs_main"]
 requires = ["bindless"]
 
 [[shader_sessions.programs]]
+name = "rmvsm_mark_froxel_pages"
+path = "passes/rmvsm_mark_froxel_pages.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "rmvsm_allocate_pages"
 path = "passes/rmvsm_allocate_pages.slang"
 entry_points = ["cs_main"]
@@ -326,6 +331,16 @@ entry_points = ["cs_main"]
 name = "height_fog"
 path = "passes/height_fog.slang"
 entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "volumetric_fog_inject"
+path = "passes/volumetric_fog_inject.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
+name = "volumetric_fog_integrate"
+path = "passes/volumetric_fog_integrate.slang"
+entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
 name = "hiz"

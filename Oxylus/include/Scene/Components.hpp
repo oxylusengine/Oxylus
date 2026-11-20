@@ -243,6 +243,30 @@ struct HeightFogComponent {
   f32 max_opacity = 1.0f;
   // the sky is fogged as if it were this far away, 0 leaves it clear
   f32 sky_distance = 5000.0f;
+  // froxel fog out to volumetric_distance, with shadowed sunlight, point and spot lights and FogVolumeComponents.
+  // the analytic fog takes over past it
+  bool volumetric = false;
+  f32 volumetric_distance = 96.0f;
+  // share of the previous frame kept, higher is smoother and slower to follow changes
+  f32 volumetric_history_weight = 0.9f;
+  f32 local_light_scattering = 1.0f;
+};
+
+// more fog inside the entity's unit box scaled by its transform, drawn only by volumetric HeightFogComponent fog
+struct FogVolumeComponent {
+  // extinction per meter
+  f32 density = 0.1f;
+  glm::vec3 albedo = {1.0f, 1.0f, 1.0f};
+  // light the fog gives off per meter, for glowing smoke or mist
+  glm::vec3 emissive = {0.0f, 0.0f, 0.0f};
+  // fraction of the box faded in from each face
+  f32 edge_fade = 0.2f;
+  // world size of the noise's features, 0 keeps the box uniform
+  f32 noise_scale = 4.0f;
+  // 0 leaves the density whole, 1 carves the box into separate wisps
+  f32 noise_strength = 0.6f;
+  // meters per second the noise drifts through the box
+  glm::vec3 wind = {0.5f, 0.0f, 0.2f};
 };
 
 struct SkyComponent {

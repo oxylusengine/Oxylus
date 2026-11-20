@@ -158,7 +158,17 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::anisotropy,
       &C::start_distance,
       &C::max_opacity,
-      &C::sky_distance>();
+      &C::sky_distance,
+      &C::volumetric,
+      &C::volumetric_distance,
+      &C::volumetric_history_weight,
+      &C::local_light_scattering>();
+  }
+
+  {
+    using C = FogVolumeComponent;
+    registry
+      .bind<&C::density, &C::albedo, &C::emissive, &C::edge_fade, &C::noise_scale, &C::noise_strength, &C::wind>();
   }
 
   {

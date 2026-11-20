@@ -314,6 +314,7 @@ struct FrameShape {
   bool has_terrain = false;
   bool has_decals = false;
   bool has_height_fog = false;
+  bool has_volumetric_fog = false;
   bool has_sprites = false;
   bool has_particles = false;
   bool has_atmosphere = false;
@@ -471,6 +472,34 @@ struct DecalCullContext {
 struct HeightFogContext {
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
   vir::ValueID final_attachment = vir::ValueID::Invalid;
+  // the integrated froxels, or a stand in the shaders never sample without volumetric fog
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
+};
+
+struct VolumetricFogContext {
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+
+  // the ambient comes from these where they reach, and from the sky elsewhere
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID integrated_attachment = vir::ValueID::Invalid;
+};
+
+struct VolumetricFogVariables {
+  vir::ValueID params = vir::ValueID::Invalid;
+  vir::ValueID fog_volumes = vir::ValueID::Invalid;
+  vir::ValueID history = vir::ValueID::Invalid;
+  vir::ValueID previous_history = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
@@ -668,6 +697,7 @@ struct TransparencyContext {
 
   // the atmosphere, or the sky when the scene has none
   vir::ValueID environment_buffer = vir::ValueID::Invalid;
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -831,6 +861,7 @@ struct ParticleContext {
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
   // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
   vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
 
   vir::ValueID particles_buffer = vir::ValueID::Invalid;
   vir::ValueID sort_keys_buffer = vir::ValueID::Invalid;
@@ -1065,6 +1096,7 @@ struct PreparedFrame {
   vir::ValueID probe_volumes = vir::ValueID::Invalid;
   vir::ValueID decals = vir::ValueID::Invalid;
   vir::ValueID decal_count = vir::ValueID::Invalid;
+  VolumetricFogVariables volumetric_fog = {};
   vir::ValueID sprites = vir::ValueID::Invalid;
 
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
@@ -1275,6 +1307,10 @@ public:
   auto apply_height_fog(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, HeightFogContext& context
   ) -> void;
+  auto record_volumetric_fog(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, VolumetricFogContext& context
+  ) -> void;
+  auto allocate_volumetric_fog_resources(this RendererInstance& self, glm::uvec2 render_size) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
   ) -> void;
@@ -1499,6 +1535,8 @@ private:
   glm::vec2 previous_jitter = {};
   u32 jitter_frame_index = 0;
   f64 shading_time = 0.0;
+  // shading_time without the hourly wrap, so the fog noise's drift never jumps
+  f64 fog_noise_time = 0.0;
 
   vir::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vir::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
@@ -1522,6 +1560,14 @@ private:
   ankerl::svector<ProbeVolumeScroll, 8> probe_volume_scrolls = {};
   std::vector<GPU::Decal> decals = {};
   bool has_warned_decal_limit = false;
+
+  GPU::VolumetricFogParams volumetric_fog_params = {};
+  ankerl::svector<GPU::FogVolume, 8> fog_volumes = {};
+  bool has_warned_fog_volume_limit = false;
+  glm::uvec2 volumetric_fog_render_size = {};
+  bool volumetric_fog_history_valid = false;
+  bool volumetric_fog_history_ping = false;
+  std::array<Texture, 2> volumetric_fog_history{};
   GPU::Atmosphere atmosphere = {};
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;

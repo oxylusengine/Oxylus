@@ -274,7 +274,7 @@ func fs_main(VertexOutput input) -> RefractorOutput {
         }
     }
 
-    let fog = evaluate_height_fog(camera.fog, camera.position.xyz, world_position);
+    let fog = evaluate_fog(camera, world_position, pixel_uv, froxels, linear_clamp_sampler);
     RefractorResult shaded;
     if (refractor.is_water) {
         shaded = shade_water(s, material, decoded.triangle.world_normal, refractor.column, refractor.shore, fog);

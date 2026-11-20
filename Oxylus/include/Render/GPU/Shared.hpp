@@ -306,6 +306,57 @@ struct HeightFog {
   f32 max_opacity = 1.0f;
   f32 anisotropy = 0.0f;
   f32 sky_distance = 0.0f;
+  // view depth the froxels reach, 0 without volumetric fog. The analytic fog only starts past it
+  f32 volumetric_distance = 0.0f;
+  f32 volumetric_near = 0.0f;
+  u32x2 pad = {};
+};
+
+// --- Volumetric fog ---
+
+OX_CONST u32 FROXEL_TILE_SIZE = 8;
+OX_CONST u32 FROXEL_DEPTH_SLICES = 64;
+// one texel past the last slice holds each column's ambient at the far end, for the analytic fog beyond it
+OX_CONST u32 FROXEL_DEPTH_TEXELS = FROXEL_DEPTH_SLICES + 1;
+OX_CONST u32 MAX_FOG_VOLUMES = 64;
+// the volume noise repeats every this many cells, so its drift can wrap without a jump
+OX_CONST u32 FOG_NOISE_PERIOD = 256;
+
+struct FogVolume {
+  // world to the unit box [-0.5, 0.5]^3
+  mat4 world_to_volume = {};
+  f32x3 albedo = {};
+  f32 density = 0.0f;
+  f32x3 emissive = {};
+  // in box space, 0.5 fades over the whole half size
+  f32 edge_fade = 0.0f;
+  // where the wind has carried the noise, in noise cells and wrapped to FOG_NOISE_PERIOD
+  f32x3 noise_offset = {};
+  // noise cells per meter, 0 without noise
+  f32 noise_frequency = 0.0f;
+  f32 noise_strength = 0.0f;
+  u32x3 pad = {};
+};
+
+struct VolumetricFogParams {
+  // the height fog's albedo, which HeightFog folds into its radiances
+  f32x3 height_albedo = {};
+  // scales the probe or sky light the fog scatters
+  f32 ambient_intensity = 0.0f;
+  // the sun after the atmosphere, times the scattering scale, before any albedo
+  f32x3 sun_illuminance = {};
+  f32 local_light_scattering = 0.0f;
+  // where in its froxel this frame samples, in [0, 1)
+  f32x3 jitter = {};
+  f32 history_weight = 0.0f;
+  u32x3 grid_size = {};
+  u32 fog_volume_count = 0;
+  // the ambient without an atmosphere or probes, the scene's sky ambient or the renderer's base one
+  f32x3 sky_ambient = {};
+  u32 is_history_valid = 0;
+  // the lighting passes dim the sky's light by the same amount as the sun sets
+  f32 horizon_darkening = 0.0f;
+  u32x3 pad = {};
 };
 
 struct Camera {

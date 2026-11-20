@@ -3,6 +3,7 @@ import common;
 import pbr;
 import scene;
 import rmvsm;
+import fog;
 
 #include <rmvsm_pointspot.slang>
 #include <rmvsm_directional.slang>
@@ -218,4 +219,113 @@ public func lighting_point_spot(
             specular += shadow * result.specular * light.color * weight;
         }
     }
+}
+
+// the sun's visibility at a point in the air. One filtered tap of the clipmap volumetric fog marked for the point, falling
+// back to its neighbours, and lit where no page was rendered
+public func lighting_directional_volume_visibility(
+    in LightingResources res, u32 scene_flags, u32 has_directional_shadows, f32x3 world_position
+) -> f32 {
+    if (has_directional_shadows == 0) {
+        return 1.0;
+    }
+
+    let vsm_ctx = (*res.lighting).vsm;
+    let directional = VSMDirectionalResources(
+        res.vsm_clipmaps, res.vsm_page_table, res.vsm_physical_pages, res.nearest_clamp_sampler, scene_flags);
+
+    let clipmap_index = vsm_ctx.get_volume_clipmap_index(length(world_position - res.camera.position.xyz));
+
+    let ndc0 = mul(res.vsm_clipmaps[0].projection_view_mat, f32x4(world_position, 1.0)).xyz;
+    let shift0 = 2.0 * f32x2(res.vsm_clipmaps[0].page_offset) / f32(VSM_DIRECTIONAL_PAGE_TABLE_SIZE);
+
+    VSMReceiver receiver;
+    receiver.light_xy = ndc0.xy + shift0;
+    receiver.depth = ndc0.z;
+    receiver.slope = get_vsm_slope(vsm_ctx, vsm_ctx.directional_light_dir, 1.0);
+    receiver.base_uv = get_vsm_level_uv(vsm_ctx, directional, clipmap_index, receiver.light_xy, f32x2(0.0));
+    receiver.base_uv_scale = 0.5 * exp2(-f32(clipmap_index)) / vsm_ctx.first_clipmap_width;
+    receiver.center = make_vsm_center_page(directional, clipmap_index, receiver.base_uv);
+
+    return pcss_hard_shadow(vsm_ctx, directional, receiver, clipmap_index);
+}
+
+// radiance point and spot lights scatter toward the eye from a point in the air, per unit of scattering coefficient.
+// Shadows come from the coarsest mip, which every active layer keeps, the same lookup DDGI's probes make
+public func lighting_point_spot_volume(
+    in LightingResources res, f32x3 world_position, f32x3 view_direction, f32 anisotropy
+) -> f32x3 {
+    let lighting = *res.lighting;
+    let grid_cell = light_grid_cell_coords(world_position, lighting.light_grid_origin);
+    let is_grid_cell_in_bounds = light_grid_cell_in_bounds(grid_cell);
+    let grid_cell_index = light_grid_cell_index(grid_cell);
+
+    var radiance = f32x3(0.0);
+    let light_count = min(lighting.light_count, MAX_LIGHTS);
+    let word_count = (light_count + 31u) / 32u;
+    [loop]
+    for (u32 word = 0; word < word_count; word++) {
+        var lane_word = 0xFFFFFFFFu;
+        if (is_grid_cell_in_bounds) {
+            lane_word = res.light_grid[grid_cell_index].light_word(word);
+        } else {
+            let remaining = light_count - word * 32u;
+            lane_word = remaining >= 32u ? 0xFFFFFFFFu : (1u << remaining) - 1u;
+        }
+
+        var wave_bits = WaveActiveBitOr(lane_word);
+        while (wave_bits != 0u) {
+            let bit = firstbitlow(wave_bits);
+            wave_bits &= wave_bits - 1u;
+            if (((lane_word >> bit) & 1u) == 0u) {
+                continue;
+            }
+
+            let light = res.lights[word * 32u + bit];
+            let light_vector = light.position - world_position;
+            let distance_sq = dot(light_vector, light_vector);
+            if (light.intensity <= 0.0 || (light.range > 0.0 && distance_sq >= light.range * light.range)) {
+                continue;
+            }
+
+            let light_distance = sqrt(distance_sq);
+            let L = light_vector / light_distance;
+            var attenuation = light.intensity * lights_attenuate_point(light_distance, light.range);
+            if (light.kind == LightKind::Spot) {
+                attenuation *= calculate_spot_light_attenuation(L, light.direction, light.inner_cone_angle, light.outer_cone_angle);
+            }
+
+            if (attenuation <= 0.0) {
+                continue;
+            }
+
+            var shadow = 1.0;
+            if (light.shadow_map_index >= 0) {
+                let layer = light.kind == LightKind::Point
+                    ? vsm_point_layer(light.shadow_map_index, vsm_point_face_index(-light_vector))
+                    : vsm_spot_layer(light.shadow_map_index);
+                let view = res.vsm_pointspot_views[layer];
+                if (view.range > 0.0 && distance_sq <= view.range * view.range) {
+                    let center = view.project(world_position);
+                    if (center.valid) {
+                        // nudged toward the light so the air right in front of a caster doesn't shadow itself
+                        let biased = view.project(world_position + L * min(0.1, 0.5 * light_distance));
+                        let reference_depth = biased.valid ? biased.depth : center.depth;
+                        let shadow_depth = vsm_pointspot_load_depth(
+                            res.vsm_pointspot_page_tables,
+                            res.vsm_physical_pages,
+                            layer,
+                            VSM_POINT_SPOT_MIP_COUNT - 1,
+                            center.uv
+                        );
+                        shadow = shadow_depth < reference_depth ? 0.0 : 1.0;
+                    }
+                }
+            }
+
+            radiance += light.color * (attenuation * shadow * henyey_greenstein(dot(L, view_direction), anisotropy));
+        }
+    }
+
+    return radiance;
 }
