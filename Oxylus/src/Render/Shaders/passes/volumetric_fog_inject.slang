@@ -43,42 +43,6 @@ struct InjectPush {
 };
 [[vk::push_constant]] InjectPush push;
 
-func fog_noise_hash(i32x3 cell) -> u32 {
-    // wrapped so the lattice repeats every FOG_NOISE_PERIOD cells, which is what lets the drift offset wrap too
-    let wrapped = u32x3(cell) & (FOG_NOISE_PERIOD - 1u);
-    var h = wrapped.x * 73856093u ^ wrapped.y * 19349663u ^ wrapped.z * 83492791u;
-    h ^= h >> 16;
-    h *= 0x7feb352du;
-    h ^= h >> 15;
-    h *= 0x846ca68bu;
-    h ^= h >> 16;
-    return h;
-}
-
-func fog_noise_gradient(i32x3 cell) -> f32x3 {
-    let h = fog_noise_hash(cell);
-    return f32x3(f32(h & 1023u), f32((h >> 10) & 1023u), f32((h >> 20) & 1023u)) / 511.5 - 1.0;
-}
-
-// gradient noise, roughly in [-1, 1]
-func fog_gradient_noise(f32x3 p) -> f32 {
-    let cell = i32x3(floor(p));
-    let f = p - floor(p);
-    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-
-    var result = 0.0;
-    [ForceUnroll]
-    for (u32 corner = 0; corner < 8; corner++) {
-        let offset = i32x3(i32(corner & 1u), i32((corner >> 1) & 1u), i32((corner >> 2) & 1u));
-        let ramp = dot(fog_noise_gradient(cell + offset), f - f32x3(offset));
-        let weight = select(offset.x != 0, u.x, 1.0 - u.x) * select(offset.y != 0, u.y, 1.0 - u.y) *
-                     select(offset.z != 0, u.z, 1.0 - u.z);
-        result += ramp * weight;
-    }
-
-    return result * 1.6;
-}
-
 // in [0, 1]. Each octave doubles the frequency exactly, so every one repeats on the same period as the drift
 func fog_volume_noise(f32x3 p) -> f32 {
     var sum = 0.0;
@@ -86,7 +50,7 @@ func fog_volume_noise(f32x3 p) -> f32 {
     var frequency = 1.0;
     [ForceUnroll]
     for (u32 octave = 0; octave < 3; octave++) {
-        sum += fog_gradient_noise(p * frequency + f32(octave) * 17.31) * amplitude;
+        sum += com::periodic_gradient_noise(p * frequency + f32(octave) * 17.31, FOG_NOISE_PERIOD) * amplitude;
         amplitude *= 0.5;
         frequency *= 2.0;
     }

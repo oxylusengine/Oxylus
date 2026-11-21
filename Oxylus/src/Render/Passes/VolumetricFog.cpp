@@ -106,8 +106,6 @@ auto RendererInstance::record_volumetric_fog(
   auto& render_context = *self.renderer.render_context;
   const auto& shape = recording.shape;
   const auto texture_extent = froxel_texture_extent(shape.render_size);
-  const auto group_count_x = (texture_extent.width + 7) / 8;
-  const auto group_count_y = (texture_extent.height + 7) / 8;
 
   variables.params = module.declare_buffer_var("volumetric fog params", vir::Access::None);
   variables.fog_volumes = module.declare_buffer_var("fog volumes", vir::Access::None);
@@ -192,7 +190,8 @@ auto RendererInstance::record_volumetric_fog(
     context.tile_depth_attachment,
     previous_history,
     history
-  ) = std::tuple_cat(inject.dispatch(group_count_x, group_count_y, GPU::FROXEL_DEPTH_SLICES).end_compute());
+  ) = std::tuple_cat(inject.dispatch_invocations(texture_extent.width, texture_extent.height, GPU::FROXEL_DEPTH_SLICES)
+                       .end_compute());
 
   context.integrated_attachment = module.transient_image({
     .extent = texture_extent,
@@ -215,7 +214,7 @@ auto RendererInstance::record_volumetric_fog(
       .bind_buffer(0, 1, params)
       .bind_image(0, 2, history)
       .bind_image(0, 3, context.integrated_attachment)
-      .dispatch(group_count_x, group_count_y, 1)
+      .dispatch_invocations(texture_extent.width, texture_extent.height, 1)
       .end_compute()
   );
 

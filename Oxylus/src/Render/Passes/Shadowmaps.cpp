@@ -713,7 +713,7 @@ auto RendererInstance::draw_virtual_shadowmap(
                            .bind_buffer(0, 4, page_allocator)
                            .bind_image(0, 5, context.froxel_tile_depth_attachment)
                            .push_constants_from(vsm_ctx)
-                           .dispatch((froxel_count_x + 7) / 8, (froxel_count_y + 7) / 8, GPU::FROXEL_DEPTH_SLICES)
+                           .dispatch_invocations(froxel_count_x, froxel_count_y, GPU::FROXEL_DEPTH_SLICES)
                            .end_compute());
     }
   }
