@@ -140,11 +140,8 @@ func cs_main(u32x3 id : SV_DispatchThreadID) -> void {
 
     let fog = camera.fog;
     let camera_position = camera.position.xyz;
-    let froxel = f32x3(id) + params.jitter;
-    let screen_uv = froxel.xy / f32x2(params.grid_size.xy) / froxel_uv_scale(camera.resolution);
-    let view_depth = froxel_view_depth(fog, froxel.z / f32(params.grid_size.z));
-    let ray = normalize(camera.unproject_uv(screen_uv, 0.5) - camera_position);
-    let world_position = camera_position + ray * (view_depth / max(dot(ray, camera.forward), 1e-4));
+    let world_position = froxel_world_position(camera, f32x3(id) + fog.volumetric_jitter, params.grid_size);
+    let ray = normalize(world_position - camera_position);
 
     var extinction = 0.0;
     var scattering = f32x3(0.0);
@@ -207,12 +204,15 @@ func cs_main(u32x3 id : SV_DispatchThreadID) -> void {
         current.rgb += scattering * radiance;
     }
 
-    // the history holds the running average of every jittered spot, reprojected from where this one was last frame
+    // the history holds the running average of every jittered spot, reprojected from where the froxel's center was last
+    // frame. Not this frame's spot, it lands between texels and the fetch would blend in a different share of the
+    // neighbouring slices and tiles every frame, even with the camera still
     if (params.is_history_valid != 0) {
-        let previous_clip = mul(camera.previous_projection_view, f32x4(world_position, 1.0));
+        let center_position = froxel_world_position(camera, f32x3(id) + 0.5, params.grid_size);
+        let previous_clip = mul(camera.previous_projection_view, f32x4(center_position, 1.0));
         if (previous_clip.w > 0.0) {
             let previous_screen_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
-            let previous_view_depth = -mul(camera.previous_view, f32x4(world_position, 1.0)).z;
+            let previous_view_depth = -mul(camera.previous_view, f32x4(center_position, 1.0)).z;
             // texel centers sit at slice centers, the extra texel past the last slice isn't part of the volume
             let depth_coordinate = froxel_w(fog, previous_view_depth) * f32(FROXEL_DEPTH_SLICES) / f32(FROXEL_DEPTH_TEXELS);
             let previous_uvw = f32x3(previous_screen_uv * froxel_uv_scale(camera.resolution), depth_coordinate);

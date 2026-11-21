@@ -89,6 +89,15 @@ public func froxel_uv_scale(f32x2 resolution) -> f32x2 {
     return resolution / (ceil(resolution / tile_size) * tile_size);
 }
 
+// froxel is in grid units, a texel's center sits at its index plus 0.5
+public func froxel_world_position(in Camera camera, f32x3 froxel, u32x3 grid_size) -> f32x3 {
+    let camera_position = camera.position.xyz;
+    let screen_uv = froxel.xy / f32x2(grid_size.xy) / froxel_uv_scale(camera.resolution);
+    let view_depth = froxel_view_depth(camera.fog, froxel.z / f32(grid_size.z));
+    let ray = normalize(camera.unproject_uv(screen_uv, 0.5) - camera_position);
+    return camera_position + ray * (view_depth / max(dot(ray, camera.forward), 1e-4));
+}
+
 // the froxels out to volumetric_distance, then the analytic fog for the rest of the ray. Without volumetric fog it's the
 // analytic fog alone and the froxels are never read
 public func evaluate_fog(

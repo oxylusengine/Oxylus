@@ -3336,13 +3336,16 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           self.camera_data.fog.volumetric_near = VOLUMETRIC_NEAR;
           // a different spot in each froxel every frame, which the history blend averages into a smooth result
           const auto jitter_index = static_cast<u32>(self.renderer.render_context->num_frames % 64) + 1;
+          self.camera_data.fog.volumetric_jitter = {
+            radical_inverse(jitter_index, 2),
+            radical_inverse(jitter_index, 3),
+            radical_inverse(jitter_index, 5),
+          };
           self.volumetric_fog_params = GPU::VolumetricFogParams{
             .height_albedo = c.albedo,
             .ambient_intensity = std::max(c.ambient_intensity, 0.0f),
             .sun_illuminance = sun_illuminance * std::max(c.sun_scattering, 0.0f),
             .local_light_scattering = std::max(c.local_light_scattering, 0.0f),
-            .jitter =
-              {radical_inverse(jitter_index, 2), radical_inverse(jitter_index, 3), radical_inverse(jitter_index, 5)},
             .history_weight = std::clamp(c.volumetric_history_weight, 0.0f, 0.98f),
             .sky_ambient = (self.gpu_scene_flags & GPU::SceneFlags::HasSky) != 0 ? self.sky_data.ambient_color
                                                                                  : BASE_AMBIENT_COLOR,

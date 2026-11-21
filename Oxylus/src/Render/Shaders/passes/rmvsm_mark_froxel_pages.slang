@@ -11,7 +11,8 @@ import fog;
 [[vk::binding(4, 0)]] RWStructuredBuffer<VSMPageAllocator> allocator;
 
 // volumetric fog samples the sun's shadow in the air, where no visible pixel asked for a page. Marks the page under
-// each froxel's center, at the level volumetric fog samples
+// the spot each froxel samples this frame, at the level volumetric fog samples. Its center would leave the jittered
+// spot on an unbacked page whenever it crosses a page edge, and the coarser fallback flickers in and out
 [[shader("compute")]]
 [[numthreads(8, 8, 1)]]
 func cs_main(u32x3 id : SV_DispatchThreadID, uniform VSMContext ctx) -> void {
@@ -22,10 +23,7 @@ func cs_main(u32x3 id : SV_DispatchThreadID, uniform VSMContext ctx) -> void {
     }
 
     let camera_position = camera.position.xyz;
-    let screen_uv = (f32x2(id.xy) + 0.5) / f32x2(grid.xy) / froxel_uv_scale(camera.resolution);
-    let ray = normalize(camera.unproject_uv(screen_uv, 0.5) - camera_position);
-    let view_depth = froxel_view_depth(fog, (f32(id.z) + 0.5) / f32(grid.z));
-    let world_pos = camera_position + ray * (view_depth / max(dot(ray, camera.forward), 1e-4));
+    let world_pos = froxel_world_position(camera, f32x3(id) + fog.volumetric_jitter, grid);
 
     let clipmap_index = ctx.get_volume_clipmap_index(length(world_pos - camera_position));
     let clipmap = clipmaps[clipmap_index];

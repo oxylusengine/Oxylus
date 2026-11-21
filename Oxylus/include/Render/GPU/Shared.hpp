@@ -309,7 +309,9 @@ struct HeightFog {
   // view depth the froxels reach, 0 without volumetric fog. The analytic fog only starts past it
   f32 volumetric_distance = 0.0f;
   f32 volumetric_near = 0.0f;
-  u32x2 pad = {};
+  // where in its froxel this frame samples, in [0, 1). Fog injection and the shadow page marking both read it
+  f32x3 volumetric_jitter = {};
+  u32x3 pad = {};
 };
 
 // --- Volumetric fog ---
@@ -346,17 +348,15 @@ struct VolumetricFogParams {
   // the sun after the atmosphere, times the scattering scale, before any albedo
   f32x3 sun_illuminance = {};
   f32 local_light_scattering = 0.0f;
-  // where in its froxel this frame samples, in [0, 1)
-  f32x3 jitter = {};
-  f32 history_weight = 0.0f;
   u32x3 grid_size = {};
-  u32 fog_volume_count = 0;
+  f32 history_weight = 0.0f;
   // the ambient without an atmosphere or probes, the scene's sky ambient or the renderer's base one
   f32x3 sky_ambient = {};
+  u32 fog_volume_count = 0;
   u32 is_history_valid = 0;
   // the lighting passes dim the sky's light by the same amount as the sun sets
   f32 horizon_darkening = 0.0f;
-  u32x3 pad = {};
+  u32x2 pad = {};
 };
 
 struct Camera {
