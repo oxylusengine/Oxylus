@@ -29,7 +29,11 @@ auto RendererInstance::draw_for_visbuffer_ms(
   auto& render_context = *self.renderer.render_context;
   const auto is_late = static_cast<bool>(context.cull_flags & GPU::CullFlag::LatePass);
   const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
-  const auto name = stack.format("vis encode ms {}", is_refractor ? "refractor" : (is_late ? "late" : "early"));
+  const auto is_blend = !is_refractor && static_cast<bool>(context.cull_flags & GPU::CullFlag::Transparent);
+  const auto name = stack.format(
+    "vis encode ms {}",
+    is_refractor ? "refractor" : (is_blend ? "blend" : (is_late ? "late" : "early"))
+  );
   static constexpr auto scene_access = vir::Access::TaskRead | vir::Access::MeshRead;
 
   std::tie(
@@ -98,6 +102,7 @@ auto RendererInstance::draw_for_visbuffer(
 
   auto& render_context = *self.renderer.render_context;
   const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
+  const auto is_blend = !is_refractor && static_cast<bool>(context.cull_flags & GPU::CullFlag::Transparent);
   std::tie(
     std::ignore,
     values.reordered_indices,
@@ -125,7 +130,7 @@ auto RendererInstance::draw_for_visbuffer(
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}
       )
-      .with_name(is_refractor ? "vis encode refractor" : "vis encode")
+      .with_name(is_refractor ? "vis encode refractor" : (is_blend ? "vis encode blend" : "vis encode"))
       .bind_graphics_pipeline(render_context.pipeline("visbuffer_encode"))
       .set_rasterization(VISBUFFER_RASTERIZATION)
       .set_depth(VISBUFFER_DEPTH)
@@ -145,12 +150,13 @@ auto RendererInstance::draw_for_visbuffer(
   );
 }
 
-auto RendererInstance::draw_refractor_visbuffer(
+auto RendererInstance::draw_transparent_visbuffer(
   this RendererInstance& self,
   vir::Module& module,
   FrameRecording& recording,
   CullGeometryContext& cull_context,
-  MainGeometryContext& main_context
+  MainGeometryContext& main_context,
+  bool is_refractor_list
 ) -> std::pair<vir::ValueID, vir::ValueID> {
   ZoneScoped;
   auto& values = recording.values;
@@ -159,23 +165,28 @@ auto RendererInstance::draw_refractor_visbuffer(
 
   cull_context.hiz_attachment = main_context.hiz_attachment;
   cull_context.visibility_buffer = main_context.visibility_buffer;
-  const auto draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_context, true);
+  const auto draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_context, is_refractor_list);
 
-  auto refractor_depth = module.transient_image(
-    {.extent = render_extent, .format = vir::Format::D32Sfloat, .name = "refractor depth"}
+  auto depth = module.transient_image(
+    {.extent = render_extent,
+     .format = vir::Format::D32Sfloat,
+     .name = is_refractor_list ? "refractor depth" : "blend depth"}
   );
-  refractor_depth = module.copy_image(main_context.depth_attachment, refractor_depth);
-  auto refractor_visbuffer = module.transient_image(
-    {.extent = render_extent, .format = vir::Format::R32Uint, .name = "refractor visbuffer"}
+  depth = module.copy_image(main_context.depth_attachment, depth);
+  auto visbuffer = module.transient_image(
+    {.extent = render_extent,
+     .format = vir::Format::R32Uint,
+     .name = is_refractor_list ? "refractor visbuffer" : "blend visbuffer"}
   );
-  refractor_visbuffer = module.clear(refractor_visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
+  visbuffer = module.clear(visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
 
   auto refractor_context = MainGeometryContext{
     .draw_overdraw = false,
-    .cull_flags = GPU::CullFlag::Transparent | GPU::CullFlag::TestFrustum | GPU::CullFlag::RefractorList,
-    .depth_attachment = refractor_depth,
+    .cull_flags = GPU::CullFlag::Transparent | GPU::CullFlag::TestFrustum |
+                  (is_refractor_list ? GPU::CullFlag::RefractorList : GPU::CullFlag::None),
+    .depth_attachment = depth,
     .hiz_attachment = cull_context.hiz_attachment,
-    .visbuffer_attachment = refractor_visbuffer,
+    .visbuffer_attachment = visbuffer,
     .overdraw_attachment = main_context.overdraw_attachment,
     .draw_geometry_cmd_buffer = draw_cmd_buffer,
     .visibility_buffer = cull_context.visibility_buffer,

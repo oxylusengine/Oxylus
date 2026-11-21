@@ -186,7 +186,7 @@ func fs_main(VertexOutput input) -> void {
         let physical_texel_coord = in_memory_offset + in_page_texel_coord;
 
         let material = materials[NonUniformResourceIndex(input.material_index)];
-        if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+        if (material.is_alpha_tested()) {
             var alpha = material.get_albedo_color().a;
             if (material.flags & MaterialFlag::HasAlbedoImage) {
                 UVGradient grad;

@@ -591,6 +591,8 @@ struct RMVSMContext {
 
   vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
   vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID blend_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID blend_depth_attachment = vir::ValueID::Invalid;
 };
 
 auto bind_vsm_pointspot_spec_constants(vir::Module& module) -> vir::Module&;
@@ -1299,12 +1301,13 @@ public:
   auto draw_for_visbuffer_ms(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
   ) -> void;
-  auto draw_refractor_visbuffer(
+  auto draw_transparent_visbuffer(
     this RendererInstance& self,
     vir::Module& module,
     FrameRecording& recording,
     CullGeometryContext& cull_context,
-    MainGeometryContext& main_context
+    MainGeometryContext& main_context,
+    bool is_refractor_list
   ) -> std::pair<vir::ValueID, vir::ValueID>;
   auto decode_visbuffer(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context

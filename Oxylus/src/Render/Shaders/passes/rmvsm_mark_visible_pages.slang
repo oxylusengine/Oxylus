@@ -5,7 +5,7 @@ import rmvsm;
 import visbuffer;
 import hit;
 
-[[vk::constant_id(0)]] const bool IS_REFRACTOR = false;
+[[vk::constant_id(0)]] const bool IS_TRANSPARENT = false;
 
 [[vk::binding(0, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1, 0)]] StructuredBuffer<VirtualClipmap> clipmaps;
@@ -52,7 +52,7 @@ func cs_main(
     let uv = (f32x2(thread_id.xy) + 0.5) / f32x2(ctx.depth_extent);
     let world_pos = camera.unproject_uv(uv, depth);
     var flat_normal = f32x3(0.0, 1.0, 0.0);
-    if (IS_REFRACTOR) {
+    if (IS_TRANSPARENT) {
         let texel = refractor_visbuffer.Load(i32x3(thread_id, 0));
         if (texel == ~0u || depth == opaque_depth_image.Load(i32x3(thread_id, 0))) {
             return;

@@ -39,8 +39,9 @@ func cs_main(
         let in_range = distance(world_center, view.light_position) - world_radius <= view.range;
 
         let mvp = mul(view.projection_view, transform.world);
-        let is_opaque = materials[mesh_instance.material_index].render_class() == MaterialClass::Opaque;
-        if (mesh_instance.casts_shadows() && is_opaque && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+        let render_class = materials[mesh_instance.material_index].render_class();
+        let is_caster = render_class == MaterialClass::Opaque || render_class == MaterialClass::Blend;
+        if (mesh_instance.casts_shadows() && is_caster && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             meshlet_count = mesh.lods[mesh_instance.lod_index].meshlet_count;
         }
     }

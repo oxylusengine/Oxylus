@@ -5,7 +5,7 @@ import rmvsm;
 
 #include <rmvsm_pointspot.slang>
 
-[[vk::constant_id(0)]] const bool IS_REFRACTOR = false;
+[[vk::constant_id(0)]] const bool IS_TRANSPARENT = false;
 
 [[vk::binding(0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1)]] StructuredBuffer<VSMPointSpotView> views;
@@ -99,7 +99,7 @@ func cs_main(
         return;
     }
 
-    if (IS_REFRACTOR) {
+    if (IS_TRANSPARENT) {
         let texel = refractor_visbuffer.Load(i32x3(thread_id, 0));
         if (texel == ~0u || depth == opaque_depth_image.Load(i32x3(thread_id, 0))) {
             return;

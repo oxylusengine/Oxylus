@@ -2125,6 +2125,8 @@ auto RendererInstance::record_frame(
 
   auto refractor_visbuffer_attachment = vir::ValueID::Invalid;
   auto refractor_depth_attachment = vir::ValueID::Invalid;
+  auto blend_visbuffer_attachment = vir::ValueID::Invalid;
+  auto blend_depth_attachment = vir::ValueID::Invalid;
 
   // --- 3D ---
   if (shape.has_meshes || shape.has_terrain) {
@@ -2234,7 +2236,14 @@ auto RendererInstance::record_frame(
       std::tie(
         refractor_visbuffer_attachment,
         refractor_depth_attachment
-      ) = self.draw_refractor_visbuffer(module, recording, cull_geometry_context, main_geometry_context);
+      ) = self.draw_transparent_visbuffer(module, recording, cull_geometry_context, main_geometry_context, true);
+    }
+
+    if (shape.has_blend_meshes) {
+      std::tie(
+        blend_visbuffer_attachment,
+        blend_depth_attachment
+      ) = self.draw_transparent_visbuffer(module, recording, cull_geometry_context, main_geometry_context, false);
     }
 
     // after the refractors, so editor picking and outlines see glass ahead of what's behind it
@@ -2322,10 +2331,14 @@ auto RendererInstance::record_frame(
         .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
         .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
         .refractor_depth_attachment = refractor_depth_attachment,
+        .blend_visbuffer_attachment = blend_visbuffer_attachment,
+        .blend_depth_attachment = blend_depth_attachment,
       };
       self.draw_virtual_shadowmap(module, recording, rmvsm_context);
       refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
       refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
+      blend_visbuffer_attachment = rmvsm_context.blend_visbuffer_attachment;
+      blend_depth_attachment = rmvsm_context.blend_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
       froxel_tile_depth_attachment = rmvsm_context.froxel_tile_depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;

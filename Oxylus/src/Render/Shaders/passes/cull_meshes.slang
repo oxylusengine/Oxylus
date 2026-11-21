@@ -42,7 +42,7 @@ func cs_main(
         render_class = materials[mesh_instance.material_index].render_class();
 
         let is_shadow_pass = HAS_FLAG(CULL_FLAGS, CullFlag.ShadowCastersOnly);
-        let is_caster = !is_shadow_pass || (mesh_instance.casts_shadows() && render_class == MaterialClass::Opaque);
+        let is_caster = !is_shadow_pass || (mesh_instance.casts_shadows() && (render_class == MaterialClass::Opaque || render_class == MaterialClass::Blend));
         if (is_caster && HAS_FLAG(CULL_FLAGS, CullFlag.TestFrustum) && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             if (HAS_FLAG(CULL_FLAGS, CullFlag.SelectLOD)) {
                 let aabb_center = mul(transform.world, f32x4(mesh.bounds.aabb_center, 1.0)).xyz;

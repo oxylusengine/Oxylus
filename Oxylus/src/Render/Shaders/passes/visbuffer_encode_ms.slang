@@ -159,7 +159,7 @@ func ms_main(
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> u32 {
     let material = materials[NonUniformResourceIndex(input.material_index)];
-    if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+    if (material.is_alpha_tested()) {
         var alpha = material.get_albedo_color().a;
         if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
             UVGradient grad;

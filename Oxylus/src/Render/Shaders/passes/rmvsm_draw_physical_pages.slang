@@ -72,7 +72,7 @@ func fs_main(VertexOutput input) -> void {
 
 #if 1
         let material = materials[input.material_index];
-        if (material.flags & MaterialFlag::AlphaMask) {
+        if (material.is_alpha_tested()) {
             var alpha = material.get_albedo_color().a;
             if (material.flags & MaterialFlag::HasAlbedoImage) {
                 UVGradient grad;

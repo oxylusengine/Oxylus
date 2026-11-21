@@ -297,14 +297,50 @@ auto RendererInstance::draw_virtual_shadowmap(
   const auto vsm_ctx = variables.context;
   const auto ps_ctx = variables.pointspot_context;
 
-  // the marking shaders read these only in their refractor pass, the opaque pass binds stand-ins
-  const auto mark_pass_count = shape.has_refractors ? 2_u32 : 1_u32;
+  // the marking shaders read these only in their transparent passes, the opaque pass binds stand-ins
   auto unused_visbuffer = module.transient_image(
-    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "vsm unused refractor visbuffer"}
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "vsm unused transparent visbuffer"}
   );
   auto unused_depth = module.transient_image(
     {.extent = {1, 1, 1}, .format = vir::Format::R32Sfloat, .name = "vsm unused opaque depth"}
   );
+
+  struct MarkPass {
+    std::string_view directional_name;
+    std::string_view pointspot_name;
+    bool is_transparent = false;
+    vir::ValueID* depth = nullptr;
+    vir::ValueID* visbuffer = nullptr;
+  };
+
+  auto mark_passes = std::array<MarkPass, 3>{};
+  auto mark_pass_count = 0_u32;
+  mark_passes[mark_pass_count++] = {
+    "vsm mark visible pages",
+    "vsm pointspot mark visible pages",
+    false,
+    &context.depth_attachment,
+    &unused_visbuffer,
+  };
+  if (shape.has_refractors) {
+    mark_passes[mark_pass_count++] = {
+      "vsm mark visible refractor pages",
+      "vsm pointspot mark visible refractor pages",
+      true,
+      &context.refractor_depth_attachment,
+      &context.refractor_visbuffer_attachment,
+    };
+  }
+
+  if (shape.has_blend_meshes) {
+    mark_passes[mark_pass_count++] = {
+      "vsm mark visible blend pages",
+      "vsm pointspot mark visible blend pages",
+      true,
+      &context.blend_depth_attachment,
+      &context.blend_visbuffer_attachment,
+    };
+  }
 
   context.directional_clipmaps_buffer = module.transient_buffer({
     .size = sizeof(DirectionalClipmaps),
@@ -607,13 +643,13 @@ auto RendererInstance::draw_virtual_shadowmap(
           .end_compute()
       );
 
-    // the second dispatch marks what the refractors cover, from their own depth and normals
-    for (auto mark_pass = 0_u32; mark_pass < mark_pass_count; mark_pass++) {
-      const auto is_refractor = mark_pass == 1;
-      auto marked_depth = is_refractor ? context.refractor_depth_attachment : context.depth_attachment;
-      auto marked_visbuffer = is_refractor ? context.refractor_visbuffer_attachment : unused_visbuffer;
-      auto opaque_depth = is_refractor ? context.depth_attachment : unused_depth;
-      if (is_refractor) {
+    // the transparent dispatches mark what refractors and blend meshes cover, from their own depth and normals
+    for (const auto& mark_pass : std::span{mark_passes}.first(mark_pass_count)) {
+      const auto is_transparent = mark_pass.is_transparent;
+      auto marked_depth = *mark_pass.depth;
+      auto marked_visbuffer = *mark_pass.visbuffer;
+      auto opaque_depth = is_transparent ? context.depth_attachment : unused_depth;
+      if (is_transparent) {
         std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
       }
 
@@ -650,7 +686,7 @@ auto RendererInstance::draw_virtual_shadowmap(
              {values.transforms_world, vir::Access::ComputeRead},
              {values.materials, vir::Access::ComputeRead}}
           )
-          .with_name(is_refractor ? "vsm mark visible refractor pages" : "vsm mark visible pages")
+          .with_name(mark_pass.directional_name)
           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
           .bind_buffer(0, 0, values.camera)
           .bind_buffer(0, 1, context.directional_clipmaps_buffer)
@@ -666,16 +702,16 @@ auto RendererInstance::draw_virtual_shadowmap(
           .bind_buffer(0, 11, values.meshes)
           .bind_buffer(0, 12, values.transforms_world)
           .bind_buffer(0, 13, values.materials)
-          .specialize_constant(0, static_cast<u32>(is_refractor))
+          .specialize_constant(0, static_cast<u32>(is_transparent))
           .push_constants_from(vsm_ctx)
           .dispatch_invocations_per_pixel(marked_depth)
           .end_compute()
       );
 
-      if (is_refractor) {
+      if (is_transparent) {
         std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
-        context.refractor_depth_attachment = marked_depth;
-        context.refractor_visbuffer_attachment = marked_visbuffer;
+        *mark_pass.depth = marked_depth;
+        *mark_pass.visbuffer = marked_visbuffer;
         context.depth_attachment = opaque_depth;
       } else {
         context.depth_attachment = marked_depth;
@@ -719,11 +755,11 @@ auto RendererInstance::draw_virtual_shadowmap(
   }
 
   if (is_pointspot) {
-    for (auto mark_pass = 0_u32; mark_pass < mark_pass_count; mark_pass++) {
-      const auto is_refractor = mark_pass == 1;
-      auto marked_depth = is_refractor ? context.refractor_depth_attachment : context.depth_attachment;
-      auto marked_visbuffer = is_refractor ? context.refractor_visbuffer_attachment : unused_visbuffer;
-      auto opaque_depth = is_refractor ? context.depth_attachment : unused_depth;
+    for (const auto& mark_pass : std::span{mark_passes}.first(mark_pass_count)) {
+      const auto is_transparent = mark_pass.is_transparent;
+      auto marked_depth = *mark_pass.depth;
+      auto marked_visbuffer = *mark_pass.visbuffer;
+      auto opaque_depth = is_transparent ? context.depth_attachment : unused_depth;
 
       auto mips = std::array<vir::ValueID, RMVSMContext::POINT_SPOT_MIP_COUNT>{};
       auto accesses = std::array<vir::ResourceAccess, RMVSMContext::POINT_SPOT_MIP_COUNT + 8>{};
@@ -741,7 +777,7 @@ auto RendererInstance::draw_virtual_shadowmap(
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 7] = {opaque_depth, vir::Access::ComputeSampled};
       auto pass = bind_vsm_pointspot_spec_constants(
         module.begin_compute(accesses)
-          .with_name(is_refractor ? "vsm pointspot mark visible refractor pages" : "vsm pointspot mark visible pages")
+          .with_name(mark_pass.pointspot_name)
           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages_pointspot"))
       );
       for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
@@ -755,7 +791,7 @@ auto RendererInstance::draw_virtual_shadowmap(
         .bind_buffer(0, 11, page_allocator)
         .bind_image(0, 12, marked_visbuffer)
         .bind_image(0, 13, opaque_depth)
-        .specialize_constant(0, static_cast<u32>(is_refractor))
+        .specialize_constant(0, static_cast<u32>(is_transparent))
         .push_constants_from(variables.pointspot_mark_push)
         .dispatch_invocations_per_pixel(marked_depth);
       const auto results = pass.end_compute();
@@ -769,9 +805,9 @@ auto RendererInstance::draw_virtual_shadowmap(
       marked_visbuffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 6];
       opaque_depth = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 7];
 
-      if (is_refractor) {
-        context.refractor_depth_attachment = marked_depth;
-        context.refractor_visbuffer_attachment = marked_visbuffer;
+      if (is_transparent) {
+        *mark_pass.depth = marked_depth;
+        *mark_pass.visbuffer = marked_visbuffer;
         context.depth_attachment = opaque_depth;
       } else {
         context.depth_attachment = marked_depth;

@@ -275,6 +275,10 @@ public extension Material {
 
     return MaterialClass::Opaque;
   }
+
+  public func is_alpha_tested() -> bool {
+    return HAS_FLAG(this.flags, MaterialFlag::AlphaMask) || this.render_class() == MaterialClass::Blend;
+  }
 };
 
 public extension Camera {

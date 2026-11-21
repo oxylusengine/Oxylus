@@ -48,7 +48,7 @@ func vs_main(u32 vertex_index : SV_VertexID) -> VertexOutput {
 func fs_main(VertexOutput input) -> u32 {
 #if 1
     let material = materials[NonUniformResourceIndex(input.material_index)];
-    if (HAS_FLAG(material.flags, MaterialFlag::AlphaMask)) {
+    if (material.is_alpha_tested()) {
         var alpha = material.get_albedo_color().a;
         if (HAS_FLAG(material.flags, MaterialFlag::HasAlbedoImage)) {
             UVGradient grad;
