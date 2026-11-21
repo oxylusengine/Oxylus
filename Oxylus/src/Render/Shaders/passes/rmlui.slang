@@ -25,6 +25,8 @@ struct PushConstants {
     f32x2 screen_size;
     u32 image_index;
     u32 sampler_index;
+    u32 is_texture_srgb;
+    u32 padding;
 };
 [[vk::push_constant]] PushConstants c;
 
@@ -45,7 +47,7 @@ func vs_main(u32 vertex_id : SV_VertexID) -> VertexOutput {
     f32x2 clip_space = (normalized * 2.0) - 1.0;
     output.position = f32x4(clip_space, 0.0, 1.0);
     output.tex_coord = input.tex_coord;
-    output.color = f32x4(pow(color.rgb, f32x3(2.2)), color.a);
+    output.color = color;
 
     return output;
 }
@@ -54,8 +56,9 @@ func vs_main(u32 vertex_id : SV_VertexID) -> VertexOutput {
 f32x4 fs_main(VertexOutput input) : SV_TARGET {
     f32x4 tex_color = global_images[NonUniformResourceIndex(c.image_index)]
         .Sample(global_samplers[NonUniformResourceIndex(c.sampler_index)], input.tex_coord);
-    f32x4 final_color = tex_color * input.color;
-    final_color.rgb = final_color.rgb * tex_color.a * input.color.a;
+    if (c.is_texture_srgb != 0) {
+        tex_color.rgb = com::linear_to_srgb(tex_color.rgb);
+    }
 
-    return final_color;
+    return f32x4(tex_color.rgb * tex_color.a, tex_color.a) * input.color;
 }

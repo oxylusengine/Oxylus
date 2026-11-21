@@ -3,6 +3,8 @@
 #include "Scene/SceneGPU.hpp"
 
 namespace ox {
+constexpr static auto CONTACT_SHADOW_STEPS = 32;
+constexpr static auto CONTACT_SHADOW_LENGTH = 0.35f;
 
 RendererCVar::RendererCVar() { init(); }
 
@@ -39,10 +41,16 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
   );
 
   self.cvar_contact_shadows_enabled.init(self.system, "pp.contact_shadows", "enable contact shadows", 1);
-  self.cvar_contact_shadows_steps.init(self.system, "pp.contact_shadows_steps", "contact shadows steps", 8);
+  self.cvar_contact_shadows_steps.init(
+    self.system,
+    "pp.contact_shadows_steps",
+    "maximum traced pixels toward each contact-shadow light",
+    CONTACT_SHADOW_STEPS
+  );
   self.cvar_contact_shadows_thickness
-    .init(self.system, "pp.contact_shadows_thickness", "contact shadows thickness", 0.1f);
-  self.cvar_contact_shadows_length.init(self.system, "pp.contact_shadows_length", "contact shadows length", 0.01f);
+    .init(self.system, "pp.contact_shadows_thickness", "caster depth thickness in world units", 0.1f);
+  self.cvar_contact_shadows_length
+    .init(self.system, "pp.contact_shadows_length", "maximum contact ray length in world units", CONTACT_SHADOW_LENGTH);
 
   self.cvar_vbgtao_enable.init(self.system, "pp.vbgtao", "use vbgtao", 1);
   self.cvar_vbgtao_quality_level
@@ -62,6 +70,12 @@ auto RendererCVar::init(this RendererCVar& self) -> void {
     "rr.rt_skinned_max_refits",
     "refits a skinned acceleration structure takes before its tree is rebuilt, subject to the budget",
     8
+  );
+  self.cvar_rt_static_build_budget.init(
+    self.system,
+    "rr.rt_static_build_budget",
+    "triangles a frame may spend building static mesh acceleration structures, 0 for no cap. One build always runs",
+    100000
   );
 
   self.cvar_rtao_enable
@@ -280,6 +294,7 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer["raytracing"].begin_obj();
   writer["skinned_rebuild_budget"] = self.cvar_rt_skinned_rebuild_budget.get();
   writer["skinned_max_refits"] = self.cvar_rt_skinned_max_refits.get();
+  writer["static_build_budget"] = self.cvar_rt_static_build_budget.get();
   writer.end_obj();
 
   writer["rtao"].begin_obj();
@@ -379,6 +394,7 @@ auto RendererCVar::to_json(this const RendererCVar& self, JsonWriter& writer) ->
   writer.end_obj();
 
   writer["contact_shadows"].begin_obj();
+  writer["version"] = 2;
   writer["enabled"] = self.cvar_contact_shadows_enabled.as_bool();
   writer["steps"] = self.cvar_contact_shadows_steps.get();
   writer["thickness"] = self.cvar_contact_shadows_thickness.get();
@@ -421,6 +437,10 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
     }
     if (auto max_refits = raytracing_obj["skinned_max_refits"]; !max_refits.error()) {
       self.cvar_rt_skinned_max_refits.set(static_cast<i32>(max_refits.get_int64()));
+    }
+
+    if (auto budget = raytracing_obj["static_build_budget"]; !budget.error()) {
+      self.cvar_rt_static_build_budget.set(static_cast<i32>(budget.get_int64()));
     }
   }
 
@@ -595,9 +615,15 @@ auto RendererCVar::from_json(this const RendererCVar& self, simdjson::ondemand::
   auto cs_obj = json["contact_shadows"];
   if (!cs_obj.error()) {
     self.cvar_contact_shadows_enabled.set(cs_obj["enabled"].get_bool());
-    self.cvar_contact_shadows_steps.set(static_cast<i32>(cs_obj["steps"].get_int64()));
-    self.cvar_contact_shadows_thickness.set(static_cast<f32>(cs_obj["thickness"].get_double()));
-    self.cvar_contact_shadows_length.set(static_cast<f32>(cs_obj["length"].get_double()));
+    const auto steps = static_cast<i32>(cs_obj["steps"].get_int64());
+    const auto thickness = static_cast<f32>(cs_obj["thickness"].get_double());
+    const auto length = static_cast<f32>(cs_obj["length"].get_double());
+    // scenes saved all three settings even when the artist had never touched them
+    const auto old_defaults = cs_obj["version"].error() == simdjson::NO_SUCH_FIELD && steps == 8 && thickness == 0.1f &&
+                              length == 0.01f;
+    self.cvar_contact_shadows_steps.set(old_defaults ? CONTACT_SHADOW_STEPS : steps);
+    self.cvar_contact_shadows_thickness.set(thickness);
+    self.cvar_contact_shadows_length.set(old_defaults ? CONTACT_SHADOW_LENGTH : length);
   }
 }
 } // namespace ox

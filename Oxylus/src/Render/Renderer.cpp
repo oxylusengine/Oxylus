@@ -33,6 +33,19 @@ static auto is_two_component_format(vir::Format format) -> bool {
   }
 }
 
+static auto gpu_material_class(const GPU::Material& material) -> GPU::MaterialClass {
+  const auto is_transmissive = glm::unpackHalf1x16(material.transmission_factor) > 0.0f;
+  if (static_cast<bool>(material.flags & GPU::MaterialFlag::Water) || is_transmissive) {
+    return GPU::MaterialClass::Refractor;
+  }
+
+  if (static_cast<bool>(material.flags & GPU::MaterialFlag::AlphaBlend)) {
+    return GPU::MaterialClass::Blend;
+  }
+
+  return GPU::MaterialClass::Opaque;
+}
+
 auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, const Material& material)
   -> GPU::Material {
   ZoneScoped;
@@ -51,6 +64,8 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
   const auto emissive_image_index = uuid_to_image_index(material.emissive_texture);
   const auto metallic_roughness_image_index = uuid_to_image_index(material.metallic_roughness_texture);
   const auto occlusion_image_index = uuid_to_image_index(material.occlusion_texture);
+  const auto transmission_image_index = uuid_to_image_index(material.transmission_texture);
+  const auto thickness_image_index = uuid_to_image_index(material.thickness_texture);
   auto sampler_index = 0_u32;
 
   auto flags = GPU::MaterialFlag::None;
@@ -91,6 +106,13 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
   flags |= metallic_roughness_image_index.has_value() ? GPU::MaterialFlag::HasMetallicRoughnessImage
                                                       : GPU::MaterialFlag::None;
   flags |= occlusion_image_index.has_value() ? GPU::MaterialFlag::HasOcclusionImage : GPU::MaterialFlag::None;
+  flags |= transmission_image_index.has_value() ? GPU::MaterialFlag::HasTransmissionImage : GPU::MaterialFlag::None;
+  flags |= thickness_image_index.has_value() ? GPU::MaterialFlag::HasThicknessImage : GPU::MaterialFlag::None;
+  flags |= material.double_sided ? GPU::MaterialFlag::DoubleSided : GPU::MaterialFlag::None;
+  flags |= material.shading_model == ShadingModel::Water ? GPU::MaterialFlag::Water : GPU::MaterialFlag::None;
+
+  constexpr auto MAX_HALF = 65504.0f;
+  const auto attenuation_distance = material.attenuation_distance > MAX_HALF ? 0.0f : material.attenuation_distance;
 
   return GPU::Material{
     .albedo_color =
@@ -123,10 +145,36 @@ auto to_gpu_material(AssetManager& asset_man, RenderContext& render_context, con
         glm::packHalf1x16(material.uv_size.x),
         glm::packHalf1x16(material.uv_size.y),
       },
-    .uv_offset = glm::u16vec2{
-      glm::packHalf1x16(material.uv_offset.x),
-      glm::packHalf1x16(material.uv_offset.y),
-    },
+    .uv_offset =
+      glm::u16vec2{
+        glm::packHalf1x16(material.uv_offset.x),
+        glm::packHalf1x16(material.uv_offset.y),
+      },
+    .transmission_factor = glm::packHalf1x16(material.transmission_factor),
+    .ior = glm::packHalf1x16(material.ior),
+    .thickness_factor = glm::packHalf1x16(material.thickness_factor),
+    .attenuation_distance = glm::packHalf1x16(attenuation_distance),
+    .attenuation_color =
+      glm::u16vec3{
+        glm::packHalf1x16(material.attenuation_color.x),
+        glm::packHalf1x16(material.attenuation_color.y),
+        glm::packHalf1x16(material.attenuation_color.z),
+      },
+    .water_detail_scale = glm::packHalf1x16(material.water_detail_scale),
+    .water_scatter_color =
+      glm::u16vec3{
+        glm::packHalf1x16(material.water_scatter_color.x),
+        glm::packHalf1x16(material.water_scatter_color.y),
+        glm::packHalf1x16(material.water_scatter_color.z),
+      },
+    .water_shore_fade = glm::packHalf1x16(material.water_shore_fade),
+    .water_flow =
+      glm::u16vec2{
+        glm::packHalf1x16(material.water_flow.x),
+        glm::packHalf1x16(material.water_flow.y),
+      },
+    .transmission_image_index = transmission_image_index.value_or(0_u32),
+    .thickness_image_index = thickness_image_index.value_or(0_u32),
   };
 }
 
@@ -351,6 +399,8 @@ auto Renderer::sync_materials(this Renderer& self) -> void {
   }
 
   auto& asset_man = App::mod<AssetManager>();
+  // read before the drain, so a change landing in between is counted by the next sync
+  const auto revision = asset_man.get_materials_revision();
   const auto dirty_material_ids = asset_man.get_dirty_material_ids();
 
   for (const auto dirty_id : dirty_material_ids) {
@@ -366,6 +416,21 @@ auto Renderer::sync_materials(this Renderer& self) -> void {
 
     self.gpu_materials[index] = to_gpu_material(asset_man, *self.render_context, *material.value);
     self.pending_material_indices.emplace_back(index);
+  }
+
+  if (revision != self.counted_materials_revision) {
+    self.counted_materials_revision = revision;
+    self.blend_material_count = 0;
+    self.refractor_material_count = 0;
+    asset_man.for_each_material_index([&self](usize index) {
+      if (index >= self.gpu_materials.size()) {
+        return;
+      }
+
+      const auto material_class = gpu_material_class(self.gpu_materials[index]);
+      self.blend_material_count += material_class == GPU::MaterialClass::Blend;
+      self.refractor_material_count += material_class == GPU::MaterialClass::Refractor;
+    });
   }
 
   if (self.pending_material_indices.empty()) {

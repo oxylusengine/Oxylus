@@ -177,7 +177,8 @@ static const ankerl::unordered_dense::map<std::string, FileType> FILE_TYPES = {
   {".gif", FileType::Texture},
   {".ktx", FileType::Texture},  //
   {".ktx2", FileType::Texture},
-  {".tiff", FileType::Texture}, //
+  {".tiff", FileType::Texture},
+  {".dds", FileType::Texture},  //
 
   {".gltf", FileType::Model},
   {".glb", FileType::Model},    //

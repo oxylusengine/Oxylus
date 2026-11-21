@@ -37,8 +37,13 @@ public:
   // stages the geometry collected since `begin_frame` into this frame's allocator
   auto upload(this RmlRenderer& self, RenderContext& context) -> void;
   // draws whatever was last uploaded over `target`. Recorded once, it reads the uploads every frame
-  auto record(this RmlRenderer& self, vir::Module& module, RenderContext& render_context, vir::ValueID target)
-    -> vir::ValueID;
+  auto record(
+    this RmlRenderer& self,
+    vir::Module& module,
+    RenderContext& render_context,
+    vir::ValueID target,
+    vir::Extent3D extent
+  ) -> vir::ValueID;
 
   auto render_geometry(
     this RmlRenderer& self,

@@ -29,8 +29,8 @@ constexpr static auto AS_BUFFER_ALIGNMENT = 256_u64;
 // the size query and the build have to name identical flags, or the structure and scratch
 // allocations do not match what the build actually writes, so both sites read this one constant.
 // ALLOW_COMPACTION is what pays for the query pool round trip in `compact_blas`: these are built
-// once at load, so the round trip costs nothing at runtime and the compacted tree is typically half
-// the size. A structure that is rebuilt per frame must not borrow these flags
+// once, the first frame something traces against them, so the round trip is paid once per mesh and
+// the compacted tree is typically half the size. A structure that is rebuilt per frame must not borrow these flags
 constexpr static auto STATIC_BLAS_BUILD_FLAGS = VkBuildAccelerationStructureFlagsKHR{
   VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR
 };
@@ -261,6 +261,10 @@ auto build_mesh_blas(
   }
 
   return compact_blas(render_context, *blas_id, compacted_size);
+}
+
+auto StaticBLASBudget::admits(this const StaticBLASBudget& self, const u32 triangles) -> bool {
+  return self.triangle_budget == 0 || self.spent == 0 || self.spent + triangles <= self.triangle_budget;
 }
 
 constexpr static auto SKINNED_ARENA_MIN_SIZE = 1_u64 << 20;

@@ -805,6 +805,25 @@ auto SSSRSession::step(this SSSRSession& self, const CaseConfig& config) -> Case
     context.probe_requests_buffer = module.import_buffer(*requests, vir::Access::HostWrite);
     context.irradiance_attachment = *irradiance;
     context.distance_attachment = *distance;
+  } else {
+    // the renderer hands sssr shared stand-ins when the scene has no probe volumes
+    const auto stand_in_buffer = [&](std::string_view name) {
+      return module.transient_buffer({
+        .size = sizeof(u32),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .location = vir::MemoryLocation::GpuOnly,
+        .name = std::string(name),
+      });
+    };
+    context.probe_volumes_buffer = stand_in_buffer("unused probe volumes");
+    context.probe_states_buffer = stand_in_buffer("unused probe states");
+    context.probe_requests_buffer = stand_in_buffer("unused probe requests");
+    context.irradiance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused ddgi irradiance"}
+    );
+    context.distance_attachment = module.transient_image(
+      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "unused ddgi distance"}
+    );
   }
 
   if (config.is_rtgi_resolved) {

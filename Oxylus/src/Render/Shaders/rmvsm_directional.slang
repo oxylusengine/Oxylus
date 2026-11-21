@@ -8,6 +8,7 @@ struct VSMDirectionalResources {
     Texture2DArray<u32> page_table;
     Texture2D<f32> physical_pages;
     SamplerState sampler;
+    u32 scene_flags;
 };
 
 struct VSMCenterPage {
@@ -56,6 +57,16 @@ static const f32 VSM_POINT_TEXEL_REACH = 0.5;
 static const f32 VSM_BILINEAR_TEXEL_REACH = 1.0;
 
 static const i32 VSM_FALLBACK_CLIPMAP_OFFSETS[3] = { 0, -1, 1 };
+
+// spec constants widened to a vector come out as an OpConstantComposite with spec operands, which is invalid spir-v,
+// so page bounds stay per component
+func is_below_page_limit(i32x2 texel, i32 limit) -> bool {
+    return texel.x < limit && texel.y < limit;
+}
+
+func clamp_to_page(i32x2 texel, i32 max_texel) -> i32x2 {
+    return i32x2(clamp(texel.x, 0, max_texel), clamp(texel.y, 0, max_texel));
+}
 
 func hash2(f32x2 p) -> f32x2 {
     let d = f32x2(dot(p, f32x2(127.1, 311.7)), dot(p, f32x2(269.5, 183.3)));
@@ -257,7 +268,7 @@ func sample_vsm_visibility_bilinear(
     var depths = f32x4(VSM_DEPTH_MISS);
     let base_page_origin = get_vsm_page_origin(vsm_ctx, res, center, clipmap_index, base_texel);
     let in_page_texel = base_texel % VSM_PAGE_SIZE;
-    let is_single_page = all(base_page_origin != INVALID_COORDS) && all(in_page_texel < VSM_PAGE_SIZE - 1);
+    let is_single_page = all(base_page_origin != INVALID_COORDS) && is_below_page_limit(in_page_texel, VSM_PAGE_SIZE - 1);
     if (is_single_page) {
         let texel = base_page_origin + in_page_texel;
         let gathered = res.physical_pages.Gather(
@@ -326,7 +337,7 @@ func pcss_soft_shadow(
     f32 NoL,
     f32x2 noise
 ) -> f32 {
-    let is_temporal = (scene_flags & SceneFlags::HasTemporalUpscaler) != 0;
+    let is_temporal = (res.scene_flags & SceneFlags::HasTemporalUpscaler) != 0;
     let blocker_sample_count = is_temporal ? PCSS_TEMPORAL_BLOCKER_SEARCH_SAMPLES : PCSS_BLOCKER_SEARCH_SAMPLES;
     let pcf_sample_count = is_temporal ? PCSS_TEMPORAL_PCF_SAMPLES : PCSS_PCF_SAMPLES;
 
@@ -368,12 +379,7 @@ func pcss_soft_shadow(
             let texel = i32x2(floor(uv * f32(VSM_VIRTUAL_EXTENT)));
             is_fast[j] = is_center_valid && all(uv >= 0.0) && all(uv <= 1.0) && all(texel < VSM_VIRTUAL_EXTENT) &&
                          all(texel / VSM_PAGE_SIZE == receiver.center.page_coords);
-            // a vector clamp against a spec constant makes slang emit an invalid OpConstantComposite
-            let page_texel = texel - center_texel_min;
-            let fetch_coords = center_origin + i32x2(
-                clamp(page_texel.x, 0, VSM_PAGE_SIZE - 1),
-                clamp(page_texel.y, 0, VSM_PAGE_SIZE - 1)
-            );
+            let fetch_coords = center_origin + clamp_to_page(texel - center_texel_min, VSM_PAGE_SIZE - 1);
             fetched[j] = res.physical_pages.Load(i32x3(fetch_coords, 0));
         }
 
@@ -446,11 +452,8 @@ func pcss_soft_shadow(
             let in_page_texel = base_texel - center_texel_min;
             is_fast[j] = is_center_valid && all(base_texel >= 0) && all(base_texel < VSM_VIRTUAL_EXTENT) &&
                          all(base_texel / VSM_PAGE_SIZE == receiver.center.page_coords) &&
-                         all(in_page_texel < VSM_PAGE_SIZE - 1);
-            let fetch_texel = center_origin + i32x2(
-                clamp(in_page_texel.x, 0, VSM_PAGE_SIZE - 2),
-                clamp(in_page_texel.y, 0, VSM_PAGE_SIZE - 2)
-            );
+                         is_below_page_limit(in_page_texel, VSM_PAGE_SIZE - 1);
+            let fetch_texel = center_origin + clamp_to_page(in_page_texel, VSM_PAGE_SIZE - 2);
             gathered[j] = res.physical_pages.Gather(
                 res.sampler, (f32x2(fetch_texel) + 1.0) / f32(VSM_PHYSICAL_PAGE_TABLE_SIZE)
             );
@@ -537,7 +540,7 @@ func vsm_directional_visibility(
     let vsm_ctx = lighting.vsm;
     let clipmap_selection = vsm_ctx.get_clipmap_selection(camera, uv, depth, flat_normal);
 
-    if ((scene_flags & SceneFlags::HasTemporalUpscaler) != 0) {
+    if ((res.scene_flags & SceneFlags::HasTemporalUpscaler) != 0) {
         let frame_coords = pixel_coords + f32(lighting.frame_index & 63u) * f32x2(17.0, 31.0);
         let noise = hash2(frame_coords);
         var clipmap_index = i32(clipmap_selection.fine_clipmap_index);

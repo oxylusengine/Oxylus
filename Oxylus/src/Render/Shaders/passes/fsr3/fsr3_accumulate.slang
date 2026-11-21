@@ -58,9 +58,9 @@ func init_pass_data(
         params.constants.max_render_size
     );
 
-    // render resolution motion vectors, so the dilated field is indexed at low res
+    // motion is jitter free, but its coverage still belongs to the jittered render grid
     p.motion_vector = params.dilated_motion_vectors.Load(
-        i32x3(i32x2(hr_uv * f32x2(params.constants.render_size)), 0)
+        i32x3(i32x2(p.lr_uv_hw_sampler * f32x2(params.constants.max_render_size)), 0)
     );
     p.velocity_4k = fsr3_get_4k_velocity(p.motion_vector);
 
@@ -99,6 +99,8 @@ func init_pass_data(
     p.accumulation = saturate(masks[ACCUMULATION]);
     // the unorm round trip leaves a floor of noise, drop anything under one stored step
     p.accumulation *= f32(round(p.accumulation * 100.0) > 1.0);
+    // a reset or an offscreen reprojection has no history to blend, even if nearby masks do
+    p.accumulation *= f32(!p.is_new_sample);
 
     data.upsampled_color = f32x3(0.0);
     data.history_color = f32x3(0.0);

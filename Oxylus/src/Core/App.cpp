@@ -187,7 +187,7 @@ auto App::render_scene(this App& self, Scene& scene, std::function<auto()->void>
     if (draw_ui) {
       draw_ui();
     }
-    imgui->end_frame();
+    imgui->end_frame(&scene.renderer_cvar.system);
   }
 
   if (!game.program) {
@@ -355,6 +355,8 @@ auto App::get_ui_scale() -> f32 {
 auto App::get_timestep() -> const Timestep& {
   return instance_->timestep; //
 }
+
+auto App::set_max_step_millis(f64 millis) -> void { instance_->timestep.max_step_millis = millis; }
 
 auto App::get_vfs() -> VFS& {
   return instance_->vfs; //

@@ -22,6 +22,11 @@
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
 
+// repeating the alias avoids dragging flecs.h into every consumer of this header
+namespace flecs {
+using entity_t = std::uint64_t;
+}
+
 namespace vir {
 struct ColorBlendAttachmentState;
 }
@@ -309,7 +314,12 @@ struct FrameShape {
   VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
   bool is_debugging = false;
   bool has_meshes = false;
+  bool has_blend_meshes = false;
+  bool has_refractors = false;
   bool has_terrain = false;
+  bool has_decals = false;
+  bool has_height_fog = false;
+  bool has_volumetric_fog = false;
   bool has_sprites = false;
   bool has_particles = false;
   bool has_atmosphere = false;
@@ -376,6 +386,7 @@ struct FrameValues {
   vir::ValueID skinning_transforms = vir::ValueID::Invalid;
   vir::ValueID skinned_vertices = vir::ValueID::Invalid;
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
   vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
   vir::ValueID meshlet_instance_visibility_mask = vir::ValueID::Invalid;
   vir::ValueID reordered_indices = vir::ValueID::Invalid;
@@ -383,6 +394,8 @@ struct FrameValues {
   vir::ValueID camera = vir::ValueID::Invalid;
   vir::ValueID atmosphere = vir::ValueID::Invalid;
   vir::ValueID lights = vir::ValueID::Invalid;
+  vir::ValueID decals = vir::ValueID::Invalid;
+  vir::ValueID decal_tiles = vir::ValueID::Invalid;
   vir::ValueID exposure = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
@@ -413,6 +426,10 @@ struct CullGeometryContext {
   vir::ValueID visibility_buffer = vir::ValueID::Invalid;
   vir::ValueID cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
   vir::ValueID draw_geometry_cmd_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID blend_cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID refractor_cull_meshlets_cmd_buffer = vir::ValueID::Invalid;
 };
 
 struct CullGeometryPointSpotContext {
@@ -455,6 +472,45 @@ struct MainGeometryContext {
 
 struct LightGridContext {
   vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+};
+
+struct DecalCullContext {
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+};
+
+struct HeightFogContext {
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID final_attachment = vir::ValueID::Invalid;
+  // the integrated froxels, or a stand in the shaders never sample without volumetric fog
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
+};
+
+struct VolumetricFogContext {
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+
+  // the ambient comes from these where they reach, and from the sky elsewhere
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID tile_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID integrated_attachment = vir::ValueID::Invalid;
+};
+
+struct VolumetricFogVariables {
+  vir::ValueID params = vir::ValueID::Invalid;
+  vir::ValueID fog_volumes = vir::ValueID::Invalid;
+  vir::ValueID history = vir::ValueID::Invalid;
+  vir::ValueID previous_history = vir::ValueID::Invalid;
 };
 
 struct TerrainContext {
@@ -528,6 +584,7 @@ struct RMVSMContext {
   vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID froxel_tile_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID normal_attachment = vir::ValueID::Invalid;
   vir::ValueID virtual_page_table_attachment = vir::ValueID::Invalid;
   vir::ValueID physical_page_table_attachment = vir::ValueID::Invalid;
@@ -536,6 +593,11 @@ struct RMVSMContext {
   vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
   vir::ValueID pointspot_layer_dirty_mask_buffer = vir::ValueID::Invalid;
   vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID blend_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID blend_depth_attachment = vir::ValueID::Invalid;
 };
 
 auto bind_vsm_pointspot_spec_constants(vir::Module& module) -> vir::Module&;
@@ -589,6 +651,68 @@ struct PBRContext {
   vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
   vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
   vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  // only without an atmosphere, which stands in for the sky
+  vir::ValueID sky_buffer = vir::ValueID::Invalid;
+};
+
+struct RefractorReflectionResources {
+  vir::ValueID camera = vir::ValueID::Invalid;
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID opaque_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID opaque_normal_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_hierarchy = vir::ValueID::Invalid;
+  vir::ValueID meshes = vir::ValueID::Invalid;
+  vir::ValueID mesh_instances = vir::ValueID::Invalid;
+  vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transforms = vir::ValueID::Invalid;
+  vir::ValueID materials = vir::ValueID::Invalid;
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID reflection_attachment = vir::ValueID::Invalid;
+};
+
+struct TransparencyContext {
+  vir::ValueID draw_cmd_buffer = vir::ValueID::Invalid;
+  vir::ValueID visibility_buffer = vir::ValueID::Invalid;
+  vir::ValueID hiz_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID final_attachment = vir::ValueID::Invalid;
+  vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID sky_transmittance_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_aerial_perspective_lut_attachment = vir::ValueID::Invalid;
+  vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID lighting_buffer = vir::ValueID::Invalid;
+  vir::ValueID light_grid_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_views_buffer = vir::ValueID::Invalid;
+  vir::ValueID pointspot_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_physical_pages_attachment = vir::ValueID::Invalid;
+  vir::ValueID vsm_page_table_attachment = vir::ValueID::Invalid;
+  vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
+
+  vir::ValueID probe_volumes_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_states_buffer = vir::ValueID::Invalid;
+  vir::ValueID probe_requests_buffer = vir::ValueID::Invalid;
+  vir::ValueID irradiance_attachment = vir::ValueID::Invalid;
+  vir::ValueID distance_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID accumulation_attachment = vir::ValueID::Invalid;
+  vir::ValueID revealage_attachment = vir::ValueID::Invalid;
+  vir::ValueID accumulation_front_attachment = vir::ValueID::Invalid;
+  vir::ValueID revealage_front_attachment = vir::ValueID::Invalid;
+
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID transmission_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_reflection_attachment = vir::ValueID::Invalid;
+
+  // the atmosphere, or the sky when the scene has none
+  vir::ValueID environment_buffer = vir::ValueID::Invalid;
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
 };
 
 struct ProbeVolumeKey {
@@ -664,6 +788,13 @@ struct DebugContext {
   vir::ValueID sssr_confidence_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_variance_attachment = vir::ValueID::Invalid;
   vir::ValueID sssr_sample_count_attachment = vir::ValueID::Invalid;
+
+  // invalid when the frame has no blend meshes or no refractors, the pass binds stand-ins then
+  vir::ValueID wboit_revealage_attachment = vir::ValueID::Invalid;
+  vir::ValueID wboit_revealage_front_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  vir::ValueID refractor_depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
 
   vir::ValueID rtgi_half_res_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID rtgi_half_res_normal_roughness_attachment = vir::ValueID::Invalid;
@@ -809,6 +940,7 @@ struct ParticleContext {
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
   // alpha blended particles have no usable motion vector, so they mark themselves reactive instead
   vir::ValueID reactive_mask_attachment = vir::ValueID::Invalid;
+  vir::ValueID froxel_attachment = vir::ValueID::Invalid;
 
   vir::ValueID particles_buffer = vir::ValueID::Invalid;
   vir::ValueID sort_keys_buffer = vir::ValueID::Invalid;
@@ -892,6 +1024,7 @@ struct PBRVariables {
   vir::ValueID vbgtao_settings = vir::ValueID::Invalid;
   vir::ValueID vbgtao_denoise_push = vir::ValueID::Invalid;
   vir::ValueID rtao_push = vir::ValueID::Invalid;
+  vir::ValueID contact_shadows = vir::ValueID::Invalid;
   vir::ValueID lighting = vir::ValueID::Invalid;
   vir::ValueID sky = vir::ValueID::Invalid;
 };
@@ -1067,9 +1200,13 @@ struct PreparedFrame {
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
   vir::ValueID probe_volumes = vir::ValueID::Invalid;
+  vir::ValueID decals = vir::ValueID::Invalid;
+  vir::ValueID decal_count = vir::ValueID::Invalid;
+  VolumetricFogVariables volumetric_fog = {};
   vir::ValueID sprites = vir::ValueID::Invalid;
 
   vir::ValueID meshlet_instances = vir::ValueID::Invalid;
+  vir::ValueID transparent_meshlet_instances = vir::ValueID::Invalid;
   vir::ValueID visible_meshlet_instances_indices = vir::ValueID::Invalid;
   vir::ValueID reordered_indices = vir::ValueID::Invalid;
   vir::ValueID terrain_visible_patches = vir::ValueID::Invalid;
@@ -1112,6 +1249,7 @@ struct FrameParams {
   FrameShape shape = {};
   const RendererCVar* cvar = nullptr;
   f32 delta_time = 0.0f;
+  f32 time = 0.0f;
   u32 frame_index = 0;
   bool is_upscaling = false;
   glm::uvec2 render_size = {};
@@ -1231,6 +1369,13 @@ public:
   static auto cull_geometry(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryContext& context
   ) -> void;
+  static auto cull_transparent(
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    CullGeometryContext& context,
+    bool is_refractor_list
+  ) -> vir::ValueID;
   static auto cull_geometry_pointspot(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, CullGeometryPointSpotContext& context
   ) -> void;
@@ -1257,9 +1402,30 @@ public:
   auto draw_for_visbuffer_ms(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
   ) -> void;
+  auto draw_transparent_visbuffer(
+    this RendererInstance& self,
+    vir::Module& module,
+    FrameRecording& recording,
+    CullGeometryContext& cull_context,
+    MainGeometryContext& main_context,
+    bool is_refractor_list
+  ) -> std::pair<vir::ValueID, vir::ValueID>;
   auto decode_visbuffer(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
   ) -> void;
+  auto cull_decals(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, DecalCullContext& context
+  ) -> void;
+  auto apply_height_fog(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, HeightFogContext& context
+  ) -> void;
+  auto record_volumetric_fog(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, VolumetricFogContext& context
+  ) -> void;
+  auto record_volumetric_fog_tile_depth(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, vir::ValueID& depth_attachment
+  ) -> vir::ValueID;
+  auto allocate_volumetric_fog_resources(this RendererInstance& self, glm::uvec2 render_size) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context
   ) -> void;
@@ -1377,6 +1543,23 @@ public:
   static auto record_sssr(
     vir::Module& module, RenderContext& render_context, FrameRecording& recording, SSSRContext& context
   ) -> void;
+  static auto record_sssr_refractor_trace(
+    vir::Module& module,
+    RenderContext& render_context,
+    FrameRecording& recording,
+    RefractorReflectionResources resources
+  ) -> RefractorReflectionResources;
+  auto draw_transparency(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+  ) -> void;
+  static auto resolve_transparency(vir::Module& module, RenderContext& render_context, TransparencyContext& context)
+    -> void;
+  static auto build_transmission_source(
+    vir::Module& module, RenderContext& render_context, vir::ValueID final_attachment
+  ) -> std::pair<vir::ValueID, vir::ValueID>;
+  auto shade_refractors(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, TransparencyContext& context
+  ) -> void;
   static auto generate_sssr_depth_hierarchy(
     vir::Module& module,
     RenderContext& render_context,
@@ -1477,18 +1660,25 @@ private:
   glm::vec2 current_jitter = {};
   glm::vec2 previous_jitter = {};
   u32 jitter_frame_index = 0;
+  f64 shading_time = 0.0;
+  // shading_time without the hourly wrap, so the fog noise's drift never jumps
+  f64 fog_noise_time = 0.0;
 
   vir::Extent3D sky_view_lut_extent = {.width = 312, .height = 192, .depth = 1};
   vir::Extent3D sky_aerial_perspective_lut_extent = {.width = 32, .height = 32, .depth = 32};
 
   GPU::Camera camera_data = {};
   GPU::Camera previous_camera_data = {};
+  flecs::entity_t previous_camera_entity = 0;
+  // this frame's view is unrelated to the last one, so temporal history reprojected from it is stale
+  bool is_camera_cut = true;
 
   GPU::SceneFlags gpu_scene_flags = {};
 
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 
   bool directional_light_cast_shadows = true;
+  f32 directional_contact_shadow_strength = 0.0f;
   bool sun_direction_changed = false;
   glm::vec3 light_grid_origin = {};
   glm::vec3 previous_sun_direction = {};
@@ -1498,6 +1688,16 @@ private:
   ankerl::svector<GPU::ProbeVolume, 8> probe_volumes = {};
   ankerl::svector<ProbeVolumeKey, 8> probe_volume_keys = {};
   ankerl::svector<ProbeVolumeScroll, 8> probe_volume_scrolls = {};
+  std::vector<GPU::Decal> decals = {};
+  bool has_warned_decal_limit = false;
+
+  GPU::VolumetricFogParams volumetric_fog_params = {};
+  ankerl::svector<GPU::FogVolume, 8> fog_volumes = {};
+  bool has_warned_fog_volume_limit = false;
+  glm::uvec2 volumetric_fog_render_size = {};
+  bool volumetric_fog_history_valid = false;
+  bool volumetric_fog_history_ping = false;
+  std::array<Texture, 2> volumetric_fog_history{};
   GPU::Atmosphere atmosphere = {};
   GPU::Atmosphere atmosphere_lut_state = {};
   bool atmosphere_lut_state_valid = false;

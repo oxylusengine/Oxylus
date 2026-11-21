@@ -3,6 +3,8 @@ import gpu;
 import scene;
 import visbuffer;
 import hit;
+import pbr;
+import decal;
 
 #include <fullscreen.slang>
 
@@ -18,6 +20,13 @@ struct ShaderParameters {
     Texture2D<u32> visbuffer;
 };
 ParameterBlock<ShaderParameters> params;
+
+struct DecodePush {
+    Decal *decals;
+    u32 *decal_tiles;
+    u32 decal_count;
+};
+[[vk::push_constant]] DecodePush push;
 
 struct FragmentOutput {
     f32x4 albedo_color : SV_Target0;
@@ -48,67 +57,6 @@ func compute_velocity(in TriangleHit tri, in f32x3 bary, in TransformPrevious tr
     return delta_ndc * 0.5 * params.camera.resolution;
 }
 
-struct PartialDeriv {
-    f32x3 ddx;
-    f32x3 ddy;
-    f32x3 lambda;
-
-    func gradient_of(f32x2x3 v) -> UVGradient {
-        UVGradient grad;
-        grad.uv = mul(this.lambda, v);
-        grad.ddx = mul(this.ddx, v);
-        grad.ddy = mul(this.ddy, v);
-
-        return grad;
-    }
-};
-
-func compute_partial_derivatives(in f32x4x3 world_positions, in f32x2 uv, in f32x2 resolution) -> PartialDeriv {
-    PartialDeriv result;
-
-    let clip_pos_0 = mul(params.camera.projection_view, f32x4(world_positions[0].xyz, 1.0));
-    let clip_pos_1 = mul(params.camera.projection_view, f32x4(world_positions[1].xyz, 1.0));
-    let clip_pos_2 = mul(params.camera.projection_view, f32x4(world_positions[2].xyz, 1.0));
-
-    // Partial Derivatives
-    let inv_w = 1.0 / f32x3(clip_pos_0.w, clip_pos_1.w, clip_pos_2.w);
-    let ndc_0 = clip_pos_0.xy * inv_w[0];
-    let ndc_1 = clip_pos_1.xy * inv_w[1];
-    let ndc_2 = clip_pos_2.xy * inv_w[2];
-    // Inverse area of a triangle.
-    // https://cg.ivd.kit.edu/publications/2015/dais/DAIS.pdf
-    // Appendix A:
-    // D =
-    let inv_det = 1.0 / determinant(f32x2x2(ndc_2 - ndc_1, ndc_0 - ndc_1));
-    // Lambda 1 =
-    result.ddx = f32x3(ndc_1.y - ndc_2.y, ndc_2.y - ndc_0.y, ndc_0.y - ndc_1.y) * inv_det * inv_w;
-    // Lambda 2 =
-    result.ddy = f32x3(ndc_2.x - ndc_1.x, ndc_0.x - ndc_2.x, ndc_1.x - ndc_0.x) * inv_det * inv_w;
-    var ddx_sum = dot(result.ddx, 1.0);
-    var ddy_sum = dot(result.ddy, 1.0);
-
-    let delta_v = uv - ndc_0;
-    let interp_inv_w = inv_w.x + delta_v.x * ddx_sum + delta_v.y * ddy_sum;
-    let interp_w = 1.0 / interp_inv_w;
-    result.lambda = f32x3(
-        interp_w * (inv_w[0] + delta_v.x * result.ddx.x + delta_v.y * result.ddy.x),
-        interp_w * (delta_v.x * result.ddx.y + delta_v.y * result.ddy.y),
-        interp_w * (delta_v.x * result.ddx.z + delta_v.y * result.ddy.z)
-    );
-    let two_over_resolution = 2.0 / resolution;
-    result.ddx *= two_over_resolution.x;
-    result.ddy *= -two_over_resolution.y;
-    ddx_sum *= two_over_resolution.x;
-    ddy_sum *= -two_over_resolution.y;
-
-    let interp_ddx_w = 1.0 / (interp_inv_w + ddx_sum);
-    let interp_ddy_w = 1.0 / (interp_inv_w + ddy_sum);
-    result.ddx = interp_ddx_w * (result.lambda * interp_inv_w + result.ddx) - result.lambda;
-    result.ddy = interp_ddy_w * (result.lambda * interp_inv_w + result.ddy) - result.lambda;
-
-    return result;
-}
-
 [[shader("fragment")]]
 func fs_main(VertexOutput input) -> FragmentOutput {
     let texel = params.visbuffer.Load(u32x3(u32x2(input.position.xy), 0));
@@ -126,35 +74,41 @@ func fs_main(VertexOutput input) -> FragmentOutput {
 
     let material = params.materials[tri.material_index];
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, 1.0);
-    let deriv = compute_partial_derivatives(tri.world_positions, NDC.xy, params.camera.resolution);
-    var tex_coord_grad = deriv.gradient_of(tri.tex_coords);
-    material.transform_uv(tex_coord_grad);
+    // evaluate attributes at the same subpixel position used by visibility rasterization
+    let sample_uv = input.tex_coord - params.camera.temporalaa_jitter / params.camera.resolution;
+    let NDC = f32x3(sample_uv * 2.0 - 1.0, 1.0);
+    let decoded = decode_triangle_surface(tri, material, NDC.xy, params.camera);
+    let deriv = decoded.triangle.deriv;
+    let world_normal = decoded.triangle.world_normal;
+    let surface = decoded.surface;
 
-    const f32x3x3 camera_relative_world_positions = {
-        tri.world_positions[0].xyz - params.camera.position.xyz,
-        tri.world_positions[1].xyz - params.camera.position.xyz,
-        tri.world_positions[2].xyz - params.camera.position.xyz,
-    };
-
-    const f32x3 world_normal = tri.interpolate_normal(deriv.lambda);
-    const TangentFrame frame = build_tangent_frame(
+    DecalTarget target;
+    target.albedo = surface.albedo.rgb;
+    target.normal = surface.normal;
+    target.emissive = surface.emissive;
+    target.metallic = surface.metallic;
+    target.roughness = surface.roughness;
+    apply_decals(
+        target,
+        push.decals,
+        push.decal_tiles,
+        push.decal_count,
+        u32x2(input.position.xy),
+        params.camera.resolution,
+        params.materials,
+        tri.interpolate_position(deriv.lambda),
+        decoded.position_dx,
+        decoded.position_dy,
         world_normal,
-        mul(deriv.ddx, camera_relative_world_positions),
-        mul(deriv.ddy, camera_relative_world_positions),
-        tex_coord_grad.ddx,
-        tex_coord_grad.ddy
+        params.mesh_instances[tri.mesh_instance_index].layer_mask,
+        params.camera.texture_mip_bias
     );
 
-    // biased after the tangent frame, which needs the true uv derivatives
-    tex_coord_grad.apply_mip_bias(params.camera.texture_mip_bias);
-    let surface = shade_surface(material, frame, tex_coord_grad);
-
-    output.albedo_color = f32x4(surface.albedo.rgb, surface.occlusion);
-    output.normal_color.xy = com::vec3_to_oct(surface.normal);
+    output.albedo_color = f32x4(target.albedo, surface.occlusion);
+    output.normal_color.xy = com::vec3_to_oct(target.normal);
     output.normal_color.zw = com::vec3_to_oct(world_normal);
-    output.emission_color = surface.emissive;
-    output.metallic_roughness_color = f32x2(surface.metallic, surface.roughness);
+    output.emission_color = target.emissive;
+    output.metallic_roughness_color = f32x2(target.metallic, target.roughness);
     output.velocity = compute_velocity(tri, deriv.lambda, params.transforms_previous[tri.transform_index]);
 
     return output;

@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 15u
+#define OX_DOTNET_ABI_VERSION 20u
 
 struct ecs_world_t;
 
@@ -268,7 +268,8 @@ struct OxAssetInfo {
   u64 ref_count = 0;
 };
 
-// Asset/Material.hpp's Material. `alpha_mode` and `sampling_mode` are its enums' values, `flip_normal_y` is 0 or 1
+// Asset/Material.hpp's Material. `alpha_mode` and `sampling_mode` are its enums' values, `flip_normal_y` and
+// `double_sided` are 0 or 1, `shading_model` is a ShadingModel
 struct OxMaterialData {
   OxVec4 albedo_color = {1.0f, 1.0f, 1.0f, 1.0f};
   OxVec2 uv_size = {1.0f, 1.0f};
@@ -283,11 +284,36 @@ struct OxMaterialData {
   u32 sampling_mode = 0;
   u32 flip_normal_y = 0;
   u32 padding = 0;
+  u32 double_sided = 0;
+  f32 transmission_factor = 0.0f;
+  f32 ior = 1.5f;
+  f32 thickness_factor = 0.0f;
+  OxVec3 attenuation_color = {1.0f, 1.0f, 1.0f};
+  f32 attenuation_distance = 0.0f;
+  u32 shading_model = 0;
+  OxVec3 water_scatter_color = {0.02f, 0.09f, 0.08f};
+  OxVec2 water_flow = {0.03f, 0.01f};
+  f32 water_detail_scale = 0.37f;
+  f32 water_shore_fade = 0.5f;
   OxAssetId albedo_texture = {};
   OxAssetId normal_texture = {};
   OxAssetId emissive_texture = {};
   OxAssetId metallic_roughness_texture = {};
   OxAssetId occlusion_texture = {};
+  OxAssetId transmission_texture = {};
+  OxAssetId thickness_texture = {};
+};
+
+// one mesh of a model made at runtime: a triangle list, `normals` and `texcoords` null or one per position,
+// `material` a loaded material asset or zero. Nothing is kept past the call
+struct OxMeshSource {
+  const OxVec3* positions = nullptr;
+  const OxVec3* normals = nullptr;
+  const OxVec2* texcoords = nullptr;
+  const u32* indices = nullptr;
+  u32 vertex_count = 0;
+  u32 index_count = 0;
+  OxAssetId material = {};
 };
 
 enum class OxParticleCommand : i32 {
@@ -473,6 +499,8 @@ struct OxNativeApi {
   auto (*ecs_defer_resume)(ecs_world_t* world) -> void = nullptr;
   // a "." separated path, writes up to `capacity` bytes and returns the full length so a short buffer can be retried
   auto (*get_path)(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 = nullptr;
+  // the entity's components and pairs as flecs writes them, "A, B, (ChildOf,parent)". Same buffer contract as get_path
+  auto (*get_type_str)(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 = nullptr;
   // iterates the entity's children into `iter`, which is `iter_size` bytes. Finish it with iter_fini unless
   // children_next ran it out. The entities of a result are valid until the next call
   auto (*children_iter)(ecs_world_t* world, u64 parent, void* iter) -> void = nullptr;
@@ -559,6 +587,15 @@ struct OxNativeApi {
   // material is held, and the one it no longer names is given those references back. InvalidArgument for an enum value
   // out of range or a texture slot that names something else
   auto (*asset_material_set)(const OxAssetId* material, const OxMaterialData* data) -> OxStatus = nullptr;
+  // a material asset with no file of its own, loaded and held once. InvalidArgument as for asset_material_set
+  auto (*asset_create_material)(const OxMaterialData* data, OxAssetId* material) -> OxStatus = nullptr;
+  // a model with no file of its own, one single LOD mesh per source with triangles, loaded before this returns and held
+  // once. NotFound without a renderer, InvalidArgument for an index out of range, a count that isn't whole triangles,
+  // no triangles at all, or a material that isn't a loaded material
+  auto (*asset_create_model)(const OxMeshSource* meshes, i32 mesh_count, OxAssetId* model) -> OxStatus = nullptr;
+  // gives back the reference asset_create_model took, the model goes once the entities using it are gone. NotFound for
+  // anything that isn't a model made that way
+  auto (*asset_destroy_model)(const OxAssetId* model) -> OxStatus = nullptr;
 
   // the entity's AudioSourceComponent. A sound belongs to its asset, so entities sharing one share its playback
   auto (*audio_command)(ecs_world_t* world, u64 entity, OxAudioCommand command) -> OxStatus = nullptr;
@@ -567,6 +604,10 @@ struct OxNativeApi {
   auto (*audio_set_sound)(ecs_world_t* world, u64 entity, const OxAssetId* sound) -> OxStatus = nullptr;
   // a loaded audio asset, a null position plays it flat
   auto (*audio_one_shot)(const OxAssetId* sound, f32 volume, const OxVec3* position) -> OxStatus = nullptr;
+
+  // acquires `material` for the entity's DecalComponent and gives the reference its previous material held back, a
+  // default id clears it. NotFound without a DecalComponent or for an unknown id, InvalidArgument for a non-material
+  auto (*decal_set_material)(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus = nullptr;
 
   // a scene's entities, with the TransformComponent and LayerComponent every scene entity has, 0 on failure
   auto (*scene_spawn)(ecs_world_t* world, OxStringView name, u64 parent) -> u64 = nullptr;
@@ -665,6 +706,9 @@ struct OxManagedApi {
   auto (*attach_world)(ecs_world_t* world) -> OxStatus = nullptr;
   auto (*detach_world)(ecs_world_t* world) -> OxStatus = nullptr;
   auto (*allocated_bytes)() -> u64 = nullptr;
+  auto (*is_debugger_attached)() -> bool = nullptr;
+  // blocks until a debugger attaches or the choice is cancelled, false when none did
+  auto (*launch_debugger)() -> bool = nullptr;
 
   auto (*find_script_type)(OxStringView type_name) -> OxScriptKind = nullptr;
   // fills up to `capacity` entries and returns how many types there are

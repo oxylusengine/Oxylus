@@ -30,6 +30,16 @@ auto build_mesh_blas(
   RenderContext& render_context, BufferID mesh_buffer, vir::Access mesh_rests_at, const BLASBuildInfo& info
 ) -> AccelerationStructureID;
 
+// every static build blocks, so a frame takes on only so many triangles of them
+struct StaticBLASBudget {
+  // zero lifts the cap
+  u64 triangle_budget = 0;
+  u64 spent = 0;
+
+  // the first build of a frame is always admitted, or a mesh larger than the budget would never get one
+  auto admits(this const StaticBLASBudget& self, u32 triangles) -> bool;
+};
+
 // a skinned instance cannot share its mesh's structure, which only ever covers the bind pose, so it
 // gets one of its own built over its slice of the skinned vertex arena. They are suballocated out of
 // one arena and share one scratch allocation, so a frame's builds go out as a single command instead

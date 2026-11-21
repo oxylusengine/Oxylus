@@ -1,12 +1,16 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <expected>
 #include <functional>
 #include <shared_mutex>
+#include <source_location>
 #include <span>
 #include <stack>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -18,6 +22,9 @@ using JobFn = std::function<void()>;
 
 struct Job;
 class JobManager;
+
+enum class JobID : u64 { Invalid = ~0_u64 };
+enum class JobState : u8 { Queued = 0, Running, Waiting, Done, Cancelled };
 
 struct Barrier : ManagedObj {
   // Pinned at 1 until the first `wait`, so the counter cannot transiently hit zero while jobs are
@@ -33,12 +40,15 @@ struct Job : ManagedObj {
   std::vector<Arc<Barrier>> barriers = {};
   JobFn task = {};
 
-  std::string name = {}; // managed with push/pop
+  std::string name = {};     // managed with push/pop
+  std::source_location location = {};
+  JobID id = JobID::Invalid; // handed out by `submit`
   std::atomic<bool> is_done{false};
 
   template <typename Fn>
-  static auto create(Fn&& task) -> Arc<Job> {
+  static auto create(Fn&& task, std::source_location location = std::source_location::current()) -> Arc<Job> {
     auto job = Arc<Job>::create();
+    job->location = location;
     job->task = [task_fn = std::forward<Fn>(task), done_flag = &job->is_done]() {
       task_fn();
       done_flag->store(true, std::memory_order_release);
@@ -49,78 +59,76 @@ struct Job : ManagedObj {
   auto signal(this Job& self, Arc<Barrier> barrier) -> Arc<Job>;
 };
 
+struct JobRecord {
+  JobID id = JobID::Invalid;
+  // the job that was already running on the same thread, when a barrier wait drained this one
+  JobID parent = JobID::Invalid;
+  std::string name = {};
+  std::source_location location = {};
+  JobState state = JobState::Queued;
+  u32 worker = ~0_u32; // ~0 when the main thread or a thread outside the pool ran it
+  u32 barrier_count = 0;
+  std::chrono::steady_clock::time_point submitted_at = {};
+  std::chrono::steady_clock::time_point started_at = {};
+  std::chrono::steady_clock::time_point waiting_since = {};
+  std::chrono::steady_clock::time_point finished_at = {};
+};
+
+// grouped by name, or by source location for unnamed jobs
+struct JobStats {
+  std::string label = {};
+  std::source_location location = {};
+  u64 completed = 0;
+  u64 cancelled = 0;
+  std::chrono::nanoseconds total_run = {};
+  std::chrono::nanoseconds max_run = {};
+  std::chrono::nanoseconds max_queued = {};
+  std::chrono::steady_clock::time_point last_finished_at = {};
+};
+
+struct JobSnapshot {
+  // queued, running and waiting jobs, oldest first
+  std::vector<JobRecord> live = {};
+  // finished named jobs, oldest first; unnamed ones only reach `stats`, or physics floods it
+  std::vector<JobRecord> history = {};
+  std::vector<JobStats> stats = {};
+};
+
 class JobTracker {
 public:
-  struct JobRecord {
-    std::string name;
-    bool is_completed;
-    std::chrono::steady_clock::time_point completion_time;
-  };
+  static constexpr usize HISTORY_CAPACITY = 512;
 
-  auto start_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(true); }
-  auto stop_tracking(this JobTracker& self) -> void { self.tracking_enabled.store(false); }
-  auto is_tracking(this const JobTracker& self) -> bool { return self.tracking_enabled.load(); }
-  auto clear_tracked(this JobTracker& self) -> void {
-    std::unique_lock lock(self.mutex);
-    self.jobs.clear();
-  }
+  auto start_tracking(this JobTracker& self) -> void;
+  // also forgets everything, a record left behind would never see its job finish
+  auto stop_tracking(this JobTracker& self) -> void;
+  auto is_tracking(this const JobTracker& self) -> bool;
+  auto clear_history(this JobTracker& self) -> void;
 
-  auto register_job(this JobTracker& self, Arc<Job> job) -> void {
-    if (!self.tracking_enabled.load())
-      return;
+  auto snapshot(this const JobTracker& self, JobSnapshot& out) -> void;
+  // names with at least one queued or running job
+  auto active_names(this const JobTracker& self, std::vector<std::string>& out) -> void;
+  // running or waiting jobs started longer than `threshold` ago; long queues are normal and not counted
+  auto count_stalled(this const JobTracker& self, std::chrono::steady_clock::duration threshold) -> u32;
 
-    std::unique_lock lock(self.mutex);
-    self.jobs[job.get()] = {job->name, false, {}};
-  }
-
-  auto mark_completed(this JobTracker& self, const Job* job) -> void {
-    if (!self.tracking_enabled.load())
-      return;
-
-    std::unique_lock lock(self.mutex);
-    if (auto it = self.jobs.find(job); it != self.jobs.end()) {
-      it->second.is_completed = true;
-      it->second.completion_time = std::chrono::steady_clock::now();
-    }
-  }
-
-  auto get_status(this JobTracker& self) -> std::vector<std::pair<std::string, bool>> {
-    std::shared_lock lock(self.mutex);
-    std::vector<std::pair<std::string, bool>> result;
-
-    for (const auto& [_, record] : self.jobs) {
-      result.emplace_back(record.name, !record.is_completed);
-    }
-
-    return result;
-  }
-
-  auto cleanup_old(this JobTracker& self, std::chrono::seconds max_age = std::chrono::seconds(2)) -> void {
-    if (!self.tracking_enabled.load())
-      return;
-
-    std::unique_lock lock(self.mutex);
-    const auto now = std::chrono::steady_clock::now();
-
-    std::erase_if(self.jobs, [&](const auto& item) {
-      const auto& record = item.second;
-      return record.is_completed && (now - record.completion_time) > max_age;
-    });
-  }
-
-  auto find_job(this JobTracker& self, const std::string& name) -> ox::option<std::reference_wrapper<JobRecord>> {
-    std::unique_lock lock(self.mutex);
-    for (auto& [job_ptr, record] : self.jobs) {
-      if (record.name == name) {
-        return std::ref(record);
-      }
-    }
-    return std::nullopt;
-  }
+  auto on_submitted(this JobTracker& self, const Job& job) -> void;
+  auto on_started(this JobTracker& self, JobID id, JobID parent, u32 worker) -> void;
+  auto on_waiting(this JobTracker& self, JobID id, bool is_waiting) -> void;
+  auto on_finished(this JobTracker& self, JobID id, JobState state) -> void;
 
 private:
-  std::shared_mutex mutex = {};
-  std::unordered_map<const Job*, JobRecord> jobs = {};
+  struct LabelHash {
+    using is_transparent = void;
+    using is_avalanching = void;
+    auto operator()(this const LabelHash&, std::string_view label) noexcept -> u64 {
+      return ankerl::unordered_dense::hash<std::string_view>{}(label);
+    }
+  };
+
+  mutable std::shared_mutex mutex = {};
+  ankerl::unordered_dense::map<JobID, JobRecord> live = {};
+  ankerl::unordered_dense::map<std::string, u32, LabelHash, std::equal_to<>> live_name_counts = {};
+  std::deque<JobRecord> history = {};
+  ankerl::unordered_dense::map<std::string, JobStats, LabelHash, std::equal_to<>> stats = {};
   std::atomic<bool> tracking_enabled{false};
 };
 
@@ -152,6 +160,15 @@ public:
 
   auto try_execute_one(this JobManager& self) -> bool;
 
+  // moves a queued job to the front of the queue, false once a worker has taken it
+  auto prioritize(this JobManager& self, JobID id) -> bool;
+  // drops a queued job without running it. jobs that signal a barrier are refused, releasing their
+  // waiters early would hand them unfinished work
+  auto cancel(this JobManager& self, JobID id) -> bool;
+
+  // the job running on the calling thread, innermost when a barrier wait is draining others
+  static auto current_job() -> JobID;
+
   static auto job_name_stack() -> std::stack<std::string>&;
 
   auto push_job_name(this JobManager&, std::string_view name) -> void { job_name_stack().emplace(name); }
@@ -165,7 +182,13 @@ public:
   auto get_tracker(this JobManager& self) -> JobTracker& { return self.tracker; }
 
   template <std::input_iterator Iterator, typename Func>
-  auto for_each(this JobManager& self, Iterator begin, Iterator end, Func&& func) -> void {
+  auto for_each(
+    this JobManager& self,
+    Iterator begin,
+    Iterator end,
+    Func&& func,
+    std::source_location location = std::source_location::current()
+  ) -> void {
     const usize total_size = std::distance(begin, end);
     if (total_size == 0)
       return;
@@ -179,21 +202,28 @@ public:
       std::advance(chunk_end, std::min(chunk_size, static_cast<usize>(std::distance(chunk_start, end))));
       global_index += std::distance(chunk_start, chunk_end);
 
-      self.submit(Job::create([=, f = std::forward_like<Func>(func)] {
-        usize local_index = chunk_start_index;
-        for (auto it = chunk_start; it != chunk_end; ++it, ++local_index) {
-          std::invoke(f, *it, local_index);
-        }
-      }));
+      self.submit(
+        Job::create(
+          [=, f = std::forward_like<Func>(func)] {
+            usize local_index = chunk_start_index;
+            for (auto it = chunk_start; it != chunk_end; ++it, ++local_index) {
+              std::invoke(f, *it, local_index);
+            }
+          },
+          location
+        )
+      );
 
       chunk_start = chunk_end;
     }
   }
 
   template <std::ranges::contiguous_range Range, typename Func>
-  auto for_each(this JobManager& self, Range&& range, Func&& func) -> void {
+  auto for_each(
+    this JobManager& self, Range&& range, Func&& func, std::source_location location = std::source_location::current()
+  ) -> void {
     auto view = std::span(std::forward<Range>(range));
-    self.for_each(view.begin(), view.end(), std::forward<Func>(func));
+    self.for_each(view.begin(), view.end(), std::forward<Func>(func), location);
   }
 
   template <typename T>
@@ -260,6 +290,7 @@ private:
   std::shared_mutex mutex = {};
   std::condition_variable_any condition_var = {};
   std::atomic<u64> job_count = {};
+  std::atomic<u64> next_job_id = {};
   bool running = true;
 };
 

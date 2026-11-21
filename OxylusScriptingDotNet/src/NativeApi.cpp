@@ -34,8 +34,11 @@ static_assert(sizeof(OxValue) == 40 && offsetof(OxValue, text) == 24);
 static_assert(sizeof(OxUiEvent) == 40 && offsetof(OxUiEvent, mouse_x) == 32);
 static_assert(sizeof(OxNetClientState) == 32 && offsetof(OxNetClientState, rtt) == 16);
 static_assert(sizeof(OxVec4) == 16 && sizeof(OxCinematicState) == 8 && sizeof(OxWindowSize) == 16);
-static_assert(sizeof(OxMaterialData) == 160 && offsetof(OxMaterialData, alpha_mode) == 60);
-static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, albedo_texture) == 80);
+static_assert(sizeof(OxMaterialData) == 256 && offsetof(OxMaterialData, alpha_mode) == 60);
+static_assert(offsetof(OxMaterialData, flip_normal_y) == 72 && offsetof(OxMaterialData, double_sided) == 80);
+static_assert(offsetof(OxMaterialData, water_flow) == 128 && offsetof(OxMaterialData, albedo_texture) == 144);
+static_assert(offsetof(OxMaterialData, transmission_texture) == 224);
+static_assert(sizeof(OxMeshSource) == 56 && offsetof(OxMeshSource, material) == 40);
 
 static auto component_dbs = ankerl::unordered_dense::map<ecs_world_t*, ComponentDB*>{};
 static auto frame_time = OxTime{};
@@ -81,6 +84,25 @@ static auto get_path(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u
   }
 
   ecs_os_free(path);
+  return static_cast<u32>(length);
+}
+
+static auto get_type_str(ecs_world_t* world, u64 entity, c8* out, u32 capacity) -> u32 {
+  if (entity == 0 || !ecs_is_alive(world, entity)) {
+    return 0;
+  }
+
+  auto* type_str = ecs_type_str(world, ecs_get_type(world, entity));
+  if (!type_str) {
+    return 0;
+  }
+
+  const auto length = std::strlen(type_str);
+  if (out) {
+    std::memcpy(out, type_str, std::min<usize>(length, capacity));
+  }
+
+  ecs_os_free(type_str);
   return static_cast<u32>(length);
 }
 
@@ -424,6 +446,7 @@ auto make_native_api() -> OxNativeApi {
     .ecs_defer_suspend = ecs_defer_suspend,
     .ecs_defer_resume = ecs_defer_resume,
     .get_path = get_path,
+    .get_type_str = get_type_str,
     .children_iter = children_iter,
     .children_next = children_next,
     .lookup = lookup,

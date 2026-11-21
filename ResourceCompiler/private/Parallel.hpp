@@ -21,13 +21,14 @@ struct ParallelScope {
   auto operator=(const ParallelScope&) -> ParallelScope& = delete;
 
   template <typename Fn>
-  auto dispatch(this ParallelScope& self, Fn&& work) -> void {
+  auto dispatch(this ParallelScope& self, Fn&& work, std::source_location location = std::source_location::current())
+    -> void {
     if (self.inline_only) {
       work();
       return;
     }
 
-    auto job = Job::create(std::forward<Fn>(work));
+    auto job = Job::create(std::forward<Fn>(work), location);
     job->signal(self.barrier);
     self.job_manager.submit(std::move(job));
   }

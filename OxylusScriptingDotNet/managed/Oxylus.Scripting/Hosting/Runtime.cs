@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 using Oxylus.Interop;
@@ -24,6 +25,7 @@ public static unsafe class Runtime
         registry = scripts;
         try
         {
+            ComponentType.ClearReaders();
             CoreComponents.AssignIndices();
             components = [.. CoreComponents.CreateDescriptors(), .. scripts.RegisterComponents(CoreComponents.Count)];
             systems = scripts.CreateSystems();
@@ -43,6 +45,8 @@ public static unsafe class Runtime
         managed->AttachWorld = &AttachWorld;
         managed->DetachWorld = &DetachWorld;
         managed->AllocatedBytes = &AllocatedBytes;
+        managed->IsDebuggerAttached = &IsDebuggerAttached;
+        managed->LaunchDebugger = &LaunchDebugger;
         Scenes.Fill(managed);
         Callbacks.Fill(managed);
         return OxStatus.Ok;
@@ -91,6 +95,23 @@ public static unsafe class Runtime
 
     [UnmanagedCallersOnly]
     static ulong AllocatedBytes() => (ulong)GC.GetAllocatedBytesForCurrentThread();
+
+    [UnmanagedCallersOnly]
+    static bool IsDebuggerAttached() => Debugger.IsAttached;
+
+    [UnmanagedCallersOnly]
+    static bool LaunchDebugger()
+    {
+        try
+        {
+            return Debugger.Launch();
+        }
+        catch (Exception e)
+        {
+            Log.Error($"Couldn't launch a debugger: {e}");
+            return false;
+        }
+    }
 
     static OxStatus Attach(nint world)
     {
@@ -244,6 +265,7 @@ public static unsafe class Runtime
 
         Worlds.Clear();
         registry = null;
+        ComponentType.ClearReaders();
         components = [];
         systems = [];
     }

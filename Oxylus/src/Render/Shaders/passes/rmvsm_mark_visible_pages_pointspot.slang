@@ -5,6 +5,8 @@ import rmvsm;
 
 #include <rmvsm_pointspot.slang>
 
+[[vk::constant_id(0)]] const bool IS_TRANSPARENT = false;
+
 [[vk::binding(0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(1)]] StructuredBuffer<VSMPointSpotView> views;
 [[vk::binding(2)]] StructuredBuffer<LightGridCell> light_grid;
@@ -20,6 +22,9 @@ import rmvsm;
 
 [[vk::binding(10)]] RWStructuredBuffer<u32> page_occupancy;
 [[vk::binding(11)]] RWStructuredBuffer<VSMPageAllocator> allocator;
+
+[[vk::binding(12)]] Texture2D<u32> refractor_visbuffer;
+[[vk::binding(13)]] Texture2D<f32> opaque_depth_image;
 
 func atomic_or_page(i32x3 address, i32 mip, u32 value) -> u32 {
     switch (mip) {
@@ -92,6 +97,13 @@ func cs_main(
     let depth = depth_image.Load(i32x3(thread_id, 0));
     if (depth == 0.0) {
         return;
+    }
+
+    if (IS_TRANSPARENT) {
+        let texel = refractor_visbuffer.Load(i32x3(thread_id, 0));
+        if (texel == ~0u || depth == opaque_depth_image.Load(i32x3(thread_id, 0))) {
+            return;
+        }
     }
 
     let inv_resolution = 1.0 / f32x2(ctx.depth_extent);

@@ -13,6 +13,10 @@ import debug_drawer;
 [[vk::binding(3)]] RWStructuredBuffer<MeshletInstance> meshlet_instances;
 [[vk::binding(4)]] RWStructuredBuffer<MeshletInstanceVisibility> visibility;
 [[vk::binding(5)]] RWStructuredBuffer<DispatchIndirectCommand> cull_meshlets_cmd;
+[[vk::binding(6)]] StructuredBuffer<Material> materials;
+[[vk::binding(7)]] RWStructuredBuffer<MeshletInstance> transparent_meshlet_instances;
+[[vk::binding(8)]] RWStructuredBuffer<DispatchIndirectCommand> blend_cull_meshlets_cmd;
+[[vk::binding(9)]] RWStructuredBuffer<DispatchIndirectCommand> refractor_cull_meshlets_cmd;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESH_COUNT, 1, 1)]]
@@ -24,6 +28,7 @@ func cs_main(
 
     var meshlet_count = 0u;
     var lod_index = 0u;
+    var render_class = MaterialClass::Opaque;
 
     if (mesh_instance_index < camera.mesh_instance_count) {
         let mesh_instance = mesh_instances[mesh_instance_index];
@@ -34,7 +39,10 @@ func cs_main(
         let transform = transforms[mesh_instance.transform_index];
         let mvp = mul(camera.projection_view, transform.world);
 
-        let is_caster = !HAS_FLAG(CULL_FLAGS, CullFlag.ShadowCastersOnly) || mesh_instance.casts_shadows();
+        render_class = materials[mesh_instance.material_index].render_class();
+
+        let is_shadow_pass = HAS_FLAG(CULL_FLAGS, CullFlag.ShadowCastersOnly);
+        let is_caster = !is_shadow_pass || (mesh_instance.casts_shadows() && (render_class == MaterialClass::Opaque || render_class == MaterialClass::Blend));
         if (is_caster && HAS_FLAG(CULL_FLAGS, CullFlag.TestFrustum) && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             if (HAS_FLAG(CULL_FLAGS, CullFlag.SelectLOD)) {
                 let aabb_center = mul(transform.world, f32x4(mesh.bounds.aabb_center, 1.0)).xyz;
@@ -64,26 +72,65 @@ func cs_main(
         }
     }
 
-    let lane_meshlet_offset = WavePrefixSum(meshlet_count);
-    let total_meshlet_count = WaveActiveSum(meshlet_count);
+    let is_blend = HAS_FLAG(CULL_FLAGS, CullFlag.RouteBlend) && render_class == MaterialClass::Blend;
+    let is_refractor = HAS_FLAG(CULL_FLAGS, CullFlag.RouteRefractors) && render_class == MaterialClass::Refractor;
+    let blend_count = select(is_blend, meshlet_count, 0u);
+    let refractor_count = select(is_refractor, meshlet_count, 0u);
+    let opaque_count = select(is_blend || is_refractor, 0u, meshlet_count);
 
-    var base = 0u;
+    let lane_opaque_offset = WavePrefixSum(opaque_count);
+    let total_opaque_count = WaveActiveSum(opaque_count);
+    let lane_blend_offset = WavePrefixSum(blend_count);
+    let total_blend_count = WaveActiveSum(blend_count);
+    let lane_refractor_offset = WavePrefixSum(refractor_count);
+    let total_refractor_count = WaveActiveSum(refractor_count);
+
+    var opaque_base = 0u;
+    var blend_base = 0u;
+    var refractor_base = 0u;
     if (WaveIsFirstLane()) {
-        base = __atomic_add(visibility[0].total_visible_meshlet_instances, total_meshlet_count, MemoryOrder::Relaxed);
-        let new_total = base + total_meshlet_count;
+        opaque_base = __atomic_add(visibility[0].total_visible_meshlet_instances, total_opaque_count, MemoryOrder::Relaxed);
+        let new_total = opaque_base + total_opaque_count;
         let needed_groups = (new_total + CULLING_MESHLET_COUNT - 1u) / CULLING_MESHLET_COUNT;
         __atomic_max(cull_meshlets_cmd[0].x, needed_groups, MemoryOrder::Relaxed);
+
+        if (HAS_FLAG(CULL_FLAGS, CullFlag.RouteBlend)) {
+            blend_base = __atomic_add(visibility[0].total_blend_meshlet_instances, total_blend_count, MemoryOrder::Relaxed);
+            let new_blend_total = blend_base + total_blend_count;
+            let blend_groups = (new_blend_total + CULLING_MESHLET_COUNT - 1u) / CULLING_MESHLET_COUNT;
+            __atomic_max(blend_cull_meshlets_cmd[0].x, blend_groups, MemoryOrder::Relaxed);
+        }
+
+        if (HAS_FLAG(CULL_FLAGS, CullFlag.RouteRefractors)) {
+            refractor_base = __atomic_add(visibility[0].total_refractor_meshlet_instances, total_refractor_count, MemoryOrder::Relaxed);
+            let new_refractor_total = refractor_base + total_refractor_count;
+            let refractor_groups = (new_refractor_total + CULLING_MESHLET_COUNT - 1u) / CULLING_MESHLET_COUNT;
+            __atomic_max(refractor_cull_meshlets_cmd[0].x, refractor_groups, MemoryOrder::Relaxed);
+        }
     }
-    base = WaveReadLaneFirst(base);
+    opaque_base = WaveReadLaneFirst(opaque_base);
+    blend_base = WaveReadLaneFirst(blend_base);
+    refractor_base = WaveReadLaneFirst(refractor_base);
 
     if (meshlet_count > 0u) {
         mesh_instances[mesh_instance_index].lod_index = lod_index;
+    }
 
-        let base_offset = base + lane_meshlet_offset;
-        for (u32 i = 0u; i < meshlet_count; i++) {
-            let offset = base_offset + i;
-            meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
-            meshlet_instances[offset].meshlet_index = i;
-        }
+    for (u32 i = 0u; i < opaque_count; i++) {
+        let offset = opaque_base + lane_opaque_offset + i;
+        meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
+        meshlet_instances[offset].meshlet_index = i;
+    }
+
+    for (u32 i = 0u; i < blend_count; i++) {
+        let offset = blend_base + lane_blend_offset + i;
+        transparent_meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
+        transparent_meshlet_instances[offset].meshlet_index = i;
+    }
+
+    for (u32 i = 0u; i < refractor_count; i++) {
+        let offset = camera.meshlet_instance_capacity - 1u - (refractor_base + lane_refractor_offset + i);
+        transparent_meshlet_instances[offset].mesh_instance_index = mesh_instance_index;
+        transparent_meshlet_instances[offset].meshlet_index = i;
     }
 }

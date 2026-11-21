@@ -14,6 +14,7 @@ import rmvsm;
 [[vk::binding(5)]] RWStructuredBuffer<VSMMeshletInstance> vsm_meshlet_instances;
 [[vk::binding(6)]] RWStructuredBuffer<u32> vsm_meshlet_instance_count;
 [[vk::binding(7)]] RWStructuredBuffer<DispatchIndirectCommand> cull_meshlets_cmd;
+[[vk::binding(8)]] StructuredBuffer<Material> materials;
 
 [[shader("compute")]]
 [[numthreads(CULLING_MESH_COUNT, 1, 1)]]
@@ -38,7 +39,9 @@ func cs_main(
         let in_range = distance(world_center, view.light_position) - world_radius <= view.range;
 
         let mvp = mul(view.projection_view, transform.world);
-        if (mesh_instance.casts_shadows() && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
+        let render_class = materials[mesh_instance.material_index].render_class();
+        let is_caster = render_class == MaterialClass::Opaque || render_class == MaterialClass::Blend;
+        if (mesh_instance.casts_shadows() && is_caster && in_range && test_frustum(mvp, mesh.bounds.aabb_center, mesh.bounds.aabb_extent)) {
             meshlet_count = mesh.lods[mesh_instance.lod_index].meshlet_count;
         }
     }

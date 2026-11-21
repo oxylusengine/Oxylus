@@ -435,6 +435,25 @@ auto RendererInstance::bind_pbr_variables(
 ) -> void {
   ZoneScoped;
   const auto& cvar = *self.frame_params.cvar;
+  const auto& camera = self.camera_data;
+  // the inverse projection maps (device_z, 1) to homogeneous view (z, w)
+  const auto& inv = camera.inv_projection;
+  const auto determinant = inv[2][2] * inv[3][3] - inv[3][2] * inv[2][3];
+  const auto trace = GPU::ContactShadowTraceSettings{
+    .depth_unpack = {inv[2][3], inv[3][3], std::abs(determinant)},
+    .length_ws = cvar.cvar_contact_shadows_length.get(),
+    .thickness = cvar.cvar_contact_shadows_thickness.get(),
+    .steps = static_cast<u32>(
+      std::clamp(cvar.cvar_contact_shadows_steps.get(), 1, static_cast<i32>(GPU::CONTACT_SHADOW_MAX_STEPS))
+    ),
+  };
+  if (program.has_variable(variables.contact_shadows)) {
+    auto light_clip = camera.projection_view * glm::vec4(self.directional_light.direction, 0.0f);
+    const auto jitter = 2.0f * camera.temporalaa_jitter / camera.resolution;
+    light_clip.x += jitter.x * light_clip.w;
+    light_clip.y += jitter.y * light_clip.w;
+    program.set_bytes(variables.contact_shadows, GPU::ContactShadowSettings{.light_clip = light_clip, .trace = trace});
+  }
   auto lighting = GPU::PBRLighting{
     .vsm = self.frame_params.vsm,
     .sun_direction = self.directional_light.direction,
@@ -443,10 +462,10 @@ auto RendererInstance::bind_pbr_variables(
     .light_count = static_cast<u32>(self.scene.lights.size()),
     .light_grid_origin = self.light_grid_origin,
     .vsm_mip_bias_min = 0,
-    .contact_shadow_steps = static_cast<u32>(cvar.cvar_contact_shadows_steps.get()),
-    .contact_shadow_thickness = cvar.cvar_contact_shadows_thickness.get(),
-    .contact_shadow_length = cvar.cvar_contact_shadows_length.get(),
     .frame_index = self.frame_params.frame_index,
+    .time = self.frame_params.time,
+    .contact_shadows = trace,
+    .sun_contact_shadow_strength = self.directional_contact_shadow_strength,
   };
   lighting.vsm.depth_extent = {};
   lighting.vsm.curr_clipmap_index = 0;
@@ -482,6 +501,32 @@ auto RendererInstance::apply_pbr(
   });
   lighting = module.update_buffer_from(lighting, variables.lighting);
 
+  const auto& shape = recording.shape;
+  auto contact_visibility = module.transient_image({
+    .extent = shape.has_contact_shadows ? vir::Extent3D{shape.render_size.x, shape.render_size.y, 1}
+                                        : vir::Extent3D{1, 1, 1},
+    .format = vir::Format::R8Unorm,
+    .name = "sun contact visibility",
+  });
+  if (shape.has_contact_shadows) {
+    variables.contact_shadows = module.declare_bytes_var("contact shadows", sizeof(GPU::ContactShadowSettings));
+    std::tie(context.depth_attachment, contact_visibility) = std::tuple_cat(
+      module
+        .begin_compute(
+          {{context.depth_attachment, vir::Access::ComputeSampled}, {contact_visibility, vir::Access::ComputeWrite}}
+        )
+        .with_name("sun contact shadows")
+        .bind_compute_pipeline(render_context.pipeline("contact_shadows"))
+        .bind_image(0, 0, context.depth_attachment)
+        .bind_image(0, 1, contact_visibility)
+        .push_constants_from(variables.contact_shadows)
+        .dispatch_invocations_per_pixel(contact_visibility)
+        .end_compute()
+    );
+  } else {
+    contact_visibility = module.clear(contact_visibility, vir::ClearValue::rgba_f32(1.0f, 0.0f, 0.0f, 0.0f));
+  }
+
   if (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) {
     auto pbr_pass = //
       module
@@ -497,6 +542,7 @@ auto RendererInstance::apply_pbr(
            {context.emissive_attachment, vir::Access::FragmentSampled},
            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
+           {contact_visibility, vir::Access::FragmentSampled},
            {context.vsm_page_table_attachment, vir::Access::FragmentSampled},
            {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
            {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
@@ -522,6 +568,7 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
+      contact_visibility,
       context.vsm_page_table_attachment,
       context.pointspot_page_table_attachment,
       context.vsm_physical_pages_attachment,
@@ -545,6 +592,7 @@ auto RendererInstance::apply_pbr(
         .bind_image(0, 6, context.emissive_attachment)
         .bind_image(0, 7, context.metallic_roughness_occlusion_attachment)
         .bind_image(0, 8, context.ambient_occlusion_attachment)
+        .bind_image(0, 17, contact_visibility)
         .bind_buffer(0, 9, values.camera)
         .bind_image(0, 10, context.vsm_page_table_attachment)
         .bind_image(0, 11, context.pointspot_page_table_attachment)
@@ -582,6 +630,7 @@ auto RendererInstance::apply_pbr(
            {context.emissive_attachment, vir::Access::FragmentSampled},
            {context.metallic_roughness_occlusion_attachment, vir::Access::FragmentSampled},
            {context.ambient_occlusion_attachment, vir::Access::FragmentSampled},
+           {contact_visibility, vir::Access::FragmentSampled},
            {context.vsm_page_table_attachment, vir::Access::FragmentSampled},
            {context.pointspot_page_table_attachment, vir::Access::FragmentSampled},
            {context.vsm_physical_pages_attachment, vir::Access::FragmentSampled},
@@ -603,11 +652,12 @@ auto RendererInstance::apply_pbr(
       context.emissive_attachment,
       context.metallic_roughness_occlusion_attachment,
       context.ambient_occlusion_attachment,
+      contact_visibility,
       context.vsm_page_table_attachment,
       context.pointspot_page_table_attachment,
       context.vsm_physical_pages_attachment,
       values.camera,
-      std::ignore,
+      sky,
       lighting,
       values.lights,
       context.light_grid_buffer,
@@ -626,6 +676,7 @@ auto RendererInstance::apply_pbr(
         .bind_image(0, 6, context.emissive_attachment)
         .bind_image(0, 7, context.metallic_roughness_occlusion_attachment)
         .bind_image(0, 8, context.ambient_occlusion_attachment)
+        .bind_image(0, 17, contact_visibility)
         .bind_buffer(0, 9, values.camera)
         .bind_image(0, 10, context.vsm_page_table_attachment)
         .bind_image(0, 11, context.pointspot_page_table_attachment)
@@ -641,7 +692,10 @@ auto RendererInstance::apply_pbr(
         .draw(3, 1)
         .end_rendering()
     );
+    context.sky_buffer = sky;
   }
+
+  context.lighting_buffer = lighting;
 
   return dst;
 }

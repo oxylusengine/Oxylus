@@ -4,6 +4,7 @@
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_timer.h>
+#include <algorithm>
 
 #include "Render/Window.hpp"
 
@@ -68,7 +69,7 @@ auto Input::get_active_binding(this const Input& self, std::string_view action_i
   ZoneScoped;
 
   auto binding = self.get_binding(action_id);
-  if (binding && binding->context == self.active_context) {
+  if (binding && self.is_context_active(binding->context)) {
     return binding;
   }
   return nullptr;
@@ -156,6 +157,22 @@ auto Input::get_active_context(this const Input& self) -> std::string_view {
   ZoneScoped;
 
   return self.active_context;
+}
+
+auto Input::set_context_persistent(this Input& self, std::string_view context, bool is_persistent) -> void {
+  ZoneScoped;
+
+  const auto it = std::ranges::find(self.persistent_contexts, context);
+  const auto is_listed = it != self.persistent_contexts.end();
+  if (is_persistent && !is_listed) {
+    self.persistent_contexts.emplace_back(context);
+  } else if (!is_persistent && is_listed) {
+    self.persistent_contexts.erase(it);
+  }
+}
+
+auto Input::is_context_active(this const Input& self, std::string_view context) -> bool {
+  return context == self.active_context || std::ranges::contains(self.persistent_contexts, context);
 }
 
 auto Input::get_action_pressed(this const Input& self, std::string_view action_id, u32 instance_id) -> bool {
@@ -735,7 +752,7 @@ auto Input::do_callback(
   const InputState state,
   InputType callback_type
 ) -> void {
-  if (self.active_context != binding.context) {
+  if (!self.is_context_active(binding.context)) {
     return;
   }
 

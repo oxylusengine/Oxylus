@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <ankerl/svector.h>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 #include <ranges>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -14,11 +16,15 @@
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
 #include "Core/Enum.hpp"
+#include "Memory/SlotMap.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/BoundingVolume.hpp"
+#include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/Log.hpp"
@@ -85,6 +91,53 @@ static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atm
          a.terrain_albedo == b.terrain_albedo &&               //
          a.planet_radius == b.planet_radius &&                 //
          a.atmos_radius == b.atmos_radius;
+}
+
+// the same integral the sky_transmittance pass bakes, over MediumScattering in sky.slang, so the fog's sun
+// matches what surfaces get from the LUT. One ray a frame, so it runs on the host where every shader can share it
+static auto sun_transmittance(const GPU::Atmosphere& atmosphere, f32 eye_radius, f32 sun_cos_theta) -> glm::vec3 {
+  constexpr auto STEP_COUNT = 64;
+  constexpr auto MIN_SCALE_HEIGHT = 1e-3f;
+
+  const auto origin = glm::vec3(0.0f, eye_radius, 0.0f);
+  const auto direction = glm::vec3(
+    std::sqrt(std::max(1.0f - sun_cos_theta * sun_cos_theta, 0.0f)),
+    sun_cos_theta,
+    0.0f
+  );
+  // the ray starts inside the atmosphere, so the far root is where it leaves
+  const auto b = glm::dot(origin, direction);
+  const auto c = glm::dot(origin, origin) - atmosphere.atmos_radius * atmosphere.atmos_radius;
+  const auto step = (-b + std::sqrt(std::max(b * b - c, 0.0f))) / static_cast<f32>(STEP_COUNT);
+
+  auto optical_depth = glm::vec3(0.0f);
+  for (auto i = 0; i < STEP_COUNT; i++) {
+    const auto position = origin + direction * ((static_cast<f32>(i) + 0.5f) * step);
+    const auto height = std::max(glm::length(position) - atmosphere.planet_radius, 0.0f);
+    const auto rayleigh = std::exp(-height / std::max(atmosphere.rayleigh_density, MIN_SCALE_HEIGHT));
+    const auto mie_boundary = std::exp(-height / std::max(atmosphere.mie_density, MIN_SCALE_HEIGHT));
+    const auto mie_haze = std::exp(-height / std::max(atmosphere.mie_haze_scale_height, MIN_SCALE_HEIGHT));
+    const auto mie = glm::mix(mie_boundary, mie_haze, glm::clamp(atmosphere.mie_haze_amount, 0.0f, 1.0f));
+    const auto ozone_distance = std::abs(height - atmosphere.ozone_height);
+    const auto ozone = 1.0f -
+                       glm::smoothstep(0.0f, std::max(atmosphere.ozone_thickness, MIN_SCALE_HEIGHT), ozone_distance);
+    optical_depth += (atmosphere.rayleigh_scatter * rayleigh + glm::vec3(atmosphere.mie_extinction * mie) +
+                      atmosphere.ozone_absorption * ozone) *
+                     step;
+  }
+
+  return glm::exp(-optical_depth);
+}
+
+static auto radical_inverse(u32 index, u32 base) -> f32 {
+  auto result = 0.0f;
+  auto fraction = 1.0f / static_cast<f32>(base);
+  for (; index > 0; index /= base) {
+    result += static_cast<f32>(index % base) * fraction;
+    fraction /= static_cast<f32>(base);
+  }
+
+  return result;
 }
 
 static auto shadow_light_priority(const GPU::Light& light) -> f32 {
@@ -488,7 +541,12 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
   const auto flags = std::array{
     shape.is_debugging,
     shape.has_meshes,
+    shape.has_blend_meshes,
+    shape.has_refractors,
     shape.has_terrain,
+    shape.has_decals,
+    shape.has_height_fog,
+    shape.has_volumetric_fog,
     shape.has_sprites,
     shape.has_particles,
     shape.has_atmosphere,
@@ -995,16 +1053,26 @@ auto RendererInstance::render(
   } else {
     self.rtgi_history_valid = false;
   }
+
+  if (shape.has_volumetric_fog && ticket) {
+    self.volumetric_fog_history_ping = !self.volumetric_fog_history_ping;
+    self.volumetric_fog_history_valid = true;
+  } else {
+    self.volumetric_fog_history_valid = false;
+  }
   if (self.frame_params.is_upscaling) {
     if (ticket) {
       self.fsr3_history_ping = !self.fsr3_history_ping;
       self.fsr3_history_valid = true;
       self.fsr3_previous_render_size = shape.render_size;
       self.fsr3_previous_display_size = shape.display_size;
+      self.fsr3_previous_jitter = self.current_jitter;
       self.fsr3_frame_index += 1;
     } else {
       self.fsr3_history_valid = false;
     }
+  } else {
+    self.fsr3_history_valid = false;
   }
   return ticket;
 }
@@ -1024,6 +1092,8 @@ auto RendererInstance::frame_shape(
                             (!is_sssr_debug_view(debug_view) || cvar.cvar_sssr_enable.as_bool()) &&
                             (!is_rtgi_debug_view(debug_view) || cvar.cvar_rtgi_enable.as_bool());
   const auto has_meshes = self.frame_data.mesh_instance_count > 0;
+  const auto has_blend_meshes = has_meshes && self.renderer.blend_material_count > 0;
+  const auto has_refractors = has_meshes && self.renderer.refractor_material_count > 0;
   const auto has_tlas = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar) && has_meshes &&
                         self.scene_tlas.structure != AccelerationStructureID::Invalid;
   const auto has_rtao = cvar.cvar_rtao_enable.as_bool() && has_tlas;
@@ -1042,8 +1112,21 @@ auto RendererInstance::frame_shape(
   if (cvar.cvar_vbgtao_enable.as_bool() || has_rtao) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasGTAO;
   }
-  if (cvar.cvar_contact_shadows_enabled.as_bool()) {
-    self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+  if (
+    cvar.cvar_contact_shadows_enabled.as_bool() &&
+    (has_meshes || (self.scene.terrain && self.scene.terrain->is_baked())) &&
+    cvar.cvar_contact_shadows_length.get() > 0.0f && cvar.cvar_contact_shadows_thickness.get() > 0.0f
+  ) {
+    if (
+      (self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) && self.directional_contact_shadow_strength > 0.0f
+    ) {
+      self.gpu_scene_flags |= GPU::SceneFlags::HasContactShadows;
+    }
+    if (std::ranges::any_of(self.frame_data.lights, [](const GPU::Light& light) {
+          return light.contact_shadow_strength > 0.0f;
+        })) {
+      self.gpu_scene_flags |= GPU::SceneFlags::HasLocalContactShadows;
+    }
   }
   if (cvar.cvar_transparent_background.as_bool()) {
     self.gpu_scene_flags |= GPU::SceneFlags::TransparentBackground;
@@ -1086,7 +1169,12 @@ auto RendererInstance::frame_shape(
     .tlas = has_tlas ? self.tlas_handle() : VK_NULL_HANDLE,
     .is_debugging = is_debugging,
     .has_meshes = has_meshes,
+    .has_blend_meshes = has_blend_meshes,
+    .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
+    .has_decals = !self.decals.empty(),
+    .has_height_fog = self.camera_data.fog.density > 0.0f || self.camera_data.fog.volumetric_distance > 0.0f,
+    .has_volumetric_fog = self.camera_data.fog.volumetric_distance > 0.0f,
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
     .has_atmosphere = static_cast<bool>(flags & GPU::SceneFlags::HasAtmosphere),
@@ -1133,6 +1221,12 @@ auto RendererInstance::prepare_frame_params(
   params.shape = shape;
   params.cvar = &cvar;
   params.delta_time = static_cast<f32>(App::get_timestep().get_millis()) * 0.001f;
+  // a running scene animates on its gameplay clock so materials pause with it, the editor previews in real time
+  const auto shading_step = self.scene.is_running() ? static_cast<f64>(self.scene.last_step_delta)
+                                                    : static_cast<f64>(params.delta_time);
+  self.shading_time = std::fmod(self.shading_time + shading_step, 3600.0);
+  self.fog_noise_time += shading_step;
+  params.time = static_cast<f32>(self.shading_time);
   params.frame_index = static_cast<u32>(self.renderer.render_context->num_frames);
   params.is_upscaling = shape.upscaler != UpscalerBackend::None;
   params.render_size = shape.render_size;
@@ -1147,6 +1241,7 @@ auto RendererInstance::prepare_frame_params(
     .mesh_instance_count = self.frame_data.mesh_instance_count,
     .jitter = self.current_jitter,
     .texture_mip_bias = self.camera_data.texture_mip_bias,
+    .meshlet_instance_capacity = self.frame_data.max_meshlet_instance_count,
   };
 
   if (params.is_upscaling) {
@@ -1156,7 +1251,7 @@ auto RendererInstance::prepare_frame_params(
 
     const auto is_resolution_changed = self.fsr3_previous_render_size != render_size ||
                                        self.fsr3_previous_display_size != display_size;
-    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed;
+    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed || self.is_camera_cut;
     if (is_reset) {
       self.fsr3_frame_index = 0;
     }
@@ -1169,7 +1264,7 @@ auto RendererInstance::prepare_frame_params(
       .max_render_size = glm::ivec2(self.fsr3_render_size),
       .max_upscale_size = glm::ivec2(self.fsr3_display_size),
       .jitter_offset = self.current_jitter,
-      .previous_frame_jitter_offset = is_reset ? self.current_jitter : self.previous_jitter,
+      .previous_frame_jitter_offset = is_reset ? self.current_jitter : self.fsr3_previous_jitter,
       // velocity is written in render resolution pixels, fsr reprojects in uv
       .motion_vector_scale = 1.0f / glm::vec2(render_size),
       .downscale_factor = glm::vec2(render_size) / glm::vec2(display_size),
@@ -1201,10 +1296,14 @@ auto RendererInstance::prepare_frame_params(
     params.fsr3_history_ping = self.fsr3_history_ping;
   }
 
+  if (shape.has_volumetric_fog) {
+    self.allocate_volumetric_fog_resources(shape.render_size);
+  }
+
   params.sssr_reset = false;
   if (shape.has_sssr) {
     self.allocate_sssr_resources(shape.render_size);
-    params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.sssr_reset = !self.sssr_history_valid || self.is_camera_cut || (params.is_upscaling && params.fsr3_reset);
     params.sssr_history_ping = self.sssr_history_ping;
   }
 
@@ -1400,6 +1499,53 @@ auto RendererInstance::bind_frame(
     }
     program.set(prepared.probe_volumes, staging.value_or(vir::Buffer{}));
   }
+
+  const auto has_decals = program.has_variable(prepared.decals);
+  if (has_decals) {
+    auto staging = render_context.upload_frame_buffer(host_bytes(self.decals), "decals");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "decals");
+    }
+    program.set(prepared.decals, staging.value_or(vir::Buffer{}));
+  }
+
+  program.set_bytes(prepared.decal_count, has_decals ? static_cast<u32>(self.decals.size()) : 0_u32);
+
+  if (program.has_variable(prepared.volumetric_fog.params)) {
+    auto params = self.volumetric_fog_params;
+    params.grid_size = {
+      (self.render_size_.x + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE,
+      (self.render_size_.y + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE,
+      GPU::FROXEL_DEPTH_SLICES,
+    };
+    params.is_history_valid = self.volumetric_fog_history_valid && !self.is_camera_cut ? 1_u32 : 0_u32;
+    auto staging = render_context.upload_frame_buffer(host_bytes(params), "volumetric fog params");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "volumetric fog params");
+    }
+    program.set(prepared.volumetric_fog.params, staging.value_or(vir::Buffer{}));
+  }
+
+  if (program.has_variable(prepared.volumetric_fog.fog_volumes)) {
+    // never empty, the shader only reads `fog_volume_count` of them
+    const auto placeholder = GPU::FogVolume{};
+    const auto bytes = self.fog_volumes.empty() ? host_bytes(placeholder) : host_bytes(self.fog_volumes);
+    auto staging = render_context.upload_frame_buffer(bytes, "fog volumes");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "fog volumes");
+    }
+    program.set(prepared.volumetric_fog.fog_volumes, staging.value_or(vir::Buffer{}));
+  }
+
+  if (program.has_variable(prepared.volumetric_fog.history)) {
+    const auto current_index = self.volumetric_fog_history_ping ? 1 : 0;
+    program.set(prepared.volumetric_fog.history, self.volumetric_fog_history[current_index].attachment_info());
+    program.set(
+      prepared.volumetric_fog.previous_history,
+      self.volumetric_fog_history[1 - current_index].attachment_info()
+    );
+  }
+
   if (program.has_variable(prepared.sprites)) {
     auto staging = render_context.upload_frame_buffer(host_bytes(self.render_queue_2d.sprite_data), "sprites");
     if (!staging) {
@@ -1422,6 +1568,24 @@ auto RendererInstance::bind_frame(
       OX_LOG_ERROR("failed to allocate {}", "meshlet instances");
     }
     program.set(prepared.meshlet_instances, buffer.value_or(vir::Buffer{}));
+  }
+  if (
+    prepared.transparent_meshlet_instances != vir::ValueID::Invalid &&
+    program.has_variable(prepared.transparent_meshlet_instances)
+  ) {
+    auto buffer = render_context.allocate_frame_buffer({
+      .size = std::max<u64>(data.meshlet_instances_size, 16),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+               VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .location = vir::MemoryLocation::GpuOnly,
+      .alignment = 16,
+      .name = "transparent meshlet instances",
+    });
+    if (!buffer) {
+      OX_LOG_ERROR("failed to allocate {}", "transparent meshlet instances");
+    }
+    program.set(prepared.transparent_meshlet_instances, buffer.value_or(vir::Buffer{}));
   }
   if (program.has_variable(prepared.visible_meshlet_instances_indices)) {
     auto buffer = render_context.allocate_frame_buffer({
@@ -1752,6 +1916,27 @@ auto RendererInstance::record_frame(
   );
   values.lights = record_upload(module, "lights upload", prepared.lights, prepared.lights_upload);
 
+  // both decode passes push the decal address, so a frame without decals points them at a stand in
+  if (shape.has_decals) {
+    prepared.decals = module.declare_buffer_var("decals", vir::Access::None);
+    values.decals = prepared.decals;
+  } else {
+    values.decals = module.transient_buffer({
+      .size = sizeof(GPU::Decal),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused decals",
+    });
+    values.decal_tiles = module.transient_buffer({
+      .size = sizeof(u32),
+      .usage = TRANSIENT_BUFFER_USAGE,
+      .location = vir::MemoryLocation::GpuOnly,
+      .name = "unused decal tiles",
+    });
+  }
+
+  prepared.decal_count = module.declare_bytes_var("decal count", sizeof(u32));
+
   prepared.meshlet_instance_visibility_mask = module.declare_buffer_var(
     "meshlet instance visibility mask",
     GPU_STATE_REST
@@ -1776,6 +1961,12 @@ auto RendererInstance::record_frame(
   prepared.dirty_mesh_instances = module.declare_buffer_var("dirty mesh instances", vir::Access::None);
   prepared.removed_mesh_bounds = module.declare_buffer_var("removed mesh bounds", vir::Access::None);
   prepared.meshlet_instances = module.declare_buffer_var("meshlet instances", vir::Access::None);
+  if (shape.has_blend_meshes || shape.has_refractors) {
+    prepared.transparent_meshlet_instances = module.declare_buffer_var(
+      "transparent meshlet instances",
+      vir::Access::None
+    );
+  }
   prepared.visible_meshlet_instances_indices = module.declare_buffer_var(
     "visible meshlet instances",
     vir::Access::None
@@ -1786,6 +1977,7 @@ auto RendererInstance::record_frame(
   values.dirty_mesh_instances = prepared.dirty_mesh_instances;
   values.removed_mesh_bounds = prepared.removed_mesh_bounds;
   values.meshlet_instances = prepared.meshlet_instances;
+  values.transparent_meshlet_instances = prepared.transparent_meshlet_instances;
   values.visible_meshlet_instances_indices = prepared.visible_meshlet_instances_indices;
   values.reordered_indices = prepared.reordered_indices;
 
@@ -1798,6 +1990,7 @@ auto RendererInstance::record_frame(
   );
 
   depth_attachment = module.clear(depth_attachment, vir::ClearValue::depth(0.0f));
+  auto froxel_tile_depth_attachment = vir::ValueID::Invalid;
 
   const auto hiz_extent = vir::Extent3D{
     .width = std::bit_ceil((render_extent.width + 1) >> 1),
@@ -1927,19 +2120,54 @@ auto RendererInstance::record_frame(
     self.record_acceleration_structures(module, recording);
   }
 
-  const auto record_visbuffer_stages =
-    [&](vir::ValueID visbuffer, vir::ValueID depth) -> std::pair<vir::ValueID, vir::ValueID> {
+  // the refractor visbuffer and its meshlet list are only handed over when the shape has refractors
+  const auto record_visbuffer_stages = [&](vir::ValueID visbuffer, vir::ValueID depth, vir::ValueID refractor_visbuffer)
+    -> std::tuple<vir::ValueID, vir::ValueID, vir::ValueID> {
     auto resources = SharedResources{};
     resources.image_resources = {{"visbuffer_attachment", visbuffer}, {"depth_attachment", depth}};
     resources.buffer_resources = {
       {"meshlet_instances_buffer", values.meshlet_instances},
       {"mesh_instances_buffer", values.mesh_instances},
     };
+    const auto has_refractor_visbuffer = refractor_visbuffer != vir::ValueID::Invalid;
+    if (has_refractor_visbuffer) {
+      resources.image_resources["refractor_visbuffer_attachment"] = refractor_visbuffer;
+      resources.buffer_resources["transparent_meshlet_instances_buffer"] = values.transparent_meshlet_instances;
+    }
+
     self.execute_stages_after(RenderStage::VisBufferEncode, module, resources, prepared);
     values.meshlet_instances = resources.buffer_resources.at("meshlet_instances_buffer");
     values.mesh_instances = resources.buffer_resources.at("mesh_instances_buffer");
-    return {resources.image_resources.at("visbuffer_attachment"), resources.image_resources.at("depth_attachment")};
+    if (has_refractor_visbuffer) {
+      refractor_visbuffer = resources.image_resources.at("refractor_visbuffer_attachment");
+      values.transparent_meshlet_instances = resources.buffer_resources.at("transparent_meshlet_instances_buffer");
+    }
+
+    return {
+      resources.image_resources.at("visbuffer_attachment"),
+      resources.image_resources.at("depth_attachment"),
+      refractor_visbuffer
+    };
   };
+
+  // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
+  // allocates carry into the late pass, and into the transparency cull after lighting
+  auto cull_geometry_context = CullGeometryContext{
+    .use_hiz = true,
+    .init_cull_meshes = true,
+  };
+  if (shape.has_blend_meshes) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteBlend;
+  }
+
+  if (shape.has_refractors) {
+    cull_geometry_context.cull_flags |= GPU::CullFlag::RouteRefractors;
+  }
+
+  auto refractor_visbuffer_attachment = vir::ValueID::Invalid;
+  auto refractor_depth_attachment = vir::ValueID::Invalid;
+  auto blend_visbuffer_attachment = vir::ValueID::Invalid;
+  auto blend_depth_attachment = vir::ValueID::Invalid;
 
   // --- 3D ---
   if (shape.has_meshes || shape.has_terrain) {
@@ -1954,13 +2182,6 @@ auto RendererInstance::record_frame(
       .emissive_attachment = emissive_attachment,
       .metallic_roughness_occlusion_attachment = metallic_roughness_occlusion_attachment,
       .velocity_attachment = velocity_attachment,
-    };
-
-    // shared by both culls so the visibility and dispatch buffers the early pass's `cull_meshes`
-    // allocates carry into the late pass
-    auto cull_geometry_context = CullGeometryContext{
-      .use_hiz = true,
-      .init_cull_meshes = true,
     };
 
     auto terrain_context = TerrainContext{};
@@ -2052,10 +2273,37 @@ auto RendererInstance::record_frame(
     self.generate_hiz(module, render_context, main_geometry_context);
     run_geometry_pass(true);
 
+    if (shape.has_refractors) {
+      std::tie(
+        refractor_visbuffer_attachment,
+        refractor_depth_attachment
+      ) = self.draw_transparent_visbuffer(module, recording, cull_geometry_context, main_geometry_context, true);
+    }
+
+    if (shape.has_blend_meshes) {
+      std::tie(
+        blend_visbuffer_attachment,
+        blend_depth_attachment
+      ) = self.draw_transparent_visbuffer(module, recording, cull_geometry_context, main_geometry_context, false);
+    }
+
+    // after the refractors, so editor picking and outlines see glass ahead of what's behind it
     std::tie(
       main_geometry_context.visbuffer_attachment,
-      main_geometry_context.depth_attachment
-    ) = record_visbuffer_stages(main_geometry_context.visbuffer_attachment, main_geometry_context.depth_attachment);
+      main_geometry_context.depth_attachment,
+      refractor_visbuffer_attachment
+    ) =
+      record_visbuffer_stages(
+        main_geometry_context.visbuffer_attachment,
+        main_geometry_context.depth_attachment,
+        refractor_visbuffer_attachment
+      );
+
+    if (shape.has_decals) {
+      auto decal_cull_context = DecalCullContext{.depth_attachment = main_geometry_context.depth_attachment};
+      self.cull_decals(module, recording, decal_cull_context);
+      main_geometry_context.depth_attachment = decal_cull_context.depth_attachment;
+    }
 
     if (shape.has_meshes) {
       self.decode_visbuffer(module, recording, main_geometry_context);
@@ -2100,6 +2348,7 @@ auto RendererInstance::record_frame(
 
     visbuffer_attachment = main_geometry_context.visbuffer_attachment;
     depth_attachment = main_geometry_context.depth_attachment;
+    hiz_attachment = main_geometry_context.hiz_attachment;
     overdraw_attachment = main_geometry_context.overdraw_attachment;
     albedo_attachment = main_geometry_context.albedo_attachment;
     normal_attachment = main_geometry_context.normal_attachment;
@@ -2107,18 +2356,32 @@ auto RendererInstance::record_frame(
     metallic_roughness_occlusion_attachment = main_geometry_context.metallic_roughness_occlusion_attachment;
     velocity_attachment = main_geometry_context.velocity_attachment;
 
+    if (shape.has_volumetric_fog) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
     if ((shape.has_directional_shadows || shape.has_pointspot_shadows) && shape.has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .depth_extent = render_extent,
         .depth_attachment = depth_attachment,
+        .froxel_tile_depth_attachment = froxel_tile_depth_attachment,
         .normal_attachment = normal_attachment,
         .virtual_page_table_attachment = vsm_virtual_page_table_attachment,
         .physical_page_table_attachment = vsm_physical_pages_attachment,
         .light_grid_buffer = light_grid_buffer,
         .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+        .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+        .refractor_depth_attachment = refractor_depth_attachment,
+        .blend_visbuffer_attachment = blend_visbuffer_attachment,
+        .blend_depth_attachment = blend_depth_attachment,
       };
       self.draw_virtual_shadowmap(module, recording, rmvsm_context);
+      refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
+      refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
+      blend_visbuffer_attachment = rmvsm_context.blend_visbuffer_attachment;
+      blend_depth_attachment = rmvsm_context.blend_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
+      froxel_tile_depth_attachment = rmvsm_context.froxel_tile_depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;
       light_grid_buffer = rmvsm_context.light_grid_buffer;
       pointspot_views_buffer = rmvsm_context.pointspot_views_buffer;
@@ -2130,7 +2393,11 @@ auto RendererInstance::record_frame(
   }
 
   if (!shape.has_meshes && !shape.has_terrain) {
-    std::tie(visbuffer_attachment, depth_attachment) = record_visbuffer_stages(visbuffer_attachment, depth_attachment);
+    std::tie(visbuffer_attachment, depth_attachment, std::ignore) = record_visbuffer_stages(
+      visbuffer_attachment,
+      depth_attachment,
+      vir::ValueID::Invalid
+    );
   }
 
   if (shape.has_atmosphere && shape.has_directional_light) {
@@ -2260,35 +2527,40 @@ auto RendererInstance::record_frame(
     }
   }
 
-  // --- RTGI ---
-  auto rtgi_context = RTGIContext{};
-  if (shape.has_rtgi && shape.probe_volume_count == 0) {
+  // rtgi, sssr, transparency and volumetric fog bind the probe resources under a spec constant, a scene without probe
+  // volumes shares one set of stand-ins they never sample
+  const auto has_transparency = shape.has_blend_meshes || shape.has_refractors;
+  if (
+    shape.probe_volume_count == 0 && (shape.has_rtgi || shape.has_sssr || has_transparency || shape.has_volumetric_fog)
+  ) {
     probe_volumes_buffer = module.transient_buffer({
       .size = sizeof(u32),
       .usage = TRANSIENT_BUFFER_USAGE,
       .location = vir::MemoryLocation::GpuOnly,
-      .name = "rtgi unused probe volumes",
+      .name = "unused probe volumes",
     });
     probe_states_buffer = module.transient_buffer({
       .size = sizeof(u32),
       .usage = TRANSIENT_BUFFER_USAGE,
       .location = vir::MemoryLocation::GpuOnly,
-      .name = "rtgi unused probe states",
+      .name = "unused probe states",
     });
     probe_requests_buffer = module.transient_buffer({
       .size = sizeof(u32),
       .usage = TRANSIENT_BUFFER_USAGE,
       .location = vir::MemoryLocation::GpuOnly,
-      .name = "rtgi unused probe requests",
+      .name = "unused probe requests",
     });
     ddgi_irradiance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "rtgi unused irradiance"}
+      {.extent = {1, 1, 1}, .format = vir::Format::RGBA16Sfloat, .name = "unused ddgi irradiance"}
     );
     ddgi_distance_attachment = module.transient_image(
-      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "rtgi unused distance"}
+      {.extent = {1, 1, 1}, .format = vir::Format::RG16Sfloat, .name = "unused ddgi distance"}
     );
   }
 
+  // --- RTGI ---
+  auto rtgi_context = RTGIContext{};
   if (shape.has_rtgi) {
     rtgi_context.depth_attachment = depth_attachment;
     rtgi_context.albedo_attachment = albedo_attachment;
@@ -2428,6 +2700,199 @@ auto RendererInstance::record_frame(
     }
   }
 
+  // --- volumetric fog ---
+  // the fog passes, transparents and particles all sample the froxels, a frame without them gets a stand in
+  auto froxel_attachment = vir::ValueID::Invalid;
+  if (shape.has_volumetric_fog) {
+    if (froxel_tile_depth_attachment == vir::ValueID::Invalid) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
+    auto volumetric_fog_context = VolumetricFogContext{
+      .lighting_buffer = pbr_context.lighting_buffer,
+      .light_grid_buffer = light_grid_buffer,
+      .pointspot_views_buffer = pointspot_views_buffer,
+      .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
+      .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+      .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
+      .probe_volumes_buffer = probe_volumes_buffer,
+      .probe_states_buffer = probe_states_buffer,
+      .probe_requests_buffer = probe_requests_buffer,
+      .irradiance_attachment = ddgi_irradiance_attachment,
+      .distance_attachment = ddgi_distance_attachment,
+      .sky_cubemap_attachment = sky_cubemap_attachment,
+      .tile_depth_attachment = froxel_tile_depth_attachment,
+    };
+    self.record_volumetric_fog(module, recording, volumetric_fog_context);
+    probe_volumes_buffer = volumetric_fog_context.probe_volumes_buffer;
+    probe_states_buffer = volumetric_fog_context.probe_states_buffer;
+    probe_requests_buffer = volumetric_fog_context.probe_requests_buffer;
+    ddgi_irradiance_attachment = volumetric_fog_context.irradiance_attachment;
+    ddgi_distance_attachment = volumetric_fog_context.distance_attachment;
+    sky_cubemap_attachment = volumetric_fog_context.sky_cubemap_attachment;
+    pbr_context.lighting_buffer = volumetric_fog_context.lighting_buffer;
+    light_grid_buffer = volumetric_fog_context.light_grid_buffer;
+    pointspot_views_buffer = volumetric_fog_context.pointspot_views_buffer;
+    vsm_directional_clipmaps_buffer = volumetric_fog_context.directional_clipmaps_buffer;
+    vsm_virtual_page_table_attachment = volumetric_fog_context.vsm_page_table_attachment;
+    vsm_pointspot_page_table_attachment = volumetric_fog_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = volumetric_fog_context.vsm_physical_pages_attachment;
+    froxel_tile_depth_attachment = volumetric_fog_context.tile_depth_attachment;
+    froxel_attachment = volumetric_fog_context.integrated_attachment;
+  } else {
+    froxel_attachment = module.transient_image({
+      .extent = {1, 1, 1},
+      .format = vir::Format::RGBA16Sfloat,
+      .image_type = vir::ImageType::e3D,
+      .view_type = vir::ImageViewType::e3D,
+      .name = "unused froxels",
+    });
+    froxel_attachment = module.clear(froxel_attachment, zero);
+  }
+
+  // --- height fog ---
+  // after every pass that adds opaque light and before anything blends over it, which fogs itself
+  if (shape.has_height_fog) {
+    auto height_fog_context = HeightFogContext{
+      .depth_attachment = depth_attachment,
+      .final_attachment = final_attachment,
+      .froxel_attachment = froxel_attachment,
+    };
+    self.apply_height_fog(module, recording, height_fog_context);
+    depth_attachment = height_fog_context.depth_attachment;
+    final_attachment = height_fog_context.final_attachment;
+    froxel_attachment = height_fog_context.froxel_attachment;
+  }
+
+  // --- transparency ---
+  auto wboit_revealage_attachment = vir::ValueID::Invalid;
+  auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
+  if (has_transparency) {
+    const auto is_atmosphere = static_cast<bool>(shape.scene_flags & GPU::SceneFlags::HasAtmosphere);
+    cull_geometry_context.hiz_attachment = hiz_attachment;
+    auto transparency_context = TransparencyContext{
+      .visibility_buffer = cull_geometry_context.visibility_buffer,
+      .hiz_attachment = cull_geometry_context.hiz_attachment,
+      .final_attachment = final_attachment,
+      .depth_attachment = depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
+      .sky_transmittance_lut_attachment = sky_transmittance_lut_attachment,
+      .sky_aerial_perspective_lut_attachment = sky_aerial_perspective_attachment,
+      .sky_cubemap_attachment = sky_cubemap_attachment,
+      .lighting_buffer = pbr_context.lighting_buffer,
+      .light_grid_buffer = light_grid_buffer,
+      .pointspot_views_buffer = pointspot_views_buffer,
+      .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
+      .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+      .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
+      .probe_volumes_buffer = probe_volumes_buffer,
+      .probe_states_buffer = probe_states_buffer,
+      .probe_requests_buffer = probe_requests_buffer,
+      .irradiance_attachment = ddgi_irradiance_attachment,
+      .distance_attachment = ddgi_distance_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
+      .environment_buffer = is_atmosphere ? values.atmosphere : pbr_context.sky_buffer,
+      .froxel_attachment = froxel_attachment,
+    };
+
+    // the rear pair resolves over the scene first, so refractors see blended content behind them
+    if (shape.has_blend_meshes) {
+      transparency_context
+        .draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_geometry_context, false);
+      transparency_context.visibility_buffer = cull_geometry_context.visibility_buffer;
+      transparency_context.hiz_attachment = cull_geometry_context.hiz_attachment;
+      self.draw_transparency(module, recording, transparency_context);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
+    if (shape.has_refractors) {
+      if (shape.has_sssr) {
+        const auto traced = record_sssr_refractor_trace(
+          module,
+          render_context,
+          recording,
+          {
+            .camera = values.camera,
+            .refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment,
+            .refractor_depth_attachment = transparency_context.refractor_depth_attachment,
+            .opaque_depth_attachment = transparency_context.depth_attachment,
+            .opaque_normal_attachment = normal_attachment,
+            .depth_hierarchy = sssr_context.depth_hierarchy,
+            .meshes = values.meshes,
+            .mesh_instances = values.mesh_instances,
+            .meshlet_instances = values.transparent_meshlet_instances,
+            .transforms = values.transforms_world,
+            .materials = values.materials,
+            .lighting_buffer = transparency_context.lighting_buffer,
+          }
+        );
+        values.camera = traced.camera;
+        transparency_context.refractor_visbuffer_attachment = traced.refractor_visbuffer_attachment;
+        transparency_context.refractor_depth_attachment = traced.refractor_depth_attachment;
+        transparency_context.depth_attachment = traced.opaque_depth_attachment;
+        normal_attachment = traced.opaque_normal_attachment;
+        sssr_context.depth_hierarchy = traced.depth_hierarchy;
+        values.meshes = traced.meshes;
+        values.mesh_instances = traced.mesh_instances;
+        values.transparent_meshlet_instances = traced.meshlet_instances;
+        values.transforms_world = traced.transforms;
+        values.materials = traced.materials;
+        transparency_context.lighting_buffer = traced.lighting_buffer;
+        transparency_context.refractor_reflection_attachment = traced.reflection_attachment;
+      }
+
+      std::tie(
+        transparency_context.final_attachment,
+        transparency_context.transmission_attachment
+      ) = build_transmission_source(module, render_context, transparency_context.final_attachment);
+      self.shade_refractors(module, recording, transparency_context);
+    }
+
+    if (shape.has_blend_meshes && shape.has_refractors) {
+      std::swap(transparency_context.accumulation_attachment, transparency_context.accumulation_front_attachment);
+      std::swap(transparency_context.revealage_attachment, transparency_context.revealage_front_attachment);
+      resolve_transparency(module, render_context, transparency_context);
+    }
+
+    // the debug views read the rear pair, which the swap above moved into the front slots
+    if (shape.has_blend_meshes) {
+      const auto is_split = shape.has_refractors;
+      wboit_revealage_attachment = is_split ? transparency_context.revealage_front_attachment
+                                            : transparency_context.revealage_attachment;
+      wboit_revealage_front_attachment = is_split ? transparency_context.revealage_attachment : vir::ValueID::Invalid;
+    }
+
+    if (is_atmosphere) {
+      values.atmosphere = transparency_context.environment_buffer;
+    }
+
+    final_attachment = transparency_context.final_attachment;
+    depth_attachment = transparency_context.depth_attachment;
+    reactive_mask_attachment = transparency_context.reactive_mask_attachment;
+    froxel_attachment = transparency_context.froxel_attachment;
+    hiz_attachment = transparency_context.hiz_attachment;
+    cull_geometry_context.visibility_buffer = transparency_context.visibility_buffer;
+    refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment;
+    refractor_depth_attachment = transparency_context.refractor_depth_attachment;
+    sky_transmittance_lut_attachment = transparency_context.sky_transmittance_lut_attachment;
+    sky_aerial_perspective_attachment = transparency_context.sky_aerial_perspective_lut_attachment;
+    sky_cubemap_attachment = transparency_context.sky_cubemap_attachment;
+    light_grid_buffer = transparency_context.light_grid_buffer;
+    pointspot_views_buffer = transparency_context.pointspot_views_buffer;
+    vsm_pointspot_page_table_attachment = transparency_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = transparency_context.vsm_physical_pages_attachment;
+    vsm_virtual_page_table_attachment = transparency_context.vsm_page_table_attachment;
+    vsm_directional_clipmaps_buffer = transparency_context.directional_clipmaps_buffer;
+    probe_volumes_buffer = transparency_context.probe_volumes_buffer;
+    probe_states_buffer = transparency_context.probe_states_buffer;
+    probe_requests_buffer = transparency_context.probe_requests_buffer;
+    ddgi_irradiance_attachment = transparency_context.irradiance_attachment;
+    ddgi_distance_attachment = transparency_context.distance_attachment;
+  }
+
   // --- 2D ---
   if (shape.has_sprites) {
     prepared.sprites = module.declare_buffer_var("sprites", vir::Access::None);
@@ -2536,9 +3001,11 @@ auto RendererInstance::record_frame(
       .constants_buffer = prepared.particle.constants,
       .depth_attachment = depth_attachment,
       .reactive_mask_attachment = reactive_mask_attachment,
+      .froxel_attachment = froxel_attachment,
     };
     self.simulate_particles(module, recording, particle_context);
     final_attachment = self.draw_particles(module, recording, particle_context, final_attachment);
+    froxel_attachment = particle_context.froxel_attachment;
     depth_attachment = particle_context.depth_attachment;
     reactive_mask_attachment = particle_context.reactive_mask_attachment;
   }
@@ -2690,6 +3157,11 @@ auto RendererInstance::record_frame(
       .sssr_confidence_attachment = sssr_context.confidence,
       .sssr_variance_attachment = sssr_context.variance,
       .sssr_sample_count_attachment = sssr_context.sample_count,
+      .wboit_revealage_attachment = wboit_revealage_attachment,
+      .wboit_revealage_front_attachment = wboit_revealage_front_attachment,
+      .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
+      .refractor_depth_attachment = refractor_depth_attachment,
+      .reactive_mask_attachment = reactive_mask_attachment,
       .rtgi_half_res_depth_attachment = rtgi_context.half_res_depth,
       .rtgi_half_res_normal_roughness_attachment = rtgi_context.half_res_normal_roughness,
       .rtgi_radiance_attachment = rtgi_context.radiance,
@@ -2841,6 +3313,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // an explicitly active camera wins over a later one; with none marked the last one still does,
   // which is what every single-camera scene has always relied on
   auto found_active_camera = false;
+  flecs::entity_t camera_entity = 0;
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -2864,11 +3337,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       if (c.active || !found_active_camera) {
         current_camera = c;
+        camera_entity = e.id();
         found_active_camera = c.active;
       }
     });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
+
+  // a switch to another camera is how a cinematic cuts, a jump further than anything travels in a frame is a teleport.
+  // A turn alone isn't a cut, reprojection already follows it
+  constexpr auto CAMERA_CUT_DISTANCE = 5.0f;
+  const auto camera_travel = glm::distance(cam.position, glm::vec3(self.previous_camera_data.position));
+  self.is_camera_cut = camera_entity != self.previous_camera_entity || camera_travel > CAMERA_CUT_DISTANCE;
+  self.previous_camera_entity = camera_entity;
 
   self.camera_data = GPU::Camera{
     .position = glm::vec4(cam.position, 0.0f),
@@ -2921,6 +3402,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       const auto world_position = world_transform[3];
       const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
+      const auto* contact = e.try_get<ContactShadowsComponent>();
+      const auto strength = lc.cast_shadows && contact ? std::clamp(contact->strength, 0.0f, 1.0f) : 0.0f;
       if (lc.type == LightComponent::LightType::Directional) {
         self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
         self.directional_light.color = lc.color;
@@ -2932,6 +3415,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
         self.directional_light_cast_shadows = lc.cast_shadows;
+        self.directional_contact_shadow_strength = strength;
       } else {
         const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
         const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
@@ -2949,6 +3433,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
                 .outer_cone_angle = lc.outer_cone_angle,
                 .kind = kind,
                 .shadow_map_index = -1,
+                .contact_shadow_strength = strength,
               },
             .entity_id = static_cast<u64>(e.id()),
             .cast_shadows = lc.cast_shadows,
@@ -3002,6 +3487,146 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.sky_data.ambient_color = sky_info.ambient_color;
       self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
     });
+
+  self.camera_data.fog = {};
+  self.volumetric_fog_params = {};
+  self.fog_volumes.clear();
+  {
+    auto is_fog_found = false;
+    self.scene.world
+      .query_builder<const TransformComponent, const HeightFogComponent>() //
+      .build()
+      .each([&self, &is_fog_found](flecs::entity e, const TransformComponent&, const HeightFogComponent& c) {
+        // volumetric fog with no height fog of its own still draws its fog volumes
+        if (is_fog_found || !e.enabled() || (c.density <= 0.0f && !c.volumetric)) {
+          return;
+        }
+
+        is_fog_found = true;
+        auto sun_illuminance = glm::vec3(0.0f);
+        if ((self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) != 0) {
+          sun_illuminance = glm::vec3(self.directional_light.intensity);
+          // the lighting passes attenuate the sun the same way, and leave it whole without an atmosphere
+          if ((self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0) {
+            const auto sun_cos_theta = glm::clamp(self.directional_light.direction.y, -1.0f, 1.0f);
+            const auto min_radius = self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
+            const auto eye_radius = std::max(
+              self.camera_data.position.y * GPU::CAMERA_SCALE_UNIT + min_radius,
+              min_radius
+            );
+            sun_illuminance *= sun_transmittance(self.atmosphere, eye_radius, sun_cos_theta) *
+                               glm::smoothstep(-0.1f, 0.3f, sun_cos_theta);
+          }
+        }
+
+        self.camera_data.fog = GPU::HeightFog{
+          .ambient_radiance = c.albedo * std::max(c.ambient_intensity, 0.0f),
+          .density = c.density,
+          .sun_radiance = c.albedo * sun_illuminance * std::max(c.sun_scattering, 0.0f),
+          .height_falloff = std::max(c.height_falloff, 0.0f),
+          .sun_direction = self.directional_light.direction,
+          .base_height = self.scene.get_world_transform(e)[3].y,
+          .start_distance = std::max(c.start_distance, 0.0f),
+          .max_opacity = std::clamp(c.max_opacity, 0.0f, 1.0f),
+          .anisotropy = std::clamp(c.anisotropy, -0.95f, 0.95f),
+          .sky_distance = std::max(c.sky_distance, 0.0f),
+        };
+
+        constexpr auto VOLUMETRIC_NEAR = 0.25f;
+        if (c.volumetric && c.volumetric_distance > VOLUMETRIC_NEAR * 2.0f) {
+          self.camera_data.fog.volumetric_distance = c.volumetric_distance;
+          self.camera_data.fog.volumetric_near = VOLUMETRIC_NEAR;
+          // a different spot in each froxel every frame, which the history blend averages into a smooth result
+          const auto jitter_index = static_cast<u32>(self.renderer.render_context->num_frames % 64) + 1;
+          self.camera_data.fog.volumetric_jitter = {
+            radical_inverse(jitter_index, 2),
+            radical_inverse(jitter_index, 3),
+            radical_inverse(jitter_index, 5),
+          };
+          self.volumetric_fog_params = GPU::VolumetricFogParams{
+            .height_albedo = c.albedo,
+            .ambient_intensity = std::max(c.ambient_intensity, 0.0f),
+            .sun_illuminance = sun_illuminance * std::max(c.sun_scattering, 0.0f),
+            .local_light_scattering = std::max(c.local_light_scattering, 0.0f),
+            .history_weight = std::clamp(c.volumetric_history_weight, 0.0f, 0.98f),
+            .sky_ambient = (self.gpu_scene_flags & GPU::SceneFlags::HasSky) != 0 ? self.sky_data.ambient_color
+                                                                                 : BASE_AMBIENT_COLOR,
+            .horizon_darkening = glm::smoothstep(-0.1f, 0.3f, self.directional_light.direction.y),
+          };
+        }
+      });
+
+    ankerl::svector<f32, GPU::MAX_FOG_VOLUMES> fog_volume_distances = {};
+    if (self.camera_data.fog.volumetric_distance > 0.0f) {
+      // the froxels end at volumetric_distance, a volume past it is never drawn
+      auto froxel_camera = cam;
+      froxel_camera.far_clip = std::min(cam.far_clip, self.camera_data.fog.volumetric_distance);
+      const auto frustum = Camera::get_frustum(froxel_camera, cam.position);
+      self.scene.world
+        .query_builder<const TransformComponent, const FogVolumeComponent>() //
+        .build()
+        .each([&](flecs::entity e, const TransformComponent&, const FogVolumeComponent& c) {
+          if (!e.enabled() || c.density <= 0.0f) {
+            return;
+          }
+
+          const auto world = self.scene.get_world_transform(e);
+          if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+            return;
+          }
+
+          const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+          if (!bounds.is_on_frustum(frustum)) {
+            return;
+          }
+
+          const auto noise_frequency = c.noise_scale > 0.0f ? 1.0f / c.noise_scale : 0.0f;
+          const auto period = static_cast<f64>(GPU::FOG_NOISE_PERIOD);
+          auto noise_offset = glm::vec3(0.0f);
+          for (auto axis = 0; axis < 3; axis++) {
+            const auto cells = static_cast<f64>(c.wind[axis]) * static_cast<f64>(noise_frequency) * self.fog_noise_time;
+            // the noise drifts with the wind, so its lattice moves against it
+            noise_offset[axis] = static_cast<f32>(period - std::fmod(cells, period));
+          }
+
+          self.fog_volumes.push_back({
+            .world_to_volume = glm::inverse(world),
+            .albedo = c.albedo,
+            .density = c.density,
+            .emissive = c.emissive,
+            .edge_fade = std::clamp(c.edge_fade, 0.0f, 1.0f) * 0.5f,
+            .noise_offset = noise_offset,
+            .noise_frequency = noise_frequency,
+            .noise_strength = std::clamp(c.noise_strength, 0.0f, 1.0f),
+          });
+          fog_volume_distances.push_back(glm::distance(glm::clamp(cam.position, bounds.min, bounds.max), cam.position));
+        });
+    }
+
+    if (self.fog_volumes.size() > GPU::MAX_FOG_VOLUMES) {
+      if (!self.has_warned_fog_volume_limit) {
+        OX_LOG_WARN("more than {} fog volumes are visible, the farthest are skipped", GPU::MAX_FOG_VOLUMES);
+        self.has_warned_fog_volume_limit = true;
+      }
+
+      memory::ScopedStack stack;
+      auto order = stack.alloc<u32>(self.fog_volumes.size());
+      std::iota(order.begin(), order.end(), 0_u32);
+      const auto kept_end = order.begin() + GPU::MAX_FOG_VOLUMES;
+      std::nth_element(order.begin(), kept_end, order.end(), [&](const u32 a, const u32 b) {
+        return fog_volume_distances[a] < fog_volume_distances[b];
+      });
+      // ascending, so each kept volume moves down onto a slot that is already copied out or discarded
+      std::sort(order.begin(), kept_end);
+      for (auto i = 0_u32; i < GPU::MAX_FOG_VOLUMES; i++) {
+        self.fog_volumes[i] = self.fog_volumes[order[i]];
+      }
+
+      self.fog_volumes.resize(GPU::MAX_FOG_VOLUMES);
+    }
+
+    self.volumetric_fog_params.fog_volume_count = static_cast<u32>(self.fog_volumes.size());
+  }
 
   if (
     (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&
@@ -3126,6 +3751,98 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           glm::vec4(0, 1, 1, 1)
         );
       }
+    }
+  }
+
+  self.decals.clear();
+  {
+    struct PendingDecal {
+      i32 sort_order = 0;
+      u64 entity_id = 0;
+      GPU::Decal decal = {};
+    };
+
+    ankerl::svector<PendingDecal, 16> pending_decals = {};
+    const auto frustum = Camera::get_frustum(cam, cam.position);
+    self.scene.world
+      .query_builder<const TransformComponent, const DecalComponent>() //
+      .build()
+      .each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
+        if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
+          return;
+        }
+
+        auto material_index = 0_u32;
+        {
+          const auto asset = asset_man.get_asset(c.material);
+          if (!asset || asset->type != AssetType::Material) {
+            return;
+          }
+
+          material_index = SlotMap_decode_id(asset->material_id).index;
+        }
+
+        const auto world = self.scene.get_world_transform(e);
+        if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+          return;
+        }
+
+        const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+        if (!bounds.is_on_frustum(frustum)) {
+          return;
+        }
+
+        const auto angle_fade_start = glm::radians(std::clamp(c.angle_fade_start, 0.0f, 180.0f));
+        const auto angle_fade_end = std::max(
+          glm::radians(std::clamp(c.angle_fade_end, 0.0f, 180.0f)),
+          angle_fade_start
+        );
+        auto flags = GPU::DecalFlag::None;
+        if (c.affect_albedo) {
+          flags |= GPU::DecalFlag::AffectAlbedo;
+        }
+
+        if (c.affect_normal) {
+          flags |= GPU::DecalFlag::AffectNormal;
+        }
+
+        if (c.affect_metallic_roughness) {
+          flags |= GPU::DecalFlag::AffectMetallicRoughness;
+        }
+
+        if (c.affect_emissive) {
+          flags |= GPU::DecalFlag::AffectEmissive;
+        }
+
+        pending_decals.push_back({
+          .sort_order = c.sort_order,
+          .entity_id = static_cast<u64>(e.id()),
+          .decal = GPU::Decal{
+            .world_to_decal = glm::inverse(world),
+            .world_axis_z = glm::normalize(glm::vec3(world[2])),
+            .material_index = material_index,
+            .opacity = std::min(c.opacity, 1.0f),
+            .angle_fade_start_cos = std::cos(angle_fade_start),
+            .angle_fade_end_cos = std::cos(angle_fade_end),
+            .depth_fade = std::clamp(c.depth_fade, 0.0f, 0.5f),
+            .flags = flags,
+            .layer_mask = c.layer_mask,
+          },
+        });
+      });
+
+    std::ranges::sort(pending_decals, [](const PendingDecal& a, const PendingDecal& b) {
+      return a.sort_order != b.sort_order ? a.sort_order < b.sort_order : a.entity_id < b.entity_id;
+    });
+
+    if (pending_decals.size() > GPU::MAX_DECALS && !self.has_warned_decal_limit) {
+      OX_LOG_WARN("{} decals are visible, only the {} lowest sorted are drawn", pending_decals.size(), GPU::MAX_DECALS);
+      self.has_warned_decal_limit = true;
+    }
+
+    const auto decal_count = std::min<usize>(pending_decals.size(), GPU::MAX_DECALS);
+    for (const auto& pending : std::span(pending_decals).first(decal_count)) {
+      self.decals.push_back(pending.decal);
     }
   }
 

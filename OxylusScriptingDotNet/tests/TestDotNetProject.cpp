@@ -2,6 +2,8 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <string>
 
 #include "DotNetTestHelpers.hpp"
 #include "Scripting/DotNetProject.hpp"
@@ -46,6 +48,57 @@ TEST(DotNetProjectTest, MakesCSharpIdentifiers) {
   EXPECT_EQ(ox::to_csharp_identifier("space-shooter"), "SpaceShooter");
   EXPECT_EQ(ox::to_csharp_identifier("2048"), "_2048");
   EXPECT_EQ(ox::to_csharp_identifier("!!"), "Game");
+}
+
+TEST(DotNetProjectTest, WritesALaunchConfigOnlyWhenThereIsNone) {
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_launch_test";
+  auto error = std::error_code();
+  std::filesystem::remove_all(root, error);
+
+  const auto read_config = [&root] {
+    auto file = std::ifstream(root / ".vscode" / "launch.json", std::ios::binary);
+    return std::string(std::istreambuf_iterator<c8>(file), std::istreambuf_iterator<c8>());
+  };
+
+  ASSERT_TRUE(ox::write_scripts_launch_config(root).has_value());
+  EXPECT_NE(read_config().find("\"coreclr\""), std::string::npos);
+  EXPECT_NE(read_config().find(".oxeditor/managed"), std::string::npos);
+
+  write_text(root / ".vscode" / "launch.json", "mine");
+  ASSERT_TRUE(ox::write_scripts_launch_config(root).has_value());
+  EXPECT_EQ(read_config(), "mine");
+
+  std::filesystem::remove_all(root, error);
+}
+
+TEST(DotNetProjectTest, KeepsTheRiderConfigOnThisMachinesEditor) {
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_rider_test";
+  auto error = std::error_code();
+  std::filesystem::remove_all(root, error);
+
+  const auto config_path = root / ".run" / "Oxylus Editor.run.xml";
+  const auto read_config = [&config_path] {
+    auto file = std::ifstream(config_path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<c8>(file), std::istreambuf_iterator<c8>());
+  };
+
+  const auto editor = root / "Engine & Tools" / "OxylusEditor.exe";
+  ASSERT_TRUE(ox::write_scripts_rider_config(root, editor).has_value());
+  const auto config = read_config();
+  EXPECT_NE(config.find(R"(type="RunExe" factoryName=".NET Executable")"), std::string::npos);
+  EXPECT_NE(config.find(R"(<option name="RUNTIME_TYPE" value="coreclr" />)"), std::string::npos);
+  // forward slashes and XML escaped
+  EXPECT_NE(config.find("Engine &amp; Tools/OxylusEditor.exe\""), std::string::npos) << config;
+  EXPECT_EQ(config.find('\\'), std::string::npos) << config;
+
+  const auto written_at = std::filesystem::last_write_time(config_path);
+  ASSERT_TRUE(ox::write_scripts_rider_config(root, editor).has_value());
+  EXPECT_EQ(std::filesystem::last_write_time(config_path), written_at);
+
+  ASSERT_TRUE(ox::write_scripts_rider_config(root, root / "Moved" / "OxylusEditor.exe").has_value());
+  EXPECT_NE(read_config().find("Moved/OxylusEditor.exe\""), std::string::npos);
+
+  std::filesystem::remove_all(root, error);
 }
 
 // what the editor does with a project: write the csproj and props, build into the cache, load it next to its own
@@ -96,6 +149,9 @@ TEST_F(DotNetProjectBuildTest, BuildsAndLoadsAGeneratedProject) {
   ASSERT_TRUE(std::filesystem::exists(assembly)) << assembly.string();
   // the editor's copy is the one that loads, the build mustn't bring its own
   EXPECT_FALSE(std::filesystem::exists(output_dir() / "Oxylus.Scripting.dll"));
+  // what a debugger reads breakpoints from, next to the dll the loader looks beside
+  EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(assembly).replace_extension(".pdb")));
+  EXPECT_FALSE(scripting.is_debugger_attached());
 
   const auto loaded = scripting.load(
     {.kind = ox::DotNetHostKind::HostFxr, .path = assembly, .scripting_directory = binary_dir() / "managed"},
@@ -103,6 +159,7 @@ TEST_F(DotNetProjectBuildTest, BuildsAndLoadsAGeneratedProject) {
   );
   ASSERT_TRUE(loaded.has_value()) << loaded.error();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Warn), 0);
+  EXPECT_FALSE(scripting.is_debugger_attached());
 
   const auto& types = scripting.script_types;
   ASSERT_EQ(types.size(), 2);

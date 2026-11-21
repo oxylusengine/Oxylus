@@ -117,6 +117,7 @@ target("Oxylus")
         "plf_colony",
         "simdutf",
         "joltphysics",
+        "meshoptimizer",
         "glm",
         "toml++",
         "loguru",

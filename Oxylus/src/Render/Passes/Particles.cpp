@@ -12,6 +12,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/PushConstants.hpp"
+#include "Render/Utils/Samplers.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/Log.hpp"
 
@@ -715,7 +716,8 @@ auto RendererInstance::draw_particles(
     context.emitters_buffer,
     values.camera,
     values.materials,
-    context.depth_attachment
+    context.depth_attachment,
+    context.froxel_attachment
   ) = std::tuple_cat( //
     module
       .begin_rendering(
@@ -727,7 +729,8 @@ auto RendererInstance::draw_particles(
          {context.emitters_buffer, vir::Access::VertexRead},
          {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
          {values.materials, vir::Access::FragmentRead},
-         {context.depth_attachment, vir::Access::FragmentSampled}}
+         {context.depth_attachment, vir::Access::FragmentSampled},
+         {context.froxel_attachment, vir::Access::FragmentSampled}}
       )
       .with_name("particle billboards")
       .bind_graphics_pipeline(render_context.pipeline("particle_billboard"))
@@ -740,6 +743,8 @@ auto RendererInstance::draw_particles(
       .bind_buffer(0, 2, context.emitters_buffer)
       .bind_buffer(0, 3, values.camera)
       .bind_image(0, 4, context.depth_attachment)
+      .bind_image(0, 5, context.froxel_attachment)
+      .bind_sampler(0, 6, render_context.cached_sampler_handle(LinearSamplerClamped))
       .push_constant_address(0, values.materials)
       .draw_indirect(context.draw_cmd_buffer, 1)
       .end_rendering()
@@ -782,7 +787,8 @@ auto RendererInstance::draw_particles(
     values.camera,
     std::ignore,
     values.materials,
-    context.depth_attachment
+    context.depth_attachment,
+    context.froxel_attachment
   ) = std::tuple_cat( //
     module
       .begin_rendering(
@@ -795,7 +801,8 @@ auto RendererInstance::draw_particles(
          {values.camera, vir::Access::VertexUniformRead | vir::Access::FragmentUniformRead},
          {meshes, vir::Access::VertexRead},
          {values.materials, vir::Access::FragmentRead},
-         {context.depth_attachment, vir::Access::FragmentSampled}}
+         {context.depth_attachment, vir::Access::FragmentSampled},
+         {context.froxel_attachment, vir::Access::FragmentSampled}}
       )
       .with_name("particle meshes")
       .bind_graphics_pipeline(render_context.pipeline("particle_mesh"))
@@ -809,6 +816,8 @@ auto RendererInstance::draw_particles(
       .bind_buffer(0, 2, context.emitters_buffer)
       .bind_buffer(0, 3, values.camera)
       .bind_image(0, 4, context.depth_attachment)
+      .bind_image(0, 5, context.froxel_attachment)
+      .bind_sampler(0, 6, render_context.cached_sampler_handle(LinearSamplerClamped))
       .record_from(mesh_draws)
       .end_rendering()
   );

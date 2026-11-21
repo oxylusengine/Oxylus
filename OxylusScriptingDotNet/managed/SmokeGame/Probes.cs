@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Numerics;
 
 using Oxylus;
@@ -215,12 +217,56 @@ public sealed class ContentProbe : SceneBehaviour
 
 // a model's materials and one material's parameters, against the assets TestDotNetScene registers. It leaves the
 // material pointing at textures a, b and c, and gives them up again when it stops
+// a DecalComponent's material through Entity.Decal, against the material and texture TestDotNetScene registers for it
+public sealed class DecalProbe : SceneBehaviour
+{
+    public override void OnStart()
+    {
+        var paint = Assets.Find("Materials/decal_paint.mat");
+        var texture = Assets.Find("Textures/decal_not_a_material.png");
+        var decal = World.Spawn("Decal").Add<DecalComponent>();
+        var defaults = decal.Get<DecalComponent>();
+        Log.Info($"decal defaults opacity {defaults.Opacity:F2} mask {defaults.LayerMask} albedo {defaults.AffectAlbedo} material {defaults.Material.IsValid}");
+
+        decal.Decal.SetMaterial(paint);
+        Log.Info($"decal set {decal.Decal.Material == paint} refs {Assets.Info(paint).RefCount}");
+        decal.Decal.SetMaterial(paint);
+        Log.Info($"decal set again refs {Assets.Info(paint).RefCount}");
+
+        var plain = World.Spawn("Plain");
+        Log.Info($"decal refused texture {Throws(() => decal.Decal.SetMaterial(texture))} plain {Throws(() => plain.Decal.SetMaterial(paint))} " +
+                 $"kept {decal.Decal.Material == paint} refs {Assets.Info(paint).RefCount}");
+
+        decal.Decal.SetMaterial(default);
+        Log.Info($"decal cleared {decal.Decal.Material.IsValid} refs {Assets.Info(paint).RefCount}");
+
+        decal.Decal.SetMaterial(paint);
+        decal.Destruct();
+        Log.Info($"decal destroyed refs {Assets.Info(paint).RefCount}");
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+}
+
 public sealed class MaterialProbe : SceneBehaviour
 {
     AssetId stone;
     AssetId a;
     AssetId b;
     AssetId c;
+    AssetId d;
+    AssetId e;
 
     public override void OnStart()
     {
@@ -230,6 +276,8 @@ public sealed class MaterialProbe : SceneBehaviour
         a = Assets.Find("Textures/a.png");
         b = Assets.Find("Textures/b.png");
         c = Assets.Find("Textures/c.png");
+        d = Assets.Find("Textures/d.png");
+        e = Assets.Find("Textures/e.png");
 
         var listed = Assets.GetMaterials(model);
         Log.Info($"material list {listed.Length} stone first {listed.Length > 0 && listed[0] == stone}");
@@ -245,7 +293,14 @@ public sealed class MaterialProbe : SceneBehaviour
         Log.Info($"material read roughness {data.RoughnessFactor:F3} metallic {data.MetallicFactor:F3} normal {data.NormalScale:F2} " +
                  $"occlusion {data.OcclusionStrength:F2} alpha {data.AlphaMode} cutoff {data.AlphaCutoff:F2} sampling {data.SamplingMode} flip {data.FlipNormalY}");
         Log.Info($"material read albedo a {data.AlbedoTexture == a} normal c {data.NormalTexture == c} emissive {data.EmissiveTexture.IsValid}");
-        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material read transmission {data.TransmissionFactor:F3} ior {data.Ior:F3} thickness {data.ThicknessFactor:F3} doubleSided {data.DoubleSided}");
+        Log.Info($"material read attenuation {data.AttenuationColor.X:F2} {data.AttenuationColor.Y:F2} {data.AttenuationColor.Z:F2} " +
+                 $"distance {data.AttenuationDistance:F2} shading {data.ShadingModel}");
+        Log.Info($"material read water {data.WaterScatterColor.X:F3} {data.WaterScatterColor.Y:F3} {data.WaterScatterColor.Z:F3} " +
+                 $"flow {data.WaterFlow.X:F2} {data.WaterFlow.Y:F2} detail {data.WaterDetailScale:F3} shore {data.WaterShoreFade:F3}");
+        Log.Info($"material read transmission d {data.TransmissionTexture == d} thickness e {data.ThicknessTexture == e}");
+        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
 
         data.AlbedoColor = new Vector4(0.5f, 0.25f, 0.125f, 1.0f);
         data.UvSize = new Vector2(3.0f, 5.0f);
@@ -263,6 +318,19 @@ public sealed class MaterialProbe : SceneBehaviour
         data.AlbedoTexture = b;
         data.NormalTexture = a;
         data.EmissiveTexture = c;
+        data.DoubleSided = false;
+        data.TransmissionFactor = 0.25f;
+        data.Ior = 1.33f;
+        data.ThicknessFactor = 1.5f;
+        data.AttenuationColor = new Vector3(0.5f, 0.25f, 0.125f);
+        data.AttenuationDistance = 0.0f;
+        data.ShadingModel = ShadingModel.Standard;
+        data.WaterScatterColor = new Vector3(0.5f, 0.125f, 0.25f);
+        data.WaterFlow = new Vector2(0.25f, 0.125f);
+        data.WaterDetailScale = 0.25f;
+        data.WaterShoreFade = 0.375f;
+        data.TransmissionTexture = e;
+        data.ThicknessTexture = d;
         Assets.SetMaterial(stone, data);
 
         Assets.GetMaterial(stone, out var back);
@@ -272,17 +340,30 @@ public sealed class MaterialProbe : SceneBehaviour
         Log.Info($"material written roughness {back.RoughnessFactor:F3} metallic {back.MetallicFactor:F3} normal {back.NormalScale:F2} " +
                  $"occlusion {back.OcclusionStrength:F2} alpha {back.AlphaMode} cutoff {back.AlphaCutoff:F2} sampling {back.SamplingMode} flip {back.FlipNormalY}");
         Log.Info($"material written albedo b {back.AlbedoTexture == b} normal a {back.NormalTexture == a} emissive c {back.EmissiveTexture == c}");
-        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material written transmission {back.TransmissionFactor:F3} ior {back.Ior:F3} thickness {back.ThicknessFactor:F3} doubleSided {back.DoubleSided}");
+        Log.Info($"material written attenuation {back.AttenuationColor.X:F2} {back.AttenuationColor.Y:F2} {back.AttenuationColor.Z:F2} " +
+                 $"distance {back.AttenuationDistance:F2} shading {back.ShadingModel}");
+        Log.Info($"material written water {back.WaterScatterColor.X:F3} {back.WaterScatterColor.Y:F3} {back.WaterScatterColor.Z:F3} " +
+                 $"flow {back.WaterFlow.X:F2} {back.WaterFlow.Y:F3} detail {back.WaterDetailScale:F3} shore {back.WaterShoreFade:F3}");
+        Log.Info($"material written transmission e {back.TransmissionTexture == e} thickness d {back.ThicknessTexture == d}");
+        Log.Info($"material refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
 
         var wrongSlot = data;
         wrongSlot.NormalTexture = stone;
         var wrongMode = data;
         wrongMode.AlphaMode = (AlphaMode)9;
+        var wrongShading = data;
+        wrongShading.ShadingModel = (ShadingModel)9;
+        var wrongThickness = data;
+        wrongThickness.ThicknessTexture = stone;
         Log.Info($"material refused idle {Throws(() => Assets.SetMaterial(idle, data))} texture {Throws(() => Assets.SetMaterial(a, data))} " +
                  $"unknown {Throws(() => Assets.SetMaterial(default, data))} slot {Throws(() => Assets.SetMaterial(stone, wrongSlot))} " +
-                 $"mode {Throws(() => Assets.SetMaterial(stone, wrongMode))}");
+                 $"mode {Throws(() => Assets.SetMaterial(stone, wrongMode))} shading {Throws(() => Assets.SetMaterial(stone, wrongShading))} " +
+                 $"thickness {Throws(() => Assets.SetMaterial(stone, wrongThickness))}");
         Log.Info($"material unread idle {Assets.GetMaterial(idle, out _)} texture {Assets.GetMaterial(a, out _)} unknown {Assets.GetMaterial(default, out _)}");
-        Log.Info($"material refs after refusals a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material refs after refusals a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
     }
 
     public override void OnStop()
@@ -291,8 +372,11 @@ public sealed class MaterialProbe : SceneBehaviour
         data.AlbedoTexture = default;
         data.NormalTexture = default;
         data.EmissiveTexture = default;
+        data.TransmissionTexture = default;
+        data.ThicknessTexture = default;
         Assets.SetMaterial(stone, data);
-        Log.Info($"material cleared refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount}");
+        Log.Info($"material cleared refs a {Assets.Info(a).RefCount} b {Assets.Info(b).RefCount} c {Assets.Info(c).RefCount} " +
+                 $"d {Assets.Info(d).RefCount} e {Assets.Info(e).RefCount}");
     }
 
     static bool Throws(Action action)
@@ -303,6 +387,86 @@ public sealed class MaterialProbe : SceneBehaviour
             return false;
         }
         catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+}
+
+// a scene without a renderer: materials are made, models are refused for what they are given and then for the renderer
+public sealed class RuntimeAssetProbe : SceneBehaviour
+{
+    public override void OnStart()
+    {
+        var made = new MaterialData
+        {
+            AlbedoColor = new Vector4(0.75f, 0.5f, 0.25f, 1.0f),
+            UvSize = Vector2.One,
+            RoughnessFactor = 0.5f,
+            NormalScale = 1.0f,
+            OcclusionStrength = 1.0f,
+        };
+        var material = Assets.CreateMaterial(made);
+        var info = Assets.Info(material);
+        var isRead = Assets.GetMaterial(material, out var back);
+        Log.Info($"runtime material {info.Type} loaded {info.IsLoaded} refs {info.RefCount} read {isRead} " +
+                 $"color {back.AlbedoColor.X:F2} {back.AlbedoColor.Y:F2} {back.AlbedoColor.Z:F2} roughness {back.RoughnessFactor:F2}");
+
+        var wrongMode = made;
+        wrongMode.AlphaMode = (AlphaMode)9;
+        Log.Info($"runtime material refused mode {Throws(() => Assets.CreateMaterial(wrongMode))}");
+
+        var positions = new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY };
+        var normals = new[] { Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ };
+        var texCoords = new[] { Vector2.Zero, Vector2.UnitX, Vector2.UnitY };
+        var triangle = new uint[] { 0, 1, 2 };
+        var outOfRange = new uint[] { 0, 1, 3 };
+        var partial = new uint[] { 0, 1 };
+        var texture = Assets.Find("Textures/runtime.png");
+        Log.Info($"runtime model refused range {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = outOfRange }))} " +
+                 $"partial {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = partial }))} " +
+                 $"empty {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions }))} " +
+                 $"material {Throws(() => Assets.CreateModel(new MeshSource { Positions = positions, Indices = triangle, Material = texture }))} " +
+                 $"normals {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals.AsSpan(0, 2), Indices = triangle }))} " +
+                 $"texcoords {ThrowsArgument(() => Assets.CreateModel(new MeshSource { Positions = positions, TexCoords = texCoords.AsSpan(0, 2), Indices = triangle }))}");
+        Log.Info($"runtime model without renderer: {Refusal(() => Assets.CreateModel(new MeshSource { Positions = positions, Normals = normals, Indices = triangle, Material = material }))}");
+        Log.Info($"runtime model destroy refused material {Throws(() => Assets.DestroyModel(material))} unknown {Throws(() => Assets.DestroyModel(default))}");
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    static string Refusal(Action action)
+    {
+        try
+        {
+            action();
+            return "none";
+        }
+        catch (InvalidOperationException e)
+        {
+            return e.Message;
+        }
+    }
+
+    static bool ThrowsArgument(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (ArgumentException)
         {
             return true;
         }
@@ -1193,5 +1357,82 @@ public sealed class FieldProbe : FieldProbeMiddle<int>
         ticks++;
         shared += Limit + Auto;
         _ = (nothing, noNumbers, missing, locked, hiddenMode, point, hidden, thrower, entity, map, set, list, numbers, text, longText, position, ratio, isReady, mode, maybe);
+    }
+}
+
+// what a debugger shows for the handles, logged while the scene runs
+public sealed class DebugViewProbe : SceneBehaviour
+{
+    public static Entity Debugged;
+    public static World DebuggedWorld;
+
+    Entity gone;
+
+    public override void OnAdd()
+    {
+        Debugged = World.CreateEntity("Debugged");
+        DebuggedWorld = World;
+        World.CreateEntity("Kid").ChildOf(Debugged);
+        Debugged.Add<TransformComponent>();
+        Debugged.Set(new Velocity { Value = new Vector3(1.0f, 2.0f, 3.0f) });
+        Debugged.Add<Expired>();
+        Debugged.AddBehaviour<Spinner>();
+        gone = World.CreateEntity("Gone");
+        gone.Destruct();
+    }
+
+    public override void OnStart()
+    {
+        var view = new EntityDebugView(Debugged);
+        var kid = World.Lookup("Debugged.Kid");
+        var kidView = new EntityDebugView(kid);
+        var goneView = new EntityDebugView(gone);
+        var worldView = new WorldDebugView(World);
+
+        Say($"DebugView.Display {Debugged.DebuggerDisplay}");
+        Say($"DebugView.Status {view.Status} name={view.Name} path={view.Path}");
+        Say($"DebugView.Kid parent={kidView.Parent?.Name}");
+        Say($"DebugView.Children {view.Children.Length}");
+        var components = view.Components;
+        var isTransform = components.Any(component => component.Name == nameof(TransformComponent) && component.Kind == ComponentKind.Value);
+        var isIdentifier = components.Any(component => component.Name.StartsWith("(Identifier", StringComparison.Ordinal));
+        Say($"DebugView.Components transform={isTransform} identifier={isIdentifier}");
+        Say($"DebugView.Values {string.Join(",", components.Select(component => component.Display))}");
+        Say($"DebugView.KidComponents {string.Join(",", kidView.Components.Select(component => component.Display))}");
+        var transform = components.FirstOrDefault(component => component.Name == nameof(TransformComponent));
+        Say($"DebugView.Transform present={transform is not null} value={transform?.Value is not null}");
+        var velocity = components.FirstOrDefault(component => component.Name == nameof(Velocity));
+        var velocityValue = (Velocity)velocity!.Value!;
+        Say($"DebugView.Velocity {velocityValue.Value.X} {velocityValue.Value.Y} {velocityValue.Value.Z}");
+        var expired = components.FirstOrDefault(component => component.Name == nameof(Expired));
+        Say($"DebugView.Expired tag={expired?.Kind == ComponentKind.Tag} value={expired?.Value is null}");
+        string display;
+        try
+        {
+            display = velocity.Display;
+        }
+        catch
+        {
+            display = "threw";
+        }
+
+        Say($"DebugView.Display {(display == "threw" ? "threw" : "fine")}");
+        Say($"DebugView.Behaviour {view.Behaviour?.DebuggerDisplay}");
+        Say($"DebugView.None {default(Entity).DebuggerDisplay}");
+        Say($"DebugView.Gone {gone.DebuggerDisplay} {goneView.Status}");
+        Say($"DebugView.World {World.DebuggerDisplay} scripts={worldView.Scripts.Length} behaviours={worldView.Behaviours.Length}");
+    }
+
+    internal static void Say(FormattableString message) => Log.Info(message.ToString(CultureInfo.InvariantCulture));
+}
+
+// runs in a scene made after DebugViewProbe's scene is gone, whose handles it still holds
+public sealed class DebugViewLateProbe : SceneBehaviour
+{
+    public override void OnAdd()
+    {
+        var view = new EntityDebugView(DebugViewProbe.Debugged);
+        DebugViewProbe.Say($"DebugViewLate.Entity {DebugViewProbe.Debugged.DebuggerDisplay} {view.Status}");
+        DebugViewProbe.Say($"DebugViewLate.World {DebugViewProbe.DebuggedWorld.DebuggerDisplay}");
     }
 }

@@ -72,6 +72,9 @@ func compute_luma_instability_factor(
 [[numthreads(8, 8, 1)]]
 func cs_main(u32x3 thread_id : SV_DispatchThreadID) -> void {
     let px_pos = i32x2(thread_id.xy);
+    if (!fsr3_is_on_screen(px_pos, params.constants.render_size)) {
+        return;
+    }
     let exposure = params.exposure.value();
 
     LumaInstabilityFactorData data;

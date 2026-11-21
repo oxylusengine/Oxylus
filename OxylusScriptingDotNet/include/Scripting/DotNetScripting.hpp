@@ -84,6 +84,9 @@ struct DotNetScripting {
     -> std::expected<void, std::string>;
   auto unload(this DotNetScripting& self) -> void;
   auto is_loaded(this const DotNetScripting& self) -> bool;
+  auto is_debugger_attached(this const DotNetScripting& self) -> bool;
+  // asks the system's just-in-time debugger to attach and blocks until that settles, false when none attached
+  auto launch_debugger(this const DotNetScripting& self) -> bool;
 
   // resolves the C# components in `world`, checks their layouts and registers the C# systems. Detach before the world
   // is destroyed. `component_db` is where components defined in C# register, so a scene serializes them. Scenes do

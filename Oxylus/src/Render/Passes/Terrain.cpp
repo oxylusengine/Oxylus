@@ -11,6 +11,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Utils/Log.hpp"
 
@@ -39,6 +40,7 @@ auto RendererInstance::bind_terrain_variables(
   }
 
   auto& terrain = *self.scene.terrain;
+  const auto* layer = self.scene.terrain_entity ? self.scene.terrain_entity.try_get<LayerComponent>() : nullptr;
   program.set_bytes(
     variables.data,
     GPU::TerrainData{
@@ -54,6 +56,7 @@ auto RendererInstance::bind_terrain_variables(
       .triplanar_begin = terrain.triplanar_begin,
       .layer_material_indices = terrain.layer_material_indices,
       .brush_radius = self.frame_params.is_terrain_brush_active ? terrain.brush.radius_world : 0.0f,
+      .layer_mask = layer ? static_cast<u32>(layer->layer) : 1_u32,
     }
   );
 
@@ -471,6 +474,8 @@ auto RendererInstance::decode_terrain(
   std::tie(
     values.camera,
     values.materials,
+    values.decals,
+    values.decal_tiles,
     context.terrain_buffer,
     context.brush_hit_buffer,
     context.visbuffer_attachment,
@@ -487,6 +492,8 @@ auto RendererInstance::decode_terrain(
       .begin_rendering(
         {{values.camera, vir::Access::FragmentUniformRead},
          {values.materials, vir::Access::FragmentRead},
+         {values.decals, vir::Access::FragmentRead},
+         {values.decal_tiles, vir::Access::FragmentRead},
          {context.terrain_buffer, vir::Access::FragmentUniformRead},
          {context.brush_hit_buffer, vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::FragmentSampled},
@@ -512,6 +519,9 @@ auto RendererInstance::decode_terrain(
       .bind_image(0, 6, context.splatmap_attachment)
       .bind_sampler(0, 7, render_context.cached_sampler_handle(LinearSamplerClamped))
       .bind_buffer(0, 8, context.brush_hit_buffer)
+      .push_constant_address(0, values.decals)
+      .push_constant_address(8, values.decal_tiles)
+      .push_constants_from_at(16, recording.prepared.decal_count)
       .draw_range(3, 1, 0, 1)
       .end_rendering()
   );

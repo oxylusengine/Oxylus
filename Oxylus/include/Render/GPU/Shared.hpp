@@ -130,6 +130,10 @@ enum class DebugView : i32 {
   SSSRConfidence,
   SSSRVariance,
   SSSRSampleCount,
+  TransparencyCoverage,
+  Refractors,
+  RefractorDepth,
+  ReactiveMask,
   RTGIHalfRes,
   RTGIRaw,
   RTGIDenoised,
@@ -154,8 +158,18 @@ enum class MaterialFlag : u32 {
   AlphaOpaque = 1 << 7,
   AlphaMask = 1 << 8,
   AlphaBlend = 1 << 9,
+  DoubleSided = 1 << 10,
+  HasTransmissionImage = 1 << 11,
+  HasThicknessImage = 1 << 12,
+  Water = 1 << 13,
 };
 OX_BITMASK(MaterialFlag)
+
+enum class MaterialClass : u32 {
+  Opaque = 0,
+  Blend = 1,
+  Refractor = 2,
+};
 
 struct Material {
   u16x4 albedo_color = {};
@@ -174,6 +188,17 @@ struct Material {
   u32 occlusion_image_index = 0;
   u16x2 uv_size = {};
   u16x2 uv_offset = {};
+  u16 transmission_factor = 0;
+  u16 ior = 0;
+  u16 thickness_factor = 0;
+  u16 attenuation_distance = 0;
+  u16x3 attenuation_color = {};
+  u16 water_detail_scale = 0;
+  u16x3 water_scatter_color = {};
+  u16 water_shore_fade = 0;
+  u16x2 water_flow = {};
+  u32 transmission_image_index = 0;
+  u32 thickness_image_index = 0;
 };
 
 struct MeshletInstanceVisibility {
@@ -183,6 +208,10 @@ struct MeshletInstanceVisibility {
   u32 early_visible_meshlet_instances = 0;
   // Same as above, but if requested (used for two pass occlusion tests)
   u32 late_visible_meshlet_instances = 0;
+  u32 total_blend_meshlet_instances = 0;
+  u32 total_refractor_meshlet_instances = 0;
+  u32 visible_blend_meshlet_instances = 0;
+  u32 visible_refractor_meshlet_instances = 0;
 };
 
 struct MeshletInstance {
@@ -221,6 +250,8 @@ struct MeshInstance {
   // table. Meaningless unless `skinned_vertex_positions` is set
   u32 skinned_instance_index = 0;
   MeshInstanceFlag flags = MeshInstanceFlag::None;
+  // the entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
   // per-instance override of the mesh's bind-pose vertex data, written by the skinning pass, and
   // zero for a static instance so the mesh's own pointers and bounds are used
   OX_PTR(u16x4) skinned_vertex_positions = {};
@@ -265,6 +296,74 @@ struct Sky {
   u32 has_texture = 0;
 };
 
+// exponential in height, so a ray's optical depth through it has a closed form
+struct HeightFog {
+  f32x3 ambient_radiance = {};
+  // 0 when the scene has no fog
+  f32 density = 0.0f;
+  // the sun's illuminance after the atmosphere, times albedo and the scattering scale
+  f32x3 sun_radiance = {};
+  f32 height_falloff = 0.0f;
+  // toward the sun
+  f32x3 sun_direction = {};
+  f32 base_height = 0.0f;
+  f32 start_distance = 0.0f;
+  f32 max_opacity = 1.0f;
+  f32 anisotropy = 0.0f;
+  f32 sky_distance = 0.0f;
+  // view depth the froxels reach, 0 without volumetric fog. The analytic fog only starts past it
+  f32 volumetric_distance = 0.0f;
+  f32 volumetric_near = 0.0f;
+  // where in its froxel this frame samples, in [0, 1). Fog injection and the shadow page marking both read it
+  f32x3 volumetric_jitter = {};
+  u32x3 pad = {};
+};
+
+// --- Volumetric fog ---
+
+OX_CONST u32 FROXEL_TILE_SIZE = 8;
+OX_CONST u32 FROXEL_DEPTH_SLICES = 64;
+// one texel past the last slice holds each column's ambient at the far end, for the analytic fog beyond it
+OX_CONST u32 FROXEL_DEPTH_TEXELS = FROXEL_DEPTH_SLICES + 1;
+OX_CONST u32 MAX_FOG_VOLUMES = 64;
+// the volume noise repeats every this many cells, so its drift can wrap without a jump
+OX_CONST u32 FOG_NOISE_PERIOD = 256;
+
+struct FogVolume {
+  // world to the unit box [-0.5, 0.5]^3
+  mat4 world_to_volume = {};
+  f32x3 albedo = {};
+  f32 density = 0.0f;
+  f32x3 emissive = {};
+  // in box space, 0.5 fades over the whole half size
+  f32 edge_fade = 0.0f;
+  // where the wind has carried the noise, in noise cells and wrapped to FOG_NOISE_PERIOD
+  f32x3 noise_offset = {};
+  // noise cells per meter, 0 without noise
+  f32 noise_frequency = 0.0f;
+  f32 noise_strength = 0.0f;
+  u32x3 pad = {};
+};
+
+struct VolumetricFogParams {
+  // the height fog's albedo, which HeightFog folds into its radiances
+  f32x3 height_albedo = {};
+  // scales the probe or sky light the fog scatters
+  f32 ambient_intensity = 0.0f;
+  // the sun after the atmosphere, times the scattering scale, before any albedo
+  f32x3 sun_illuminance = {};
+  f32 local_light_scattering = 0.0f;
+  u32x3 grid_size = {};
+  f32 history_weight = 0.0f;
+  // the ambient without an atmosphere or probes, the scene's sky ambient or the renderer's base one
+  f32x3 sky_ambient = {};
+  u32 fog_volume_count = 0;
+  u32 is_history_valid = 0;
+  // the lighting passes dim the sky's light by the same amount as the sun sets
+  f32 horizon_darkening = 0.0f;
+  u32x2 pad = {};
+};
+
 struct Camera {
   f32x4 position = {};
 
@@ -298,6 +397,7 @@ struct Camera {
   f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
   // negative when upscaling, so material textures keep display resolution detail
   f32 texture_mip_bias = 0.0f;
+  HeightFog fog = {};
 };
 
 struct CullCamera {
@@ -310,6 +410,7 @@ struct CullCamera {
   // only the main geometry pass sets this, culling and shadow users leave it zero
   f32x2 jitter = {};
   f32 texture_mip_bias = {};
+  u32 meshlet_instance_capacity = {};
 };
 
 // --- Lights ---
@@ -351,9 +452,40 @@ struct Light {
   f32 inner_cone_angle = 0.0f; // spot only (radians)
   f32 outer_cone_angle = 0.0f; // spot only (radians)
   LightKind kind = LightKind::Point;
-  // -1 disables shadows
+  // -1 disables virtual shadow maps
   i32 shadow_map_index = -1;
-  u32 pad = 0;
+  f32 contact_shadow_strength = 0.0f;
+};
+
+// --- Decals ---
+
+OX_CONST u32 MAX_DECALS = 256;
+// one cull thread per pixel of a tile and one per decal, so a tile has as many pixels as there are decals
+OX_CONST u32 DECAL_TILE_SIZE = 16;
+OX_CONST u32 DECAL_TILE_WORDS = MAX_DECALS / 32;
+
+enum class DecalFlag : u32 {
+  None = 0,
+  AffectAlbedo = 1 << 0,
+  AffectNormal = 1 << 1,
+  AffectMetallicRoughness = 1 << 2,
+  AffectEmissive = 1 << 3,
+};
+OX_BITMASK(DecalFlag)
+
+struct Decal {
+  // world to the unit box [-0.5, 0.5]^3, which projects along its -z
+  mat4 world_to_decal = {};
+  f32x3 world_axis_z = {};
+  u32 material_index = 0;
+  f32 opacity = 1.0f;
+  f32 angle_fade_start_cos = 0.0f;
+  f32 angle_fade_end_cos = 0.0f;
+  // in box space, so 0.5 fades over the whole half depth
+  f32 depth_fade = 0.0f;
+  DecalFlag flags = DecalFlag::None;
+  u32 layer_mask = ~0u;
+  u32x2 pad = {};
 };
 
 // --- DDGI ---
@@ -487,7 +619,8 @@ enum class SceneFlags : u32 {
   HasTemporalUpscaler = 1 << 17,
   HasSSSR = 1 << 18,
   HasColorGrading = 1 << 19,
-  HasRTGI = 1 << 20,
+  HasLocalContactShadows = 1 << 20,
+  HasRTGI = 1 << 21,
 };
 OX_BITMASK(SceneFlags)
 
@@ -675,6 +808,20 @@ struct VSMContext {
   f32x3 directional_light_dir = {};
 };
 
+OX_CONST u32 CONTACT_SHADOW_MAX_STEPS = 64;
+
+struct ContactShadowTraceSettings {
+  f32x3 depth_unpack = {};
+  f32 length_ws = 0.0f;
+  f32 thickness = 0.0f;
+  u32 steps = 0;
+};
+
+struct ContactShadowSettings {
+  f32x4 light_clip = {};
+  ContactShadowTraceSettings trace = {};
+};
+
 struct PBRLighting {
   VSMContext vsm = {};
   f32x3 sun_direction = {};
@@ -683,10 +830,11 @@ struct PBRLighting {
   u32 light_count = 0;
   f32x3 light_grid_origin = {};
   u32 vsm_mip_bias_min = 0;
-  u32 contact_shadow_steps = 0;
-  f32 contact_shadow_thickness = 0.0f;
-  f32 contact_shadow_length = 0.0f;
   u32 frame_index = 0;
+  // seconds, wrapped hourly so f32 keeps sub-millisecond precision
+  f32 time = 0.0f;
+  ContactShadowTraceSettings contact_shadows = {};
+  f32 sun_contact_shadow_strength = 0.0f;
 };
 
 struct VirtualClipmap {
@@ -703,6 +851,12 @@ enum class CullFlag : u32 {
   LatePass = 1 << 3,
   // drops instances without `MeshInstanceFlag::CastShadows`, for the shadow map passes
   ShadowCastersOnly = 1 << 4,
+  RouteBlend = 1 << 5,
+  RouteRefractors = 1 << 6,
+  // the cull pass processes a transparent list instead of the opaque one
+  Transparent = 1 << 7,
+  // with `Transparent`, selects the refractor list, otherwise the blend list
+  RefractorList = 1 << 8,
 
   TestAll = (1 << 0) | (1 << 1) | (1 << 2),
 };
@@ -833,6 +987,8 @@ struct TerrainData {
   f32 triplanar_begin = 0.5f;
   u32x4 layer_material_indices = u32x4(TERRAIN_INVALID_LAYER_MATERIAL);
   f32 brush_radius = 0.0f;
+  // the terrain entity's LayerComponent bits, matched against decal layer masks
+  u32 layer_mask = 1;
 };
 
 // --- 2D ---

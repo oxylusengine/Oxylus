@@ -19,6 +19,7 @@ struct TransformComponent {
   }
 };
 
+// a bitmask, bit 0 is the default layer
 struct LayerComponent {
   u16 layer = 1;
 };
@@ -198,12 +199,79 @@ struct LightComponent {
   f32 clipmap_selection_bias = -0.5f;
 };
 
+// enables screen-space contact shadows for the light on this entity
+struct ContactShadowsComponent {
+  f32 strength = 1.0f;
+};
+
 struct ProbeVolumeComponent {
   glm::uvec3 probe_counts = {32, 32, 32};
   glm::vec3 probe_range = {64.0f, 64.0f, 64.0f};
   u32 cascade_count = 6;
   f32 cascade_blend = 0.3f;
   bool follow_camera = true;
+};
+
+// projects `material` along the entity's -Z through a unit box scaled by its transform
+struct DecalComponent {
+  UUID material = {};
+  f32 opacity = 1.0f;
+  // higher draws over lower
+  i32 sort_order = 0;
+  // degrees between the surface normal and the decal's +Z
+  f32 angle_fade_start = 60.0f;
+  f32 angle_fade_end = 80.0f;
+  // fraction of the box depth faded out at its front and back
+  f32 depth_fade = 0.1f;
+  // only lands on entities whose LayerComponent shares a bit with this
+  u16 layer_mask = ~0_u16;
+  bool affect_albedo = true;
+  bool affect_normal = true;
+  bool affect_metallic_roughness = true;
+  bool affect_emissive = false;
+};
+
+// the first enabled one in the scene applies, its densest point is the entity's world height
+struct HeightFogComponent {
+  // extinction per meter at the base height
+  f32 density = 0.02f;
+  // per meter above the base, the fog thins by 1/e every 1 / falloff meters
+  f32 height_falloff = 0.2f;
+  // tints everything the fog scatters
+  glm::vec3 albedo = {0.8f, 0.85f, 0.9f};
+  // radiance the fog scatters toward the eye from the sky, before albedo
+  f32 ambient_intensity = 1.0f;
+  f32 sun_scattering = 1.0f;
+  // Henyey-Greenstein g, positive glows toward the sun
+  f32 anisotropy = 0.6f;
+  f32 start_distance = 0.0f;
+  f32 max_opacity = 1.0f;
+  // the sky is fogged as if it were this far away, 0 leaves it clear
+  f32 sky_distance = 5000.0f;
+  // froxel fog out to volumetric_distance, with shadowed sunlight, point and spot lights and FogVolumeComponents.
+  // the analytic fog takes over past it
+  bool volumetric = false;
+  f32 volumetric_distance = 96.0f;
+  // share of the previous frame kept, higher is smoother and slower to follow changes
+  f32 volumetric_history_weight = 0.9f;
+  f32 local_light_scattering = 1.0f;
+};
+
+// more fog inside the entity's unit box scaled by its transform, drawn only by volumetric HeightFogComponent fog
+struct FogVolumeComponent {
+  // extinction per meter
+  f32 density = 0.1f;
+  glm::vec3 albedo = {1.0f, 1.0f, 1.0f};
+  // light the fog gives off per meter, for glowing smoke or mist
+  glm::vec3 emissive = {0.0f, 0.0f, 0.0f};
+  // fraction of the box faded in from each face
+  f32 edge_fade = 0.2f;
+  // world size of the noise's features, 0 keeps the box uniform
+  f32 noise_scale = 4.0f;
+  // 0 leaves the density whole, 1 carves the box into separate wisps
+  f32 noise_strength = 0.6f;
+  // meters per second the noise drifts through the box
+  glm::vec3 wind = {0.5f, 0.0f, 0.2f};
 };
 
 struct SkyComponent {
@@ -416,7 +484,8 @@ struct CylinderColliderComponent {
   f32 restitution = 0.0f;
 };
 
-// Collides against the triangles of the entity's MeshComponent. Jolt's triangle mesh shape has no
+// Collides against the triangles of the entity's MeshComponent, or on an entity without one (a spawned
+// model's root), of the MeshComponents of its children. Jolt's triangle mesh shape has no
 // inertia, so it only works on a Static or Kinematic body: set `convex` for a Dynamic one and the
 // mesh is replaced by its convex hull.
 struct MeshColliderComponent {

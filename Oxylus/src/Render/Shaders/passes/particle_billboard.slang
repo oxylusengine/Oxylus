@@ -2,6 +2,7 @@ import common;
 import gpu;
 import scene;
 import particles;
+import fog;
 
 #include <defines.slang>
 
@@ -15,6 +16,8 @@ struct PushConstants {
 [[vk::binding(2, 0)]] StructuredBuffer<ParticleEmitter> emitters;
 [[vk::binding(3, 0)]] ConstantBuffer<Camera> camera;
 [[vk::binding(4, 0)]] Texture2D<f32> depth_image;
+[[vk::binding(5, 0)]] Texture3D<f32x4> froxels;
+[[vk::binding(6, 0)]] SamplerState froxel_sampler;
 
 struct VOutput {
     f32x4 position : SV_Position;
@@ -154,8 +157,14 @@ FragmentOutput fs_main(VOutput input) {
     let coverage = color.a;
 
     color.rgb *= color.a;
+    // what lies behind is already fogged. An additive particle covers nothing, so it only loses light to the fog
+    let screen_uv = input.position.xy / max(camera.resolution, f32x2(1.0));
+    let fog = evaluate_fog(camera, camera.unproject_uv(screen_uv, input.position.z), screen_uv, froxels, froxel_sampler);
+    color.rgb *= fog.transmittance;
     if (HAS_FLAG(input.flags, ParticleEmitterFlags.Additive)) {
         color.a = 0.0;
+    } else {
+        color.rgb += fog.inscatter * color.a;
     }
 
     FragmentOutput output;

@@ -63,9 +63,7 @@ func record_probe_hit_distance(
         let backface_triangle = resolve_ray_triangle(geometry, instance_id, primitive_index);
         var is_two_sided = false;
         if (backface_triangle.valid) {
-            let material_flags = materials[backface_triangle.material_index].flags;
-            is_two_sided = ((material_flags & MaterialFlag::AlphaMask) != 0) ||
-                           ((material_flags & MaterialFlag::AlphaBlend) != 0);
+            is_two_sided = materials[backface_triangle.material_index].is_double_sided();
         }
 
         if (!is_two_sided) {

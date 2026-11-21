@@ -46,6 +46,7 @@
 #include "Physics/Physics.hpp"
 #include "Physics/PhysicsInterfaces.hpp"
 #include "Physics/PhysicsMaterial.hpp"
+#include "Render/AccelerationStructure.hpp"
 #include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
@@ -785,6 +786,17 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  // the layer bits are copied into the mesh instance, so a layer edit reattaches the mesh
+  self.world.observer<LayerComponent, MeshComponent>()
+    .term_at<MeshComponent>()
+    .filter()
+    .event(flecs::OnSet)
+    .each([&self](flecs::iter& it, usize i, LayerComponent&, MeshComponent& mc) {
+      if (mc.model_uuid) {
+        self.attach_mesh(it.entity(i), mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+      }
+    });
+
   // the general TransformComponent observer above owns world-transform propagation, so this one
   // only refreshes mesh-local derived data, with MeshComponent a filter so mesh edits do not run it
   self.world.observer<TransformComponent, MeshComponent>()
@@ -921,6 +933,12 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         App::mod<AssetManager>().unload_asset(c.lut);
       }
     });
+
+  self.world.observer<DecalComponent>().event(flecs::OnRemove).each([](flecs::iter&, usize, DecalComponent& c) {
+    if (c.material) {
+      App::mod<AssetManager>().unload_asset(c.material);
+    }
+  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -1685,6 +1703,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
         gpu_mesh_instance.flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows
                                                              : GPU::MeshInstanceFlag::None;
+        gpu_mesh_instance.layer_mask = mesh_instance.layer_mask;
 
         const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
         mesh_slot_to_gpu_index[static_cast<u32>(index)] = gpu_index;
@@ -1785,6 +1804,13 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // instead of being captured once at rebuild
     {
       auto& render_context = App::get_rendercontext();
+      // static structures are built only once something traces against the TLAS, and a mesh still
+      // without one keeps address zero, which leaves its instances out of the TLAS
+      const auto is_tracing = render_context.use_ray_tracing() &&
+                              self.renderer_instance->tlas_has_consumer(self.renderer_cvar);
+      auto build_budget = StaticBLASBudget{
+        .triangle_budget = static_cast<u64>(std::max(0, self.renderer_cvar.cvar_rt_static_build_budget.get())),
+      };
       auto cached_model_id = ModelID::Invalid;
       auto cached_model = ReadGuard<Model>();
       for (const auto& [source, address] : std::views::zip(mesh_sources, blas_addresses)) {
@@ -1794,10 +1820,13 @@ auto Scene::prepare_render(this Scene& self) -> void {
           cached_model_id = source.model_id;
         }
 
-        address = cached_model && source.mesh_node_index < cached_model->mesh_blases.size()
-                    ? render_context.acceleration_structure(cached_model->mesh_blases[source.mesh_node_index])
-                        .device_address
-                    : 0_u64;
+        address = cached_model ? AssetManager::resolve_mesh_blas(
+                                   render_context,
+                                   *cached_model.value,
+                                   source.mesh_node_index,
+                                   is_tracing ? &build_budget : nullptr
+                                 )
+                               : 0_u64;
       }
     }
     // Upload this frame's dirty transforms plus last frame's: the `previous_world` fix-up below
@@ -2987,6 +3016,7 @@ auto Scene::attach_mesh(
     self.meshes_dirty = true;
   }
 
+  const auto* layer = entity.try_get<LayerComponent>();
   auto instance_id = self.mesh_instances.create_slot(
     MeshInstance{
       .model_uuid = model_uuid,
@@ -2995,6 +3025,7 @@ auto Scene::attach_mesh(
       .transform_id = transform_id,
       .animator_entity = animator_entity ? animator_entity.id() : 0,
       .cast_shadows = cast_shadows,
+      .layer_mask = layer ? static_cast<u32>(layer->layer) : 1_u32,
     }
   );
   self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);
@@ -3264,36 +3295,23 @@ auto build_mesh_collider_shape(
 ) -> JPH::ShapeSettings::ShapeResult {
   ZoneScoped;
 
-  const auto* mesh_component = entity.try_get<MeshComponent>();
-  if (!mesh_component) {
-    OX_LOG_ERROR("MeshColliderComponent on '{}' needs a MeshComponent to take triangles from.", entity.name().c_str());
-    return {};
+  // a spawned model's root has no mesh of its own, so it takes the triangles of every mesh entity right below it
+  auto mesh_entities = ankerl::svector<flecs::entity, 4>();
+  if (entity.has<MeshComponent>()) {
+    mesh_entities.push_back(entity);
+  } else {
+    entity.children([&mesh_entities](flecs::entity child) {
+      if (child.has<MeshComponent>()) {
+        mesh_entities.push_back(child);
+      }
+    });
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  auto model = asset_man.get_model(mesh_component->model_uuid);
-  if (!model) {
-    OX_LOG_ERROR("MeshColliderComponent on '{}' has no loaded model.", entity.name().c_str());
-    return {};
-  }
-
-  if (mesh_component->mesh_index >= model->collision_meshes.size()) {
+  if (mesh_entities.empty()) {
     OX_LOG_ERROR(
-      "MeshColliderComponent on '{}' points at mesh {}, which does not exist.",
-      entity.name().c_str(),
-      mesh_component->mesh_index
+      "MeshColliderComponent on '{}' needs a MeshComponent on it or on its children to take triangles from.",
+      entity.name().c_str()
     );
-    return {};
-  }
-
-  if (!model->is_mesh_ready(mesh_component->mesh_index)) {
-    OX_LOG_ERROR("MeshColliderComponent on '{}' ran before its mesh finished loading.", entity.name().c_str());
-    return {};
-  }
-
-  const auto& collision = model->collision_meshes[mesh_component->mesh_index];
-  if (collision.positions.empty() || collision.indices.size() < 3) {
-    OX_LOG_ERROR("MeshColliderComponent on '{}' has no triangles.", entity.name().c_str());
     return {};
   }
 
@@ -3301,11 +3319,59 @@ auto build_mesh_collider_shape(
   // vertices. A mirrored scale flips winding, which would leave every triangle facing inward.
   const auto flipped = scale.x * scale.y * scale.z < 0.f;
 
+  auto& asset_man = App::mod<AssetManager>();
   auto vertices = JPH::Array<JPH::Float3>();
-  vertices.reserve(collision.positions.size());
-  for (const auto& position : collision.positions) {
-    const auto scaled = position * scale;
-    vertices.push_back(JPH::Float3(scaled.x, scaled.y, scaled.z));
+  auto triangles = JPH::IndexedTriangleList();
+  for (const auto mesh_entity : mesh_entities) {
+    const auto& mesh_component = mesh_entity.get<MeshComponent>();
+    auto model = asset_man.get_model(mesh_component.model_uuid);
+    if (!model) {
+      OX_LOG_ERROR("MeshColliderComponent on '{}' has no loaded model.", mesh_entity.name().c_str());
+      return {};
+    }
+
+    if (mesh_component.mesh_index >= model->collision_meshes.size()) {
+      OX_LOG_ERROR(
+        "MeshColliderComponent on '{}' points at mesh {}, which does not exist.",
+        mesh_entity.name().c_str(),
+        mesh_component.mesh_index
+      );
+      return {};
+    }
+
+    if (!model->is_mesh_ready(mesh_component.mesh_index)) {
+      OX_LOG_ERROR("MeshColliderComponent on '{}' ran before its mesh finished loading.", mesh_entity.name().c_str());
+      return {};
+    }
+
+    const auto& collision = model->collision_meshes[mesh_component.mesh_index];
+    if (collision.positions.empty() || collision.indices.size() < 3) {
+      OX_LOG_ERROR("MeshColliderComponent on '{}' has no triangles.", mesh_entity.name().c_str());
+      return {};
+    }
+
+    const auto to_collider = mesh_entity == entity ? glm::mat4(1.0f) : Scene::get_local_transform(mesh_entity);
+    const auto first_vertex = static_cast<u32>(vertices.size());
+    vertices.reserve(vertices.size() + collision.positions.size());
+    for (const auto& position : collision.positions) {
+      const auto scaled = glm::vec3(to_collider * glm::vec4(position, 1.0f)) * scale;
+      vertices.push_back(JPH::Float3(scaled.x, scaled.y, scaled.z));
+    }
+
+    if (component.convex) {
+      continue;
+    }
+
+    for (auto i = 0_sz; i + 2 < collision.indices.size(); i += 3) {
+      const auto i0 = collision.indices[i];
+      const auto i1 = collision.indices[flipped ? i + 2 : i + 1];
+      const auto i2 = collision.indices[flipped ? i + 1 : i + 2];
+      // Jolt rejects the whole shape on a degenerate triangle, and simplification does produce them.
+      if (i0 == i1 || i1 == i2 || i0 == i2) {
+        continue;
+      }
+      triangles.push_back(JPH::IndexedTriangle(first_vertex + i0, first_vertex + i1, first_vertex + i2, 0));
+    }
   }
 
   if (component.convex) {
@@ -3318,19 +3384,6 @@ auto build_mesh_collider_shape(
     auto shape_settings = JPH::ConvexHullShapeSettings(points, JPH::cDefaultConvexRadius, material);
     shape_settings.SetDensity(glm::max(0.001f, component.density));
     return shape_settings.Create();
-  }
-
-  auto triangles = JPH::IndexedTriangleList();
-  triangles.reserve(collision.indices.size() / 3);
-  for (auto i = 0_sz; i + 2 < collision.indices.size(); i += 3) {
-    const auto i0 = collision.indices[i];
-    const auto i1 = collision.indices[flipped ? i + 2 : i + 1];
-    const auto i2 = collision.indices[flipped ? i + 1 : i + 2];
-    // Jolt rejects the whole shape on a degenerate triangle, and simplification does produce them.
-    if (i0 == i1 || i1 == i2 || i0 == i2) {
-      continue;
-    }
-    triangles.push_back(JPH::IndexedTriangle(i0, i1, i2, 0));
   }
 
   if (triangles.empty()) {
@@ -4014,7 +4067,12 @@ auto Scene::render(
     ri->add_stage_after(RenderStage::FinalOutput, "rmlui", [view = self.rml_view.get()](RenderStageContext& ctx) {
       ctx.set_image_resource(
         "result_attachment",
-        view->record(ctx.module, ctx.render_context, ctx.get_image_resource("result_attachment"))
+        view->record(
+          ctx.module,
+          ctx.render_context,
+          ctx.get_image_resource("result_attachment"),
+          {ctx.display_size.x, ctx.display_size.y, 1}
+        )
       );
     });
   }
@@ -4053,6 +4111,23 @@ auto Scene::clear_rml_dpi_ratio_override(this const Scene& self) -> void {
   if (self.rml_view) {
     self.rml_view->clear_dpi_ratio_override();
   }
+}
+
+template <typename JsonValue>
+auto Scene::deserialize_component(
+  Scene& self, flecs::entity e, flecs::entity component, JsonValue json, std::vector<UUID>& requested_assets
+) -> void {
+  ZoneScoped;
+
+  // Observers must not fill in defaults for fields this is about to write.
+  const auto was_deserializing = std::exchange(self.deserializing_entity, true);
+  e.add(component);
+  auto* data = e.get_mut(component);
+  auto deserializer = JsonEntityDeserializer(self.world, std::move(json));
+  deserializer.serialize(component, data);
+  requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+  self.deserializing_entity = was_deserializing;
+  e.modified(component);
 }
 
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
@@ -4190,15 +4265,7 @@ auto Scene::json_to_entity(
         continue;
       }
 
-      // Observers must not fill in defaults for fields this loop is about to write.
-      const auto was_deserializing = std::exchange(self.deserializing_entity, true);
-      e.add(component_id);
-      auto* component = e.get_mut(component_id);
-      auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
-      deserializer.serialize(component_id, component);
-      requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
-      self.deserializing_entity = was_deserializing;
-      e.modified(component_id);
+      deserialize_component(self, e, component_id, field_json.value().value_unsafe(), requested_assets);
     }
   }
 
@@ -4222,6 +4289,58 @@ auto Scene::json_to_entity(
   }
 
   return e;
+}
+
+static auto is_data_component(flecs::entity component) -> bool {
+  const auto* info = component.try_get<flecs::Component>();
+  return info && info->size > 0;
+}
+
+auto Scene::component_to_json(flecs::entity e, flecs::entity component) -> std::string {
+  ZoneScoped;
+
+  auto world = e.world();
+  auto writer = JsonWriter{};
+  writer.begin_obj();
+  if (is_data_component(component)) {
+    if (auto* data = e.try_get_mut(component.id())) {
+      auto serializer = JsonEntitySerializer(world, writer);
+      serializer.serialize(component, data);
+    }
+  }
+
+  writer.end_obj();
+  return writer.stream.str();
+}
+
+auto Scene::json_to_component(this Scene& self, flecs::entity e, flecs::entity component, std::string_view json)
+  -> bool {
+  ZoneScoped;
+
+  if (!is_data_component(component)) {
+    e.add(component);
+    return true;
+  }
+
+  auto content = simdjson::padded_string(json);
+  auto parser = simdjson::ondemand::parser{};
+  auto doc = parser.iterate(content);
+  auto value = doc.get_value();
+  if (value.error()) {
+    OX_LOG_ERROR("Couldn't parse component '{}': {}", component.name().c_str(), simdjson::error_message(value.error()));
+    return false;
+  }
+
+  auto requested_assets = std::vector<UUID>{};
+  deserialize_component(self, e, component, value.value_unsafe(), requested_assets);
+
+  // pair observers such as (TransformComponent, MeshComponent) only fire on the transform, see json_to_entity
+  if (component.id() != self.world.id<TransformComponent>() && e.has<TransformComponent>()) {
+    e.modified<TransformComponent>();
+  }
+
+  self.load_requested_assets(requested_assets);
+  return true;
 }
 
 auto Scene::to_json(this const Scene& self) -> JsonWriter {

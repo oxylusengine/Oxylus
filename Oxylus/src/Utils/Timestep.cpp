@@ -38,6 +38,10 @@ void Timestep::on_update(this Timestep& self) {
   }
 
   self.timestep = current_time - self.last_time;
+  if (self.max_step_millis != NO_MAX_STEP && self.timestep > self.max_step_millis) {
+    self.timestep = self.max_step_millis;
+  }
+
   self.last_time = current_time;
   self.elapsed += self.timestep;
 }

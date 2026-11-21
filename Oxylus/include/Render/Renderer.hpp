@@ -34,6 +34,9 @@ public:
 
   auto sync_materials(this Renderer& self) -> void;
 
+  u32 blend_material_count = 0;
+  u32 refractor_material_count = 0;
+
 private:
   friend RendererInstance;
 
@@ -42,5 +45,6 @@ private:
 
   std::vector<GPU::Material> gpu_materials = {};
   std::vector<usize> pending_material_indices = {};
+  u32 counted_materials_revision = ~0_u32;
 };
 } // namespace ox

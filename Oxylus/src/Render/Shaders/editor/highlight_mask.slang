@@ -10,7 +10,24 @@ struct MaskParameters {
   Texture2D<u32> visbuffer;
   RWTexture2D<f32> out_mask;
   StructuredBuffer<u32> transform_indices;
+  Texture2D<u32> refractor_visbuffer;
+  StructuredBuffer<MeshletInstance> transparent_meshlet_instances;
 };
+
+bool is_transform_selected(
+  u32 texel_transform_index, uniform ParameterBlock<MaskParameters> params, u32 buffer_size
+) {
+  if (texel_transform_index == ~0u)
+    return false;
+
+  for (u32 i = 0; i < buffer_size; i++) {
+    let transform_index = params.transform_indices[i];
+    if (texel_transform_index == transform_index && transform_index != ~0u) {
+      return true;
+    }
+  }
+  return false;
+}
 
 bool is_texel_selected(
   u32 texel, uniform ParameterBlock<MaskParameters> params, u32 buffer_size, u32 terrain_transform_index
@@ -28,16 +45,17 @@ bool is_texel_selected(
     texel_transform_index = mesh_instance.transform_index;
   }
 
-  if (texel_transform_index == ~0u)
+  return is_transform_selected(texel_transform_index, params, buffer_size);
+}
+
+bool is_refractor_texel_selected(u32 texel, uniform ParameterBlock<MaskParameters> params, u32 buffer_size) {
+  if (texel == ~0u)
     return false;
 
-  for (u32 i = 0; i < buffer_size; i++) {
-    let transform_index = params.transform_indices[i];
-    if (texel_transform_index == transform_index && transform_index != ~0u) {
-      return true;
-    }
-  }
-  return false;
+  let vis = VisBufferData(texel);
+  let meshlet_instance = params.transparent_meshlet_instances[vis.meshlet_instance_index];
+  let mesh_instance = params.mesh_instances[meshlet_instance.mesh_instance_index];
+  return is_transform_selected(mesh_instance.transform_index, params, buffer_size);
 }
 
 [[shader("compute")]] [[numthreads(16, 16, 1)]]
@@ -56,7 +74,13 @@ func cs_main(
     return;
 
   let center_texel = params.visbuffer.Load(u32x3(pixel_coords, 0));
-  let center_selected = is_texel_selected(center_texel, params, buffer_size, terrain_transform_index);
+  // the refractor visbuffer is a 1x1 stand-in when the frame has no glass or water
+  u32 refractor_width, refractor_height, refractor_levels;
+  params.refractor_visbuffer.GetDimensions(0, refractor_width, refractor_height, refractor_levels);
+  let is_inside_refractors = pixel_coords.x < refractor_width && pixel_coords.y < refractor_height;
+  let refractor_texel = is_inside_refractors ? params.refractor_visbuffer.Load(u32x3(pixel_coords, 0)) : ~0u;
+  let center_selected = is_texel_selected(center_texel, params, buffer_size, terrain_transform_index) ||
+                        is_refractor_texel_selected(refractor_texel, params, buffer_size);
 
   // 1.0 = selected, 0.0 = empty
   params.out_mask[pixel_coords] = center_selected ? 1.0 : 0.0;

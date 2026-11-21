@@ -112,6 +112,8 @@ public struct VSMPageMetadata {
 };
 
 public constexpr static f32 VSM_CLIPMAP_TRANSITION_WIDTH = 0.25;
+// fog needs little shadow detail, and every page it marks comes out of the budget surfaces share
+public constexpr static i32 VSM_VOLUME_CLIPMAP_BIAS = 2;
 
 public struct VSMClipmapSelection {
     public f32 level_f;
@@ -207,6 +209,13 @@ public extension VSMContext {
 
         let finite_quality_level_f = isfinite(quality_level_f) ? quality_level_f : min_coverage_level;
         return max(max(finite_quality_level_f, min_coverage_level), 0.0);
+    }
+
+    // a point in the air has no screen footprint, so its clipmap follows distance alone. Volumetric fog marks pages and
+    // samples them through this, so the two always agree on the level
+    public func get_volume_clipmap_index(f32 camera_distance) -> i32 {
+        let ratio = max(camera_distance / (0.5 * this.first_clipmap_width), 1.0);
+        return clamp(i32(ceil(log2(ratio))) + VSM_VOLUME_CLIPMAP_BIAS, 0, this.clipmap_count - 1);
     }
 
     public func get_clipmap_selection(

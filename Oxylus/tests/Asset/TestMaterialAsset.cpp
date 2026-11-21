@@ -27,7 +27,7 @@ protected:
     std::filesystem::remove_all(directory);
   }
 
-  static auto edited_material(const ox::UUID& albedo_texture) -> ox::Material {
+  auto edited_material(const ox::UUID& albedo_texture) const -> ox::Material {
     auto material = ox::Material{};
     material.albedo_color = {0.25f, 0.5f, 0.75f, 0.5f};
     material.uv_size = {2.0f, 4.0f};
@@ -38,12 +38,32 @@ protected:
     material.alpha_mode = ox::AlphaMode::Mask;
     material.alpha_cutoff = 0.75f;
     material.sampling_mode = ox::SamplingMode::NearestClamped;
+    material.normal_scale = 0.5f;
+    material.occlusion_strength = 0.25f;
+    material.flip_normal_y = true;
+    material.double_sided = true;
+    material.transmission_factor = 0.875f;
+    material.ior = 1.25f;
+    material.thickness_factor = 2.5f;
+    material.attenuation_color = {0.5f, 0.25f, 0.125f};
+    material.attenuation_distance = 8.0f;
+    material.shading_model = ox::ShadingModel::Water;
+    material.water_scatter_color = {0.0625f, 0.125f, 0.1875f};
+    material.water_flow = {0.5f, -0.25f};
+    material.water_detail_scale = 0.75f;
+    material.water_shore_fade = 1.5f;
     material.albedo_texture = albedo_texture;
+    material.normal_texture = extra_textures[0];
+    material.emissive_texture = extra_textures[1];
+    material.metallic_roughness_texture = extra_textures[2];
+    material.occlusion_texture = extra_textures[3];
+    material.transmission_texture = extra_textures[4];
+    material.thickness_texture = extra_textures[5];
 
     return material;
   }
 
-  static auto expect_matches_edited(const ox::Material& material, const ox::UUID& albedo_texture) -> void {
+  auto expect_matches_edited(const ox::Material& material, const ox::UUID& albedo_texture) const -> void {
     EXPECT_EQ(material.albedo_color, glm::vec4(0.25f, 0.5f, 0.75f, 0.5f));
     EXPECT_EQ(material.uv_size, glm::vec2(2.0f, 4.0f));
     EXPECT_EQ(material.uv_offset, glm::vec2(0.125f, 0.25f));
@@ -53,9 +73,37 @@ protected:
     EXPECT_EQ(material.alpha_mode, ox::AlphaMode::Mask);
     EXPECT_FLOAT_EQ(material.alpha_cutoff, 0.75f);
     EXPECT_EQ(material.sampling_mode, ox::SamplingMode::NearestClamped);
+    EXPECT_FLOAT_EQ(material.normal_scale, 0.5f);
+    EXPECT_FLOAT_EQ(material.occlusion_strength, 0.25f);
+    EXPECT_TRUE(material.flip_normal_y);
+    EXPECT_TRUE(material.double_sided);
+    EXPECT_FLOAT_EQ(material.transmission_factor, 0.875f);
+    EXPECT_FLOAT_EQ(material.ior, 1.25f);
+    EXPECT_FLOAT_EQ(material.thickness_factor, 2.5f);
+    EXPECT_EQ(material.attenuation_color, glm::vec3(0.5f, 0.25f, 0.125f));
+    EXPECT_FLOAT_EQ(material.attenuation_distance, 8.0f);
+    EXPECT_EQ(material.shading_model, ox::ShadingModel::Water);
+    EXPECT_EQ(material.water_scatter_color, glm::vec3(0.0625f, 0.125f, 0.1875f));
+    EXPECT_EQ(material.water_flow, glm::vec2(0.5f, -0.25f));
+    EXPECT_FLOAT_EQ(material.water_detail_scale, 0.75f);
+    EXPECT_FLOAT_EQ(material.water_shore_fade, 1.5f);
     EXPECT_EQ(material.albedo_texture, albedo_texture);
+    EXPECT_EQ(material.normal_texture, extra_textures[0]);
+    EXPECT_EQ(material.emissive_texture, extra_textures[1]);
+    EXPECT_EQ(material.metallic_roughness_texture, extra_textures[2]);
+    EXPECT_EQ(material.occlusion_texture, extra_textures[3]);
+    EXPECT_EQ(material.transmission_texture, extra_textures[4]);
+    EXPECT_EQ(material.thickness_texture, extra_textures[5]);
   }
 
+  std::array<ox::UUID, 6> extra_textures = {
+    ox::UUID::generate_random(),
+    ox::UUID::generate_random(),
+    ox::UUID::generate_random(),
+    ox::UUID::generate_random(),
+    ox::UUID::generate_random(),
+    ox::UUID::generate_random(),
+  };
   std::unique_ptr<ox::AssetManager> asset_man = nullptr;
   std::filesystem::path directory = {};
 };

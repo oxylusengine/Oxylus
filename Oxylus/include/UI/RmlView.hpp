@@ -30,8 +30,9 @@ public:
   // Stages this frame's geometry, after RenderContext::new_frame and before the owner's program runs.
   auto upload(this RmlView& self, RenderContext& context) -> void;
   // Records the draw pass into the owner's program, which keeps it across frames.
-  auto record(this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target)
-    -> vir::ValueID;
+  auto record(
+    this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target, vir::Extent3D extent
+  ) -> vir::ValueID;
 
   // Where this view lands on the window, in the same space as the mouse events.
   auto set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 size, bool keyboard_focused_) -> void;

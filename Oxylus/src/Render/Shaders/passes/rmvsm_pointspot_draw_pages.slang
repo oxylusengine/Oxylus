@@ -65,14 +65,17 @@ func fs_main(VertexOutput input) -> void {
         let physical_texel_coord = in_memory_offset + in_page_texel_coord;
 
         let material = materials[input.material_index];
-        if (material.flags & MaterialFlag::HasAlbedoImage) {
-            UVGradient grad;
-            grad.uv = input.tex_coord;
-            grad.ddx = ddx(input.tex_coord);
-            grad.ddy = ddy(input.tex_coord);
-            let alpha_color = material.sample_albedo_color_grad(grad).a;
+        if (material.is_alpha_tested()) {
+            var alpha = material.get_albedo_color().a;
+            if (material.flags & MaterialFlag::HasAlbedoImage) {
+                UVGradient grad;
+                grad.uv = input.tex_coord;
+                grad.ddx = ddx(input.tex_coord);
+                grad.ddy = ddy(input.tex_coord);
+                alpha = material.sample_albedo_color_grad(grad).a;
+            }
 
-            if (alpha_color < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
+            if (alpha < clamp(material.get_alpha_cutoff(), 0.001, 1.0)) {
                 return;
             }
         }

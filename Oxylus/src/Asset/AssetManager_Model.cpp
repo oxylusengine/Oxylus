@@ -1,3 +1,4 @@
+#include <atomic>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <ranges>
@@ -21,10 +22,14 @@ struct UploadedMesh {
   GPU::Mesh gpu_mesh = {};
   std::array<GPU::MeshLOD, GPU::Mesh::MAX_LODS> lods = {};
   BufferID buffer = BufferID::Invalid;
-  AccelerationStructureID blas = AccelerationStructureID::Invalid;
 };
 
-auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch) -> UploadedMesh {
+// `is_host_visible` puts the mesh in memory the CPU writes straight into: nothing is staged, copied or
+// submitted, which is what a small mesh made at runtime wants. The GPU may read it slower than device
+// memory, so it is not for meshes of any size
+auto upload_mesh(
+  RenderContext& render_context, const ModelData::Mesh& mesh, UploadBatch* batch, bool is_host_visible = false
+) -> UploadedMesh {
   ZoneScoped;
 
   auto result = UploadedMesh();
@@ -43,7 +48,7 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   const auto buffer_id = render_context.allocate_buffer({
     .size = mesh.blob.size(),
     .usage = usage,
-    .location = vir::MemoryLocation::GpuOnly,
+    .location = is_host_visible ? vir::MemoryLocation::CpuToGpu : vir::MemoryLocation::GpuOnly,
     .alignment = 16,
     .name = "mesh",
   });
@@ -81,6 +86,27 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     lod.indirect_vertex_indices += gpu_mesh_bda;
   }
 
+  // the compiler reserves the LOD table at the blob tail but leaves it zeroed: every offset in it
+  // only becomes an address once there is a buffer to add
+  const auto lod_table = std::span{
+    reinterpret_cast<const u8*>(result.lods.data()),
+    gpu_mesh.lod_count * sizeof(GPU::MeshLOD)
+  };
+
+  if (is_host_visible) {
+    const auto is_written = gpu_buffer.write_bytes(0, mesh.blob) &&
+                            gpu_buffer.write_bytes(mesh.lod_metadata_offset, lod_table) &&
+                            render_context.persistent->flush_buffer(gpu_buffer);
+    if (!is_written) {
+      OX_LOG_ERROR("Failed to write a host visible mesh buffer.");
+      render_context.destroy_buffer(*buffer_id);
+      return result;
+    }
+
+    result.buffer = *buffer_id;
+    return result;
+  }
+
   auto staging = render_context.allocate_staging(mesh.blob);
   if (!staging) {
     OX_LOG_ERROR("Failed to allocate mesh staging ({}).", std::to_underlying(staging.error()));
@@ -88,12 +114,6 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
     return result;
   }
 
-  // the compiler reserves the LOD table at the blob tail but leaves it zeroed: every offset in it
-  // only becomes an address once there is a buffer to add
-  const auto lod_table = std::span{
-    reinterpret_cast<const u8*>(result.lods.data()),
-    gpu_mesh.lod_count * sizeof(GPU::MeshLOD)
-  };
   const auto is_patched = staging->write_bytes(mesh.lod_metadata_offset, lod_table) &&
                           render_context.persistent->flush_buffer(*staging, mesh.lod_metadata_offset, lod_table.size());
   if (!is_patched) {
@@ -116,19 +136,55 @@ auto upload_mesh(RenderContext& render_context, const ModelData::Mesh& mesh, Upl
   }
 
   result.buffer = *buffer_id;
-  result.blas = build_mesh_blas(
-    render_context,
-    *buffer_id,
-    MESH_BUFFER_ACCESS,
-    BLASBuildInfo{
-      .vertex_positions = gpu_mesh.vertex_positions,
-      .indices = result.lods[0].indices,
-      .vertex_count = gpu_mesh.vertex_count,
-      .index_count = result.lods[0].indices_count,
-    }
-  );
 
   return result;
+}
+
+auto AssetManager::resolve_mesh_blas(
+  RenderContext& render_context, Model& model, const usize mesh_index, StaticBLASBudget* budget
+) -> u64 {
+  ZoneScoped;
+
+  if (mesh_index >= model.mesh_blases.size()) {
+    return 0;
+  }
+
+  // the slot is written under the models' shared lock, and two scenes rendering from different threads
+  // can both find it empty, so the loser of the exchange below throws its copy away
+  auto blas = std::atomic_ref(model.mesh_blases[mesh_index]);
+  const auto is_unbuilt = blas.load(std::memory_order_acquire) == AccelerationStructureID::Invalid;
+  // published models may mark a mesh ready without any GPU side at all
+  const auto has_gpu_mesh = mesh_index < model.gpu_mesh_buffers.size() && mesh_index < model.gpu_meshes.size() &&
+                            mesh_index < model.lod0_index_ranges.size() && model.is_mesh_ready(mesh_index) &&
+                            model.gpu_mesh_buffers[mesh_index] != BufferID::Invalid;
+  if (budget && is_unbuilt && has_gpu_mesh) {
+    const auto& gpu_mesh = model.gpu_meshes[mesh_index];
+    const auto& lod0_indices = model.lod0_index_ranges[mesh_index];
+    const auto triangles = lod0_indices.count / 3;
+    if (gpu_mesh.vertex_count != 0 && triangles != 0 && budget->admits(triangles)) {
+      budget->spent += triangles;
+      const auto built = build_mesh_blas(
+        render_context,
+        model.gpu_mesh_buffers[mesh_index],
+        MESH_BUFFER_ACCESS,
+        BLASBuildInfo{
+          .vertex_positions = gpu_mesh.vertex_positions,
+          .indices = lod0_indices.device_address,
+          .vertex_count = gpu_mesh.vertex_count,
+          .index_count = lod0_indices.count,
+        }
+      );
+      auto expected = AccelerationStructureID::Invalid;
+      if (
+        built != AccelerationStructureID::Invalid &&
+        !blas.compare_exchange_strong(expected, built, std::memory_order_acq_rel)
+      ) {
+        render_context.destroy_acceleration_structure(built);
+      }
+    }
+  }
+
+  return render_context.acceleration_structure(blas.load(std::memory_order_acquire)).device_address;
 }
 
 auto to_collision_mesh(const ModelData::Mesh& mesh) -> Model::CollisionMesh {
@@ -156,7 +212,16 @@ auto AssetManager::load_model(
   // the mesh jobs outlive this call when `async`, so the source has to be owned by them
   auto data = std::make_shared<const ModelData>(std::move(model_data));
 
-  const auto use_jobs = job_man.get_thread_count() > 1;
+  // a model this small is written faster than a job wakes up or a copy is submitted, so a blocking load
+  // of one runs here and its meshes go to host visible memory
+  constexpr static auto INLINE_UPLOAD_BYTES = 256_sz * 1024_sz;
+  auto blob_bytes = 0_sz;
+  for (const auto& mesh : data->meshes) {
+    blob_bytes += mesh.blob.size();
+  }
+  const auto is_inline = !async && data->textures.empty() && blob_bytes <= INLINE_UPLOAD_BYTES;
+
+  const auto use_jobs = job_man.get_thread_count() > 1 && !is_inline;
   auto dispatch = [&job_man, use_jobs](const Arc<Barrier>& barrier, auto&& work) {
     if (!use_jobs) {
       work();
@@ -282,11 +347,11 @@ auto AssetManager::load_model(
   auto mesh_barrier = Barrier::create();
   auto mesh_batch = UploadBatch::create();
   for (auto mesh_index = 0_sz; mesh_index < mesh_count; mesh_index++) {
-    dispatch(mesh_barrier, [&asset_man = self, model_id, data, &render_context, mesh_index, mesh_batch]() {
+    dispatch(mesh_barrier, [&asset_man = self, model_id, data, &render_context, mesh_index, mesh_batch, is_inline]() {
       ZoneScopedN("Mesh Upload");
 
       const auto& mesh_data = data->meshes[mesh_index];
-      auto uploaded = upload_mesh(render_context, mesh_data, mesh_batch.get());
+      auto uploaded = upload_mesh(render_context, mesh_data, mesh_batch.get(), is_inline);
 
       auto loaded_model = asset_man.get_model(model_id);
       if (!loaded_model) {
@@ -298,7 +363,6 @@ auto AssetManager::load_model(
 
       if (uploaded.buffer != BufferID::Invalid) {
         loaded_model->gpu_mesh_buffers[mesh_index] = uploaded.buffer;
-        loaded_model->mesh_blases[mesh_index] = uploaded.blas;
         loaded_model->gpu_meshes[mesh_index] = uploaded.gpu_mesh;
         loaded_model->collision_meshes[mesh_index] = to_collision_mesh(mesh_data);
         loaded_model->lod0_meshlet_counts[mesh_index] = uploaded.lods[0].meshlet_count;

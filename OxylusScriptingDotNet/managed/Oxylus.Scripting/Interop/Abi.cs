@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 15;
+    public const uint Version = 20;
 }
 
 public enum OxStatus : int
@@ -298,6 +298,18 @@ public struct WheelState
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public unsafe struct MeshSourceData
+{
+    public Vector3* Positions;
+    public Vector3* Normals;
+    public Vector2* TexCoords;
+    public uint* Indices;
+    public uint VertexCount;
+    public uint IndexCount;
+    public AssetId Material;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct AssetInfo
 {
     public uint Type;
@@ -478,6 +490,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<nint, void> EcsDeferSuspend;
     public delegate* unmanaged<nint, void> EcsDeferResume;
     public delegate* unmanaged<nint, ulong, byte*, uint, uint> GetPath;
+    public delegate* unmanaged<nint, ulong, byte*, uint, uint> GetTypeStr;
     public delegate* unmanaged<nint, ulong, void*, void> ChildrenIter;
     public delegate* unmanaged<void*, ulong**, int*, bool> ChildrenNext;
 
@@ -530,11 +543,16 @@ public unsafe struct NativeApi
     public delegate* unmanaged<AssetId*, AssetId*, int, int*, OxStatus> AssetMaterials;
     public delegate* unmanaged<AssetId*, MaterialData*, OxStatus> AssetMaterialGet;
     public delegate* unmanaged<AssetId*, MaterialData*, OxStatus> AssetMaterialSet;
+    public delegate* unmanaged<MaterialData*, AssetId*, OxStatus> AssetCreateMaterial;
+    public delegate* unmanaged<MeshSourceData*, int, AssetId*, OxStatus> AssetCreateModel;
+    public delegate* unmanaged<AssetId*, OxStatus> AssetDestroyModel;
 
     public delegate* unmanaged<nint, ulong, AudioCommand, OxStatus> AudioCommand;
     public delegate* unmanaged<nint, ulong, AudioState*, OxStatus> AudioState;
     public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> AudioSetSound;
     public delegate* unmanaged<AssetId*, float, Vector3*, OxStatus> AudioOneShot;
+
+    public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> DecalSetMaterial;
 
     public delegate* unmanaged<nint, StringView, ulong, ulong> SceneSpawn;
     public delegate* unmanaged<nint, AssetId*, ulong, ulong> SceneSpawnModel;
@@ -602,6 +620,8 @@ public unsafe struct ManagedApi
     public delegate* unmanaged<nint, OxStatus> AttachWorld;
     public delegate* unmanaged<nint, OxStatus> DetachWorld;
     public delegate* unmanaged<ulong> AllocatedBytes;
+    public delegate* unmanaged<bool> IsDebuggerAttached;
+    public delegate* unmanaged<bool> LaunchDebugger;
 
     public delegate* unmanaged<StringView, ScriptKind> FindScriptType;
     public delegate* unmanaged<ScriptTypeInfo*, int, int> ListScriptTypes;

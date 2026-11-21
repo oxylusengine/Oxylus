@@ -45,6 +45,12 @@ public:
   // until a build is loaded or has failed, a scene naming C# components would drop the entities holding them
   auto is_loading(this const CSharpScripts& self) -> bool;
 
+  auto is_debugger_attached(this const CSharpScripts& self) -> bool;
+  // nothing is hosting C# to attach to until a build has loaded
+  auto can_attach_debugger(this const CSharpScripts& self) -> bool;
+  // offers the system's just-in-time debugger next frame, the editor is stopped while it waits for the choice
+  auto attach_debugger(this const CSharpScripts& self) -> void;
+
 private:
   std::filesystem::path csproj_ = {};
   std::filesystem::path output_dir_ = {};

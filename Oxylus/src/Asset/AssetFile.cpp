@@ -51,11 +51,19 @@ auto to_material(const ModelData::Material& src, std::span<const UUID> textures)
     .alpha_cutoff = src.alpha_cutoff,
     .sampling_mode = src.sampling_mode,
     .flip_normal_y = src.flip_normal_y,
+    .double_sided = src.double_sided,
+    .transmission_factor = src.transmission_factor,
+    .ior = src.ior,
+    .thickness_factor = src.thickness_factor,
+    .attenuation_color = glm::make_vec3(src.attenuation_color.data()),
+    .attenuation_distance = src.attenuation_distance,
     .albedo_texture = resolve(src.albedo_texture_index),
     .normal_texture = resolve(src.normal_texture_index),
     .emissive_texture = resolve(src.emissive_texture_index),
     .metallic_roughness_texture = resolve(src.metallic_roughness_texture_index),
     .occlusion_texture = resolve(src.occlusion_texture_index),
+    .transmission_texture = resolve(src.transmission_texture_index),
+    .thickness_texture = resolve(src.thickness_texture_index),
   };
 }
 

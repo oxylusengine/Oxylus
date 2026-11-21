@@ -105,6 +105,8 @@ struct MaterialAssets {
   ox::UUID texture_a = {};
   ox::UUID texture_b = {};
   ox::UUID texture_c = {};
+  ox::UUID texture_d = {};
+  ox::UUID texture_e = {};
 };
 
 // the stone material starts on textures a and c, and two holders put two references on each of them
@@ -120,6 +122,8 @@ static auto material_assets() -> MaterialAssets {
     .texture_a = ox::UUID::generate_random(),
     .texture_b = ox::UUID::generate_random(),
     .texture_c = ox::UUID::generate_random(),
+    .texture_d = ox::UUID::generate_random(),
+    .texture_e = ox::UUID::generate_random(),
   };
   const auto register_asset = [&assets, &root](const ox::UUID& uuid, ox::AssetType type, const c8* path) {
     assets.register_asset(uuid, type, root / path, root / path);
@@ -127,6 +131,8 @@ static auto material_assets() -> MaterialAssets {
   register_asset(content.texture_a, ox::AssetType::Texture, "Textures/a.png");
   register_asset(content.texture_b, ox::AssetType::Texture, "Textures/b.png");
   register_asset(content.texture_c, ox::AssetType::Texture, "Textures/c.png");
+  register_asset(content.texture_d, ox::AssetType::Texture, "Textures/d.png");
+  register_asset(content.texture_e, ox::AssetType::Texture, "Textures/e.png");
   register_asset(content.stone, ox::AssetType::Material, "Materials/stone.mat");
   register_asset(content.idle, ox::AssetType::Material, "Materials/idle.mat");
   register_asset(content.model, ox::AssetType::Model, "Models/crate.glb");
@@ -134,6 +140,8 @@ static auto material_assets() -> MaterialAssets {
   assets.publish_texture(content.texture_a, ox::Texture{});
   assets.publish_texture(content.texture_b, ox::Texture{});
   assets.publish_texture(content.texture_c, ox::Texture{});
+  assets.publish_texture(content.texture_d, ox::Texture{});
+  assets.publish_texture(content.texture_e, ox::Texture{});
   assets.set_pending_load_info(
     content.stone,
     ox::Material{
@@ -149,8 +157,21 @@ static auto material_assets() -> MaterialAssets {
       .alpha_cutoff = 0.75f,
       .sampling_mode = ox::SamplingMode::NearestClamped,
       .flip_normal_y = true,
+      .double_sided = true,
+      .transmission_factor = 0.625f,
+      .ior = 1.75f,
+      .thickness_factor = 0.5f,
+      .attenuation_color = {0.25f, 0.5f, 0.75f},
+      .attenuation_distance = 2.5f,
+      .shading_model = ox::ShadingModel::Water,
+      .water_scatter_color = {0.125f, 0.25f, 0.5f},
+      .water_flow = {0.5f, 0.75f},
+      .water_detail_scale = 0.625f,
+      .water_shore_fade = 0.875f,
       .albedo_texture = content.texture_a,
       .normal_texture = content.texture_c,
+      .transmission_texture = content.texture_d,
+      .thickness_texture = content.texture_e,
     }
   );
   assets.load_asset(content.stone);
@@ -761,6 +782,52 @@ TEST_F(DotNetSceneTest, DrivesABodyFromCSharp) {
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0);
 }
 
+TEST_F(DotNetSceneTest, HullsEveryMeshOfAModelRoot) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root_dir = std::filesystem::temp_directory_path() / "ox_dotnet_content_test";
+  const auto model_uuid = ox::UUID::generate_random();
+  assets.register_asset(model_uuid, ox::AssetType::Model, root_dir / "Models/slab.glb", root_dir / "Models/slab.glb");
+
+  // the bottom and the top face of a 0.5 cube, each flat on its own, so only the two together make a hull
+  const auto face = [](f32 y) {
+    return ox::Model::CollisionMesh{
+      .positions = {{-0.25f, y, -0.25f}, {0.25f, y, -0.25f}, {0.25f, y, 0.25f}, {-0.25f, y, 0.25f}},
+      .indices = {0, 1, 2, 0, 2, 3},
+    };
+  };
+  auto model = ox::Model{};
+  model.collision_meshes = {face(-0.25f), face(0.25f)};
+  model.mesh_ready = std::vector<std::atomic_flag>(2);
+  model.mesh_ready[0].test_and_set();
+  model.mesh_ready[1].test_and_set();
+  ASSERT_TRUE(assets.publish_model(model_uuid, std::move(model)));
+
+  scene->create_entity("Floor")
+    .set(ox::RigidBodyComponent{.type = ox::RigidBodyComponent::Static})
+    .set(ox::BoxColliderComponent{.size = {50.0f, 0.5f, 50.0f}});
+  auto slab = scene->create_entity("Slab").set(ox::TransformComponent{.position = {0.0f, 2.0f, 0.0f}});
+  for (const auto mesh_index : {0_u32, 1_u32}) {
+    // the MeshComponent gives its reference back when it goes, as a spawned mesh entity does
+    assets.load_asset(model_uuid);
+    scene->create_entity(mesh_index == 0 ? "Bottom" : "Top")
+      .child_of(slab)
+      .set(ox::TransformComponent{})
+      .set(ox::MeshComponent{.model_uuid = model_uuid, .mesh_index = mesh_index});
+  }
+
+  slab.set(ox::MeshColliderComponent{.convex = true})
+    .set(ox::RigidBodyComponent{.type = ox::RigidBodyComponent::Dynamic});
+  scene->runtime_start();
+
+  for (auto i = 0; i < 120; i++) {
+    step();
+  }
+
+  // the floor's top is at 0.5, and the slab rests on its bottom face 0.25 below its centre
+  EXPECT_NEAR(slab.get<ox::RigidBodyComponent>().translation.y, 0.75f, 0.02f);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
 TEST_F(DotNetSceneTest, RaycastsAgainstShapes) {
   ASSERT_TRUE(scene->add_script_type("SmokeGame.RaycastProbe").has_value());
   scene->create_entity("Floor")
@@ -851,6 +918,49 @@ TEST_F(DotNetSceneTest, ReleasesHandlesTheScriptsForgot) {
   EXPECT_FALSE(assets.is_loaded(content.beep));
 }
 
+TEST_F(DotNetSceneTest, SetsADecalsMaterialAndKeepsItsReferenceBalanced) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_content_test";
+  ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
+
+  const auto paint = ox::UUID::generate_random();
+  const auto texture = ox::UUID::generate_random();
+  assets.register_asset(
+    paint,
+    ox::AssetType::Material,
+    root / "Materials/decal_paint.mat",
+    root / "Materials/decal_paint.mat"
+  );
+  assets.register_asset(
+    texture,
+    ox::AssetType::Texture,
+    root / "Textures/decal_not_a_material.png",
+    root / "Textures/decal_not_a_material.png"
+  );
+  assets.publish_texture(texture, ox::Texture{});
+  assets.set_pending_load_info(paint, ox::Material{});
+  // held by the test as well, so clearing the decal's reference doesn't free the material out from under the probe
+  ASSERT_TRUE(assets.load_asset(paint));
+  ASSERT_EQ(assets.get_asset(paint)->ref_count, 1);
+
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.DecalProbe").has_value());
+  scene->runtime_start();
+
+  const auto expect_log = [](std::string_view message) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, message), 1) << message << "\n" << logs_text();
+  };
+  expect_log("decal defaults opacity 1.00 mask 65535 albedo True material False");
+  expect_log("decal set True refs 2");
+  expect_log("decal set again refs 2");
+  expect_log("decal refused texture True plain True kept True refs 2");
+  expect_log("decal cleared False refs 1");
+  expect_log("decal destroyed refs 1");
+
+  scene->runtime_stop();
+  EXPECT_EQ(assets.get_asset(paint)->ref_count, 1);
+  assets.unload_asset(paint);
+}
+
 TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   auto& assets = ox::App::mod<ox::AssetManager>();
   const auto content = material_assets();
@@ -862,6 +972,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   EXPECT_EQ(refs(content.texture_a), 2);
   EXPECT_EQ(refs(content.texture_b), 0);
   EXPECT_EQ(refs(content.texture_c), 2);
+  EXPECT_EQ(refs(content.texture_d), 2);
+  EXPECT_EQ(refs(content.texture_e), 2);
   std::ignore = assets.get_dirty_material_ids();
 
   ASSERT_TRUE(scene->add_script_type("SmokeGame.MaterialProbe").has_value());
@@ -879,22 +991,32 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     "NearestClamped flip True"
   );
   expect_log("material read albedo a True normal c True emissive False");
-  expect_log("material refs a 2 b 0 c 2");
+  expect_log("material read transmission 0.625 ior 1.750 thickness 0.500 doubleSided True");
+  expect_log("material read attenuation 0.25 0.50 0.75 distance 2.50 shading Water");
+  expect_log("material read water 0.125 0.250 0.500 flow 0.50 0.75 detail 0.625 shore 0.875");
+  expect_log("material read transmission d True thickness e True");
+  expect_log("material refs a 2 b 0 c 2 d 2 e 2");
   expect_log("material written color 0.50 0.25 0.125 1.00 uv 3.00 5.00 offset 0.50 0.75 emissive 4.0 5.0 6.0");
   expect_log(
     "material written roughness 0.500 metallic 0.875 normal 1.50 occlusion 0.25 alpha Blend cutoff 0.50 sampling "
     "LinearClamped flip False"
   );
   expect_log("material written albedo b True normal a True emissive c True");
-  expect_log("material refs a 2 b 2 c 2");
-  expect_log("material refused idle True texture True unknown True slot True mode True");
+  expect_log("material written transmission 0.250 ior 1.330 thickness 1.500 doubleSided False");
+  expect_log("material written attenuation 0.50 0.25 0.12 distance 0.00 shading Standard");
+  expect_log("material written water 0.500 0.125 0.250 flow 0.25 0.125 detail 0.250 shore 0.375");
+  expect_log("material written transmission e True thickness d True");
+  expect_log("material refs a 2 b 2 c 2 d 2 e 2");
+  expect_log("material refused idle True texture True unknown True slot True mode True shading True thickness True");
   expect_log("material unread idle False texture False unknown False");
-  expect_log("material refs after refusals a 2 b 2 c 2");
+  expect_log("material refs after refusals a 2 b 2 c 2 d 2 e 2");
 
   // every texture moved with the material's two references: b gained both, a and c only changed slots
   EXPECT_EQ(refs(content.texture_a), 2);
   EXPECT_EQ(refs(content.texture_b), 2);
   EXPECT_EQ(refs(content.texture_c), 2);
+  EXPECT_EQ(refs(content.texture_d), 2);
+  EXPECT_EQ(refs(content.texture_e), 2);
   {
     const auto stone = assets.get_material(content.stone);
     ASSERT_TRUE(static_cast<bool>(stone));
@@ -905,6 +1027,19 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     EXPECT_EQ(stone->sampling_mode, ox::SamplingMode::LinearClamped);
     EXPECT_FALSE(stone->flip_normal_y);
     EXPECT_EQ(stone->albedo_color, glm::vec4(0.5f, 0.25f, 0.125f, 1.0f));
+    EXPECT_FALSE(stone->double_sided);
+    EXPECT_EQ(stone->transmission_factor, 0.25f);
+    EXPECT_EQ(stone->ior, 1.33f);
+    EXPECT_EQ(stone->thickness_factor, 1.5f);
+    EXPECT_EQ(stone->attenuation_color, glm::vec3(0.5f, 0.25f, 0.125f));
+    EXPECT_EQ(stone->attenuation_distance, 0.0f);
+    EXPECT_EQ(stone->shading_model, ox::ShadingModel::Standard);
+    EXPECT_EQ(stone->water_scatter_color, glm::vec3(0.5f, 0.125f, 0.25f));
+    EXPECT_EQ(stone->water_flow, glm::vec2(0.25f, 0.125f));
+    EXPECT_EQ(stone->water_detail_scale, 0.25f);
+    EXPECT_EQ(stone->water_shore_fade, 0.375f);
+    EXPECT_EQ(stone->transmission_texture, content.texture_e);
+    EXPECT_EQ(stone->thickness_texture, content.texture_d);
   }
 
   // the renderer re-uploads it once, and the refused writes marked nothing
@@ -914,8 +1049,9 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
 
   // dropping every texture gives back all the references they held for the material
   scene->runtime_stop();
-  expect_log("material cleared refs a 0 b 0 c 0");
-  for (const auto& texture : {content.texture_a, content.texture_b, content.texture_c}) {
+  expect_log("material cleared refs a 0 b 0 c 0 d 0 e 0");
+  for (const auto& texture :
+       {content.texture_a, content.texture_b, content.texture_c, content.texture_d, content.texture_e}) {
     EXPECT_EQ(refs(texture), 0);
     EXPECT_FALSE(assets.is_loaded(texture));
   }
@@ -926,6 +1062,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     EXPECT_FALSE(static_cast<bool>(stone->albedo_texture));
     EXPECT_FALSE(static_cast<bool>(stone->normal_texture));
     EXPECT_FALSE(static_cast<bool>(stone->emissive_texture));
+    EXPECT_FALSE(static_cast<bool>(stone->transmission_texture));
+    EXPECT_FALSE(static_cast<bool>(stone->thickness_texture));
   }
 
   EXPECT_EQ(assets.get_dirty_material_ids().size(), 1);
@@ -935,11 +1073,39 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   assets.unload_asset(content.stone);
   EXPECT_FALSE(assets.is_loaded(content.stone));
   EXPECT_FALSE(assets.is_loaded(content.model));
-  for (const auto& texture : {content.texture_a, content.texture_b, content.texture_c}) {
+  for (const auto& texture :
+       {content.texture_a, content.texture_b, content.texture_c, content.texture_d, content.texture_e}) {
     EXPECT_EQ(refs(texture), 0);
   }
 
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, CreatesMaterialsAndRefusesModelsWithoutARenderer) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_runtime_asset_test";
+  ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
+  const auto texture = ox::UUID::generate_random();
+  assets.register_asset(texture, ox::AssetType::Texture, root / "Textures/runtime.png", root / "Textures/runtime.png");
+  assets.publish_texture(texture, ox::Texture{});
+  const auto assets_before = assets.get_registry_snapshot().size();
+
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.RuntimeAssetProbe").has_value());
+  scene->runtime_start();
+
+  const auto expect_log = [](std::string_view message) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, message), 1) << message << "\n" << logs_text();
+  };
+  expect_log("runtime material Material loaded True refs 1 read True color 0.75 0.50 0.25 roughness 0.50");
+  expect_log("runtime material refused mode True");
+  expect_log("runtime model refused range True partial True empty True material True normals True texcoords True");
+  expect_log("runtime model without renderer: Couldn't create a model, it takes the renderer");
+  expect_log("runtime model destroy refused material True unknown True");
+
+  // the one material that was made, and nothing for what was refused
+  EXPECT_EQ(assets.get_registry_snapshot().size(), assets_before + 1);
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+  scene->runtime_stop();
 }
 
 TEST_F(DotNetSceneTest, ControlsAnEmitterFromCSharp) {
@@ -1536,4 +1702,80 @@ TEST_F(DotNetSceneTest, ReadsAVehicleAndItsWheelsFromCSharp) {
   const auto absent = get_probe<VehicleProbe>(plain, "SmokeGame.VehicleProbe");
   EXPECT_EQ(absent.exists, 0);
   EXPECT_EQ(absent.threw, 1);
+}
+
+TEST_F(DotNetSceneTest, DebuggerViewsDescribeHandles) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+
+  const auto id = id_of("Debugged");
+  ASSERT_NE(id, 0_u64);
+  const auto info = [](std::string_view line) {
+    return count_logs(ox::OxLogLevel::Info, line);
+  };
+  EXPECT_EQ(info(std::format("DebugView.Display Debugged ({})", id)), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Status alive name=Debugged path=Debugged"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Kid parent=Debugged"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Children 1"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Components transform=True identifier=False"), 1) << logs_text();
+  EXPECT_EQ(info(std::format("DebugView.Behaviour Spinner on Debugged ({})", id)), 1) << logs_text();
+  // in component index order: the engine's first, then the scripts' sorted by path
+  EXPECT_EQ(info("DebugView.Values ScriptComponent,TransformComponent,Expired (tag),Velocity"), 1) << logs_text();
+  // a pair has no C# struct, so it shows by its flecs name
+  EXPECT_EQ(info("DebugView.KidComponents (ChildOf,Debugged)"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Transform present=True value=True"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Velocity 1 2 3"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Expired tag=True value=True"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.Display fine"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.None none"), 1) << logs_text();
+  EXPECT_EQ(count_logs_containing(ox::OxLogLevel::Info, ", destroyed destroyed"), 1) << logs_text();
+  EXPECT_EQ(info("DebugView.World World, 1 scripts, 1 behaviours, running scripts=1 behaviours=1"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, ReadsComponentValuesAgainAfterAHotReload) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+  ASSERT_EQ(count_logs(ox::OxLogLevel::Info, "DebugView.Velocity 1 2 3"), 1) << logs_text();
+
+  scene.reset();
+  scripting().unload();
+  EXPECT_EQ(count_logs_containing(ox::OxLogLevel::Warn, "still referenced after unloading"), 0) << logs_text();
+
+  const auto loaded = scripting().load(smoke_game(), capturing_native_api());
+  ASSERT_TRUE(loaded.has_value()) << loaded.error();
+
+  // the readers registered by this load, not ones left from the unloaded assembly
+  scene = std::make_unique<ox::Scene>("DotNetSceneTestReloaded");
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.DebugViewProbe").has_value());
+  scene->runtime_start();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "DebugView.Velocity 1 2 3"), 2) << logs_text();
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, "DebugView.Values ScriptComponent,TransformComponent,Expired (tag),Velocity"),
+    2
+  ) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
+}
+
+TEST_F(DotNetSceneTest, DebuggerViewsSurviveTheirWorld) {
+  const auto added = scene->add_script_type("SmokeGame.DebugViewProbe");
+  ASSERT_TRUE(added.has_value()) << added.error();
+  scene->runtime_start();
+  const auto id = id_of("Debugged");
+  ASSERT_NE(id, 0_u64);
+
+  // made first so the new world can't be handed the freed one's address
+  auto later = std::make_unique<ox::Scene>("DotNetSceneTestLater");
+  scene.reset();
+
+  const auto late = later->add_script_type("SmokeGame.DebugViewLateProbe");
+  ASSERT_TRUE(late.has_value()) << late.error();
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, std::format("DebugViewLate.Entity Entity({}), its world is gone world gone", id)),
+    1
+  ) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "DebugViewLate.World World, gone"), 1) << logs_text();
+  EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
 }

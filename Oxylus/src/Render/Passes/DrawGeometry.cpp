@@ -7,7 +7,7 @@
 #include "Render/RendererInstance.hpp"
 
 namespace ox {
-static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_BACK_BIT};
+static constexpr auto VISBUFFER_RASTERIZATION = vir::RasterizationState{.cull_mode = VK_CULL_MODE_NONE};
 static constexpr auto VISBUFFER_DEPTH = vir::DepthState{
   .is_test_enabled = true,
   .is_write_enabled = true,
@@ -28,7 +28,12 @@ auto RendererInstance::draw_for_visbuffer_ms(
 
   auto& render_context = *self.renderer.render_context;
   const auto is_late = static_cast<bool>(context.cull_flags & GPU::CullFlag::LatePass);
-  const auto name = stack.format("vis encode ms {}", is_late ? "late" : "early");
+  const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
+  const auto is_blend = !is_refractor && static_cast<bool>(context.cull_flags & GPU::CullFlag::Transparent);
+  const auto name = stack.format(
+    "vis encode ms {}",
+    is_refractor ? "refractor" : (is_blend ? "blend" : (is_late ? "late" : "early"))
+  );
   static constexpr auto scene_access = vir::Access::TaskRead | vir::Access::MeshRead;
 
   std::tie(
@@ -55,7 +60,7 @@ auto RendererInstance::draw_for_visbuffer_ms(
          {values.transforms_world, scene_access},
          {context.visibility_buffer, vir::Access::TaskRead},
          {values.meshlet_instance_visibility_mask, vir::Access::TaskRW},
-         {values.materials, vir::Access::FragmentRead},
+         {values.materials, scene_access | vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::ColorRW},
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}
@@ -96,6 +101,8 @@ auto RendererInstance::draw_for_visbuffer(
   }
 
   auto& render_context = *self.renderer.render_context;
+  const auto is_refractor = static_cast<bool>(context.cull_flags & GPU::CullFlag::RefractorList);
+  const auto is_blend = !is_refractor && static_cast<bool>(context.cull_flags & GPU::CullFlag::Transparent);
   std::tie(
     std::ignore,
     values.reordered_indices,
@@ -123,7 +130,7 @@ auto RendererInstance::draw_for_visbuffer(
          {context.depth_attachment, vir::Access::DepthStencilRW},
          {context.overdraw_attachment, vir::Access::FragmentRW}}
       )
-      .with_name("vis encode")
+      .with_name(is_refractor ? "vis encode refractor" : (is_blend ? "vis encode blend" : "vis encode"))
       .bind_graphics_pipeline(render_context.pipeline("visbuffer_encode"))
       .set_rasterization(VISBUFFER_RASTERIZATION)
       .set_depth(VISBUFFER_DEPTH)
@@ -143,6 +150,63 @@ auto RendererInstance::draw_for_visbuffer(
   );
 }
 
+auto RendererInstance::draw_transparent_visbuffer(
+  this RendererInstance& self,
+  vir::Module& module,
+  FrameRecording& recording,
+  CullGeometryContext& cull_context,
+  MainGeometryContext& main_context,
+  bool is_refractor_list
+) -> std::pair<vir::ValueID, vir::ValueID> {
+  ZoneScoped;
+  auto& values = recording.values;
+  auto& render_context = *self.renderer.render_context;
+  const auto render_extent = vir::Extent3D{recording.shape.render_size.x, recording.shape.render_size.y, 1};
+
+  cull_context.hiz_attachment = main_context.hiz_attachment;
+  cull_context.visibility_buffer = main_context.visibility_buffer;
+  const auto draw_cmd_buffer = cull_transparent(module, render_context, recording, cull_context, is_refractor_list);
+
+  auto depth = module.transient_image(
+    {.extent = render_extent,
+     .format = vir::Format::D32Sfloat,
+     .name = is_refractor_list ? "refractor depth" : "blend depth"}
+  );
+  depth = module.copy_image(main_context.depth_attachment, depth);
+  auto visbuffer = module.transient_image(
+    {.extent = render_extent,
+     .format = vir::Format::R32Uint,
+     .name = is_refractor_list ? "refractor visbuffer" : "blend visbuffer"}
+  );
+  visbuffer = module.clear(visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
+
+  auto refractor_context = MainGeometryContext{
+    .draw_overdraw = false,
+    .cull_flags = GPU::CullFlag::Transparent | GPU::CullFlag::TestFrustum |
+                  (is_refractor_list ? GPU::CullFlag::RefractorList : GPU::CullFlag::None),
+    .depth_attachment = depth,
+    .hiz_attachment = cull_context.hiz_attachment,
+    .visbuffer_attachment = visbuffer,
+    .overdraw_attachment = main_context.overdraw_attachment,
+    .draw_geometry_cmd_buffer = draw_cmd_buffer,
+    .visibility_buffer = cull_context.visibility_buffer,
+  };
+
+  // the encoders read their meshlets from the opaque list's slot
+  std::swap(values.meshlet_instances, cull_context.transparent_meshlet_instances);
+  self.draw_for_visbuffer(module, recording, refractor_context);
+  std::swap(values.meshlet_instances, cull_context.transparent_meshlet_instances);
+  values.transparent_meshlet_instances = cull_context.transparent_meshlet_instances;
+
+  main_context.hiz_attachment = refractor_context.hiz_attachment;
+  main_context.overdraw_attachment = refractor_context.overdraw_attachment;
+  main_context.visibility_buffer = refractor_context.visibility_buffer;
+  cull_context.hiz_attachment = refractor_context.hiz_attachment;
+  cull_context.visibility_buffer = refractor_context.visibility_buffer;
+
+  return {refractor_context.visbuffer_attachment, refractor_context.depth_attachment};
+}
+
 auto RendererInstance::decode_visbuffer(
   this RendererInstance& self, vir::Module& module, FrameRecording& recording, MainGeometryContext& context
 ) -> void {
@@ -158,6 +222,8 @@ auto RendererInstance::decode_visbuffer(
     values.transforms_world,
     values.transforms_previous,
     values.materials,
+    values.decals,
+    values.decal_tiles,
     context.visbuffer_attachment,
     context.albedo_attachment,
     context.normal_attachment,
@@ -174,6 +240,8 @@ auto RendererInstance::decode_visbuffer(
          {values.transforms_world, vir::Access::FragmentRead},
          {values.transforms_previous, vir::Access::FragmentRead},
          {values.materials, vir::Access::FragmentRead},
+         {values.decals, vir::Access::FragmentRead},
+         {values.decal_tiles, vir::Access::FragmentRead},
          {context.visbuffer_attachment, vir::Access::FragmentSampled},
          {context.albedo_attachment, vir::Access::ColorRW},
          {context.normal_attachment, vir::Access::ColorRW},
@@ -193,6 +261,9 @@ auto RendererInstance::decode_visbuffer(
       .bind_buffer(0, 5, values.transforms_previous)
       .bind_buffer(0, 6, values.materials)
       .bind_image(0, 7, context.visbuffer_attachment)
+      .push_constant_address(0, values.decals)
+      .push_constant_address(8, values.decal_tiles)
+      .push_constants_from_at(16, recording.prepared.decal_count)
       .draw_range(3, 1, 0, 1)
       .end_rendering()
   );

@@ -72,12 +72,20 @@ func compute_disocclusions(f32x2 uv, f32x2 motion_vector, f32 current_depth_view
 // where this pixel's motion disagrees with the motion at the place it reprojects to, the vector
 // field is unreliable and the pixel should lean on the current frame instead of history
 func compute_motion_divergence(f32x2 uv, f32x2 motion_vector, f32 current_depth_sample) -> f32 {
-    let reprojected_pos = i32x2((uv + motion_vector) * f32x2(params.constants.render_size));
+    let velocity_4k = fsr3_get_4k_velocity(motion_vector);
+    if (velocity_4k <= FSR3_EPSILON) {
+        return 0.0;
+    }
+
+    let reprojected_pos = fsr3_clamp_load(
+        i32x2((uv + motion_vector) * f32x2(params.constants.render_size)),
+        i32x2(0),
+        params.constants.render_size
+    );
     let reprojected_depth = params.dilated_depth.Load(i32x3(reprojected_pos, 0));
     let reprojected_motion_vector = params.dilated_motion_vectors.Load(i32x3(reprojected_pos, 0));
 
     let reprojected_velocity = fsr3_get_4k_velocity(reprojected_motion_vector);
-    let velocity_4k = fsr3_get_4k_velocity(motion_vector);
 
     let nucleus_depth_in_meters = params.constants.get_view_space_depth_in_meters(reprojected_depth);
     let current_depth_in_meters = params.constants.get_view_space_depth_in_meters(current_depth_sample);
@@ -130,6 +138,11 @@ func compute_thin_feature_confidence(i32x2 px_pos, f32 exposure) -> f32 {
 
         luma_min = min(luma_min, samples[i]);
         luma_max = max(luma_max, samples[i]);
+    }
+
+    // a flat neighborhood has no thin feature and would divide by zero below
+    if (luma_max - luma_min <= FSR3_EPSILON) {
+        return 0.0;
     }
 
     const f32 threshold = 0.9;

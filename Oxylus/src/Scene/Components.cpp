@@ -126,9 +126,51 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::clipmap_selection_bias>();
   }
 
+  registry.bind<&ContactShadowsComponent::strength>("ContactShadows");
+
   {
     using C = ProbeVolumeComponent;
     registry.bind<&C::probe_counts, &C::probe_range, &C::cascade_count, &C::cascade_blend, &C::follow_camera>();
+  }
+
+  {
+    using C = DecalComponent;
+    registry.bind<
+      &C::material,
+      &C::opacity,
+      &C::sort_order,
+      &C::angle_fade_start,
+      &C::angle_fade_end,
+      &C::depth_fade,
+      &C::layer_mask,
+      &C::affect_albedo,
+      &C::affect_normal,
+      &C::affect_metallic_roughness,
+      &C::affect_emissive>();
+  }
+
+  {
+    using C = HeightFogComponent;
+    registry.bind<
+      &C::density,
+      &C::height_falloff,
+      &C::albedo,
+      &C::ambient_intensity,
+      &C::sun_scattering,
+      &C::anisotropy,
+      &C::start_distance,
+      &C::max_opacity,
+      &C::sky_distance,
+      &C::volumetric,
+      &C::volumetric_distance,
+      &C::volumetric_history_weight,
+      &C::local_light_scattering>();
+  }
+
+  {
+    using C = FogVolumeComponent;
+    registry
+      .bind<&C::density, &C::albedo, &C::emissive, &C::edge_fade, &C::noise_scale, &C::noise_strength, &C::wind>();
   }
 
   {

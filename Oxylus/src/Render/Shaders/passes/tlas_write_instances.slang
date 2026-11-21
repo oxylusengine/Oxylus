@@ -54,7 +54,8 @@ func cs_main(
 
     // an instance with no structure yet, which is every skinned one until the pool exists, drops out
     // of the TLAS rather than tracing against address zero
-    let mask = blas_address != 0 ? mesh_instance.tlas_mask() : 0u;
+    let is_opaque = materials[mesh_instance.material_index].render_class() == MaterialClass::Opaque;
+    let mask = (blas_address != 0 && is_opaque) ? mesh_instance.tlas_mask() : 0u;
     instance.custom_index_and_mask = (index & 0xffffffu) | (mask << 24);
     let material_flags = materials[mesh_instance.material_index].flags;
     let is_non_opaque = (material_flags & (MaterialFlag::AlphaMask | MaterialFlag::AlphaBlend)) != 0;

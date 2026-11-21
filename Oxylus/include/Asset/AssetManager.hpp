@@ -22,6 +22,7 @@
 
 namespace ox {
 class AudioEngine;
+struct StaticBLASBudget;
 
 struct Asset {
   UUID uuid = {};
@@ -119,6 +120,11 @@ public:
 
   auto get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model>;
   auto get_model(this AssetManager& self, ModelID model_id) -> ReadGuard<Model>;
+  // the device address of a mesh's ray tracing structure, 0 while it has none. Static structures are built here and
+  // nowhere else: a ready mesh without one gets it first when `budget` admits it, blocking until it is done. A null
+  // `budget` builds nothing
+  static auto resolve_mesh_blas(RenderContext& render_context, Model& model, usize mesh_index, StaticBLASBudget* budget)
+    -> u64;
 
   auto get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture>;
   auto get_texture(this AssetManager& self, TextureID texture_id) -> ReadGuard<Texture>;
@@ -134,6 +140,12 @@ public:
   auto set_material_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
   auto get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID>;
+  auto get_materials_revision(this AssetManager& self) -> u32;
+  template <typename Func>
+  auto for_each_material_index(this AssetManager& self, Func&& func) -> void {
+    auto lock = std::shared_lock(self.materials_mutex);
+    self.material_map.for_each_active([&func](usize index, const Material&) { func(index); });
+  }
 
   auto get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene>;
   auto get_scene(this AssetManager& self, SceneID scene_id) -> ReadGuard<Scene>;
@@ -152,6 +164,10 @@ public:
   // for payloads built in code instead of read from the asset's file
   auto publish_texture(this AssetManager& self, const UUID& uuid, Texture&& texture) -> bool;
   auto publish_model(this AssetManager& self, const UUID& uuid, Model&& model) -> bool;
+  // a model with no file of its own, built from `model_data` (see build_runtime_model) and loaded before this returns.
+  // The caller holds one reference and gives it back with unload_asset, the asset is erased once nothing holds it.
+  // Needs the renderer, a null UUID without one
+  auto create_model(this AssetManager& self, ModelData&& model_data) -> UUID;
 
   auto get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton>;
   auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> ReadGuard<Skeleton>;
@@ -239,6 +255,8 @@ private:
   std::shared_mutex cinematics_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
+  // bumped whenever a material is created, changed or destroyed
+  u32 materials_revision = 0;
 
   std::shared_mutex loading_mutex = {};
   ankerl::unordered_dense::set<UUID> loading_assets = {};

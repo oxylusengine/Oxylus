@@ -297,6 +297,51 @@ auto RendererInstance::draw_virtual_shadowmap(
   const auto vsm_ctx = variables.context;
   const auto ps_ctx = variables.pointspot_context;
 
+  // the marking shaders read these only in their transparent passes, the opaque pass binds stand-ins
+  auto unused_visbuffer = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "vsm unused transparent visbuffer"}
+  );
+  auto unused_depth = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Sfloat, .name = "vsm unused opaque depth"}
+  );
+
+  struct MarkPass {
+    std::string_view directional_name;
+    std::string_view pointspot_name;
+    bool is_transparent = false;
+    vir::ValueID* depth = nullptr;
+    vir::ValueID* visbuffer = nullptr;
+  };
+
+  auto mark_passes = std::array<MarkPass, 3>{};
+  auto mark_pass_count = 0_u32;
+  mark_passes[mark_pass_count++] = {
+    "vsm mark visible pages",
+    "vsm pointspot mark visible pages",
+    false,
+    &context.depth_attachment,
+    &unused_visbuffer,
+  };
+  if (shape.has_refractors) {
+    mark_passes[mark_pass_count++] = {
+      "vsm mark visible refractor pages",
+      "vsm pointspot mark visible refractor pages",
+      true,
+      &context.refractor_depth_attachment,
+      &context.refractor_visbuffer_attachment,
+    };
+  }
+
+  if (shape.has_blend_meshes) {
+    mark_passes[mark_pass_count++] = {
+      "vsm mark visible blend pages",
+      "vsm pointspot mark visible blend pages",
+      true,
+      &context.blend_depth_attachment,
+      &context.blend_visbuffer_attachment,
+    };
+  }
+
   context.directional_clipmaps_buffer = module.transient_buffer({
     .size = sizeof(DirectionalClipmaps),
     .usage = TRANSIENT_BUFFER_USAGE,
@@ -598,44 +643,126 @@ auto RendererInstance::draw_virtual_shadowmap(
           .end_compute()
       );
 
-    std::tie(
-      values.camera,
-      context.directional_clipmaps_buffer,
-      context.depth_attachment,
-      context.normal_attachment,
-      context.virtual_page_table_attachment,
-      page_occupancy,
-      page_allocator
-    ) = std::tuple_cat( //
-      module
-        .begin_compute(
-          {{values.camera, vir::Access::ComputeUniformRead},
-           {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
-           {context.depth_attachment, vir::Access::ComputeSampled},
-           {context.normal_attachment, vir::Access::ComputeSampled},
-           {context.virtual_page_table_attachment, vir::Access::ComputeRW},
-           {page_occupancy, vir::Access::ComputeRW},
-           {page_allocator, vir::Access::ComputeRW}}
-        )
-        .with_name("vsm mark visible pages")
-        .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
-        .bind_buffer(0, 0, values.camera)
-        .bind_buffer(0, 1, context.directional_clipmaps_buffer)
-        .bind_image(0, 2, context.depth_attachment)
-        .bind_image(0, 3, context.normal_attachment)
-        .bind_image(0, 4, context.virtual_page_table_attachment)
-        .bind_buffer(0, 5, page_occupancy)
-        .bind_buffer(0, 6, page_allocator)
-        .push_constants_from(vsm_ctx)
-        .dispatch_invocations_per_pixel(context.depth_attachment)
-        .end_compute()
-    );
+    // the transparent dispatches mark what refractors and blend meshes cover, from their own depth and normals
+    for (const auto& mark_pass : std::span{mark_passes}.first(mark_pass_count)) {
+      const auto is_transparent = mark_pass.is_transparent;
+      auto marked_depth = *mark_pass.depth;
+      auto marked_visbuffer = *mark_pass.visbuffer;
+      auto opaque_depth = is_transparent ? context.depth_attachment : unused_depth;
+      if (is_transparent) {
+        std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
+      }
+
+      std::tie(
+        values.camera,
+        context.directional_clipmaps_buffer,
+        marked_depth,
+        context.normal_attachment,
+        context.virtual_page_table_attachment,
+        page_occupancy,
+        page_allocator,
+        marked_visbuffer,
+        opaque_depth,
+        values.meshlet_instances,
+        values.mesh_instances,
+        values.meshes,
+        values.transforms_world,
+        values.materials
+      ) = std::tuple_cat( //
+        module
+          .begin_compute(
+            {{values.camera, vir::Access::ComputeUniformRead},
+             {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
+             {marked_depth, vir::Access::ComputeSampled},
+             {context.normal_attachment, vir::Access::ComputeSampled},
+             {context.virtual_page_table_attachment, vir::Access::ComputeRW},
+             {page_occupancy, vir::Access::ComputeRW},
+             {page_allocator, vir::Access::ComputeRW},
+             {marked_visbuffer, vir::Access::ComputeSampled},
+             {opaque_depth, vir::Access::ComputeSampled},
+             {values.meshlet_instances, vir::Access::ComputeRead},
+             {values.mesh_instances, vir::Access::ComputeRead},
+             {values.meshes, vir::Access::ComputeRead},
+             {values.transforms_world, vir::Access::ComputeRead},
+             {values.materials, vir::Access::ComputeRead}}
+          )
+          .with_name(mark_pass.directional_name)
+          .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages"))
+          .bind_buffer(0, 0, values.camera)
+          .bind_buffer(0, 1, context.directional_clipmaps_buffer)
+          .bind_image(0, 2, marked_depth)
+          .bind_image(0, 3, context.normal_attachment)
+          .bind_image(0, 4, context.virtual_page_table_attachment)
+          .bind_buffer(0, 5, page_occupancy)
+          .bind_buffer(0, 6, page_allocator)
+          .bind_image(0, 7, marked_visbuffer)
+          .bind_image(0, 8, opaque_depth)
+          .bind_buffer(0, 9, values.meshlet_instances)
+          .bind_buffer(0, 10, values.mesh_instances)
+          .bind_buffer(0, 11, values.meshes)
+          .bind_buffer(0, 12, values.transforms_world)
+          .bind_buffer(0, 13, values.materials)
+          .specialize_constant(0, static_cast<u32>(is_transparent))
+          .push_constants_from(vsm_ctx)
+          .dispatch_invocations_per_pixel(marked_depth)
+          .end_compute()
+      );
+
+      if (is_transparent) {
+        std::swap(values.meshlet_instances, values.transparent_meshlet_instances);
+        *mark_pass.depth = marked_depth;
+        *mark_pass.visbuffer = marked_visbuffer;
+        context.depth_attachment = opaque_depth;
+      } else {
+        context.depth_attachment = marked_depth;
+        unused_visbuffer = marked_visbuffer;
+        unused_depth = opaque_depth;
+      }
+    }
+
+    // volumetric fog samples the sun's shadow in the air, where no visible pixel marked a page
+    if (shape.has_volumetric_fog) {
+      const auto froxel_count_x = (shape.render_size.x + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE;
+      const auto froxel_count_y = (shape.render_size.y + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE;
+      std::tie(
+        values.camera,
+        context.directional_clipmaps_buffer,
+        context.virtual_page_table_attachment,
+        page_occupancy,
+        page_allocator,
+        context.froxel_tile_depth_attachment
+      ) = std::tuple_cat(module
+                           .begin_compute(
+                             {{values.camera, vir::Access::ComputeUniformRead},
+                              {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
+                              {context.virtual_page_table_attachment, vir::Access::ComputeRW},
+                              {page_occupancy, vir::Access::ComputeRW},
+                              {page_allocator, vir::Access::ComputeRW},
+                              {context.froxel_tile_depth_attachment, vir::Access::ComputeSampled}}
+                           )
+                           .with_name("vsm mark froxel pages")
+                           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_froxel_pages"))
+                           .bind_buffer(0, 0, values.camera)
+                           .bind_buffer(0, 1, context.directional_clipmaps_buffer)
+                           .bind_image(0, 2, context.virtual_page_table_attachment)
+                           .bind_buffer(0, 3, page_occupancy)
+                           .bind_buffer(0, 4, page_allocator)
+                           .bind_image(0, 5, context.froxel_tile_depth_attachment)
+                           .push_constants_from(vsm_ctx)
+                           .dispatch_invocations(froxel_count_x, froxel_count_y, GPU::FROXEL_DEPTH_SLICES)
+                           .end_compute());
+    }
   }
 
   if (is_pointspot) {
-    {
+    for (const auto& mark_pass : std::span{mark_passes}.first(mark_pass_count)) {
+      const auto is_transparent = mark_pass.is_transparent;
+      auto marked_depth = *mark_pass.depth;
+      auto marked_visbuffer = *mark_pass.visbuffer;
+      auto opaque_depth = is_transparent ? context.depth_attachment : unused_depth;
+
       auto mips = std::array<vir::ValueID, RMVSMContext::POINT_SPOT_MIP_COUNT>{};
-      auto accesses = std::array<vir::ResourceAccess, RMVSMContext::POINT_SPOT_MIP_COUNT + 6>{};
+      auto accesses = std::array<vir::ResourceAccess, RMVSMContext::POINT_SPOT_MIP_COUNT + 8>{};
       for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
         mips[mip] = module.mip(context.pointspot_page_table_attachment, mip);
         accesses[mip] = {mips[mip], vir::Access::ComputeRW};
@@ -643,12 +770,14 @@ auto RendererInstance::draw_virtual_shadowmap(
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT] = {values.camera, vir::Access::ComputeUniformRead};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 1] = {context.pointspot_views_buffer, vir::Access::ComputeRead};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 2] = {context.light_grid_buffer, vir::Access::ComputeRead};
-      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 3] = {context.depth_attachment, vir::Access::ComputeSampled};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 3] = {marked_depth, vir::Access::ComputeSampled};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 4] = {page_occupancy, vir::Access::ComputeRW};
       accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 5] = {page_allocator, vir::Access::ComputeRW};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 6] = {marked_visbuffer, vir::Access::ComputeSampled};
+      accesses[RMVSMContext::POINT_SPOT_MIP_COUNT + 7] = {opaque_depth, vir::Access::ComputeSampled};
       auto pass = bind_vsm_pointspot_spec_constants(
         module.begin_compute(accesses)
-          .with_name("vsm pointspot mark visible pages")
+          .with_name(mark_pass.pointspot_name)
           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_visible_pages_pointspot"))
       );
       for (auto mip = 0_u32; mip < RMVSMContext::POINT_SPOT_MIP_COUNT; mip++) {
@@ -657,19 +786,34 @@ auto RendererInstance::draw_virtual_shadowmap(
       module.bind_buffer(0, 0, values.camera)
         .bind_buffer(0, 1, context.pointspot_views_buffer)
         .bind_buffer(0, 2, context.light_grid_buffer)
-        .bind_image(0, 3, context.depth_attachment)
+        .bind_image(0, 3, marked_depth)
         .bind_buffer(0, 10, page_occupancy)
         .bind_buffer(0, 11, page_allocator)
+        .bind_image(0, 12, marked_visbuffer)
+        .bind_image(0, 13, opaque_depth)
+        .specialize_constant(0, static_cast<u32>(is_transparent))
         .push_constants_from(variables.pointspot_mark_push)
-        .dispatch_invocations_per_pixel(context.depth_attachment);
+        .dispatch_invocations_per_pixel(marked_depth);
       const auto results = pass.end_compute();
       context.pointspot_page_table_attachment = module.whole(results[RMVSMContext::POINT_SPOT_MIP_COUNT - 1]);
       values.camera = results[RMVSMContext::POINT_SPOT_MIP_COUNT];
       context.pointspot_views_buffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 1];
       context.light_grid_buffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 2];
-      context.depth_attachment = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 3];
+      marked_depth = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 3];
       page_occupancy = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 4];
       page_allocator = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 5];
+      marked_visbuffer = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 6];
+      opaque_depth = results[RMVSMContext::POINT_SPOT_MIP_COUNT + 7];
+
+      if (is_transparent) {
+        *mark_pass.depth = marked_depth;
+        *mark_pass.visbuffer = marked_visbuffer;
+        context.depth_attachment = opaque_depth;
+      } else {
+        context.depth_attachment = marked_depth;
+        unused_visbuffer = marked_visbuffer;
+        unused_depth = opaque_depth;
+      }
     }
 
     const auto coarse_mip = module.mip(context.pointspot_page_table_attachment, RMVSMContext::POINT_SPOT_MIP_COUNT - 1);
@@ -990,7 +1134,7 @@ auto RendererInstance::draw_virtual_shadowmap(
              {values.meshlet_instances, geometry_access},
              {values.transforms_world, geometry_access},
              {cull_context.visibility_buffer, geometry_access},
-             {values.materials, vir::Access::FragmentRead},
+             {values.materials, geometry_access | vir::Access::FragmentRead},
              {context.directional_clipmaps_buffer, geometry_access | vir::Access::FragmentRead},
              {hpb, vir::Access::TaskSampled | vir::Access::MeshSampled},
              {context.virtual_page_table_attachment, vir::Access::FragmentSampled},
@@ -1103,7 +1247,7 @@ auto RendererInstance::draw_virtual_shadowmap(
                {values.meshes, geometry_access},
                {values.mesh_instances, geometry_access},
                {values.transforms_world, geometry_access},
-               {values.materials, vir::Access::FragmentRead},
+               {values.materials, geometry_access | vir::Access::FragmentRead},
                {cull_context.views_buffer, geometry_access},
                {cull_context.vsm_meshlet_instances_buffer, geometry_access},
                {cull_context.hpb_attachment, vir::Access::TaskSampled | vir::Access::MeshSampled},

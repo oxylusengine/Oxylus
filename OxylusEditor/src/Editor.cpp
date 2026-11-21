@@ -1,6 +1,7 @@
 #include "Editor.hpp"
 
 #include <ImGuizmo.h>
+#include <algorithm>
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui_internal.h>
@@ -23,6 +24,7 @@
 #include "Panels/ContentPanel.hpp"
 #include "Panels/EditorSettingsPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
+#include "Panels/JobsPanel.hpp"
 #include "Panels/LoadingPanel.hpp"
 #include "Panels/ParticleEditorPanel.hpp"
 #include "Panels/ProjectPanel.hpp"
@@ -56,7 +58,8 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_theme.init();
 
   auto& input = App::mod<Input>();
-  input.set_context("editor");
+  // the editor's shortcuts sit beside the game's actions rather than replacing their context
+  input.set_context_persistent("editor", true);
   std::ignore = input.bind_action(
     ActionBinding{
       .action_id = "new_scene",
@@ -129,6 +132,7 @@ auto Editor::init(this Editor& self) -> std::expected<void, std::string> {
   self.editor_panel_registry.add<CinematicEditorPanel>();
   auto activity_log_panel = self.editor_panel_registry.add<ActivityLogPanel>();
   activity_log_panel->set_system(&self.notification_system);
+  self.editor_panel_registry.add<JobsPanel>();
   self.editor_panel_registry.add<TextEditorPanel>();
   self.editor_panel_registry.add<AboutPanel>();
 
@@ -269,7 +273,8 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   // panels render their scenes as they draw, each one ahead of this frame's UI on the same queue
   self.render(*frame);
 
-  imgui_renderer.end_frame();
+  auto* scene = self.get_selected_scene();
+  imgui_renderer.end_frame(scene ? &scene->renderer_cvar.system : nullptr);
 
   // the UI over the swapchain image, recorded again only when the swapchain is replaced
   if (!self.frame_program || self.frame_program_generation != frame->generation) {
@@ -313,16 +318,22 @@ auto Editor::render(this Editor& self, const SwapchainInfo& swapchain_info) -> v
 
   auto& job_man = App::get_job_manager();
 
-  auto status = job_man.get_tracker().get_status();
-  for (const auto& [name, is_working] : status) {
-    if (name == "Completion callback")
-      continue;
-
-    Notification notification(name, !is_working, Notification::Type::Loading);
-    self.notification_system.add(std::move(notification));
+  // only transitions are sent, a spinner per frame would also bump the activity log's repeat count
+  job_man.get_tracker().active_names(self.active_job_names);
+  std::erase(self.active_job_names, "Completion callback");
+  for (const auto& name : self.active_job_names) {
+    if (std::ranges::find(self.loading_job_names, name) == self.loading_job_names.end()) {
+      self.notification_system.add(Notification(name, false, Notification::Type::Loading));
+    }
   }
 
-  job_man.get_tracker().cleanup_old();
+  for (const auto& name : self.loading_job_names) {
+    if (std::ranges::find(self.active_job_names, name) == self.active_job_names.end()) {
+      self.notification_system.add(Notification(name, true, Notification::Type::Loading));
+    }
+  }
+
+  std::swap(self.loading_job_names, self.active_job_names);
   self.notification_system.draw();
 
   if (self.editor_cvar.cvar_show_style_editor.get())
@@ -680,6 +691,25 @@ void Editor::draw_menubar(this Editor& self) {
       }
       ImGui::EndMenu();
     }
+#ifdef OX_DOTNET
+    if (self.csharp_scripts.is_open() && ImGui::BeginMenu("Scripts")) {
+      ImGui::BeginDisabled(!self.csharp_scripts.can_attach_debugger());
+      if (ImGui::MenuItem("Attach Debugger...")) {
+        self.csharp_scripts.attach_debugger();
+      }
+      ImGui::EndDisabled();
+
+      auto is_waiting_on_play = self.editor_cvar.cvar_wait_for_debugger.as_bool();
+      if (ImGui::MenuItem("Wait for Debugger on Play", nullptr, &is_waiting_on_play)) {
+        self.editor_cvar.cvar_wait_for_debugger.set(is_waiting_on_play);
+        self.editor_cvar.save();
+      }
+
+      ImGui::Separator();
+      ImGui::TextDisabled(self.csharp_scripts.is_debugger_attached() ? "Debugger attached" : "No debugger attached");
+      ImGui::EndMenu();
+    }
+#endif
     if (ImGui::BeginMenu("Window")) {
       ImGui::MenuItem("Inspector", nullptr, &self.editor_panel_registry.get<InspectorPanel>().visible);
       ImGui::MenuItem("Scene hierarchy", nullptr, &self.editor_panel_registry.get<SceneHierarchyPanel>().visible);
@@ -826,6 +856,37 @@ void Editor::draw_bottom_toolbar(this Editor& self, float height) {
 
     if (was_activity_log_visible)
       ImGui::PopStyleColor();
+
+    ImGui::SameLine();
+
+    auto& jobs_panel = self.editor_panel_registry.get<JobsPanel>();
+    const bool was_jobs_visible = jobs_panel.visible;
+    const auto stall_threshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<f32>(jobs_panel.stall_seconds)
+    );
+    const auto stalled_jobs = App::get_job_manager().get_tracker().count_stalled(stall_threshold);
+    const auto jobs_text = stalled_jobs > 0 ? fmt::format("{} {} stalled", ICON_MDI_ALERT, stalled_jobs)
+                                            : fmt::format("{} Jobs", ICON_MDI_COGS);
+
+    if (stalled_jobs > 0)
+      ImGui::PushStyleColor(ImGuiCol_Text, Gruvbox::bright_yellow.Value);
+    else if (was_jobs_visible)
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+
+    if (
+      UI::toggle_button(jobs_text.c_str(), jobs_panel.visible, {}, 1.0f, 1.0f, ImGuiButtonFlags_None, ImGuiCol_Header)
+    ) {
+      jobs_panel.visible = !jobs_panel.visible;
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+    if (stalled_jobs > 0 || was_jobs_visible)
+      ImGui::PopStyleColor();
+
+    if (stalled_jobs > 0)
+      UI::tooltip_hover("Jobs have been running longer than the stall threshold. Click to open the Jobs panel");
+
     ImGui::SameLine();
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();

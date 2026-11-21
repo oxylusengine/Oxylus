@@ -24,9 +24,7 @@ func cs_main(
 ) -> void {
     const let lut_size = params.atmosphere.aerial_perspective_lut_size;
     let uv = f32x2(f32x2(thread_id.xy) + 0.5) / f32x2(lut_size.xy);
-    let clip_space = f32x3(2.0 * uv - 1.0, 1.0);
-    let world_space = mul(params.camera.inv_projection_view, f32x4(clip_space, 1.0));
-    let world_pos = world_space.xyz / world_space.w;
+    let world_pos = params.camera.unproject_uv(uv, 1.0);
     let world_dir = normalize(world_pos - params.camera.position.xyz);
     var eye_pos = params.atmosphere.get_eye_pos(params.camera.position.xyz);
 

@@ -80,6 +80,12 @@ local function artifacts_properties()
   }
 end
 
+-- a lingering roslyn server or msbuild node inherits xmake's file descriptors, project.lock among them, and holds
+-- it for minutes after the build, so the next xmake run blocks waiting for the lock
+local function no_daemons()
+  return { "-nodeReuse:false", "-p:UseSharedCompilation=false" }
+end
+
 local function configuration()
   return is_mode("debug") and "Debug" or "Release"
 end
@@ -113,7 +119,8 @@ end
 function build(project, output_dir)
   os.vrunv("dotnet", table.join(
     { "build", project, "-c", configuration(), "-o", output_dir, "--nologo", "-v", "q" },
-    artifacts_properties()))
+    artifacts_properties(),
+    no_daemons()))
 end
 
 -- `properties` are extra MSBuild properties, { "-p:Name=Value", ... }. Always Release: what NativeAOT produces is
@@ -129,6 +136,7 @@ function publish_aot(target, project, output_dir, properties)
         -- minimal rather than quiet, so a failed native link shows what the linker said and not only its command line
         { "publish", project, "-c", "Release", "-r", rid(target), "-o", output_dir, "--nologo", "-v", "m" },
         artifacts_properties(),
+        no_daemons(),
         extra_args,
         properties or {})
     )

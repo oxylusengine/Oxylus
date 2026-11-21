@@ -23,6 +23,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
 #include "UI/RmlFileInterface.hpp"
+#include "UI/RuntimeConsole.hpp"
 #include "Utils/Log.hpp"
 #include "Utils/Profiler.hpp"
 
@@ -137,6 +138,9 @@ void ImGuiRenderer::build_fonts() {
   font_texture.upload(pixels, vir::Access::FragmentSampled);
 }
 
+ImGuiRenderer::ImGuiRenderer() = default;
+ImGuiRenderer::~ImGuiRenderer() = default;
+
 auto ImGuiRenderer::init(this ImGuiRenderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
   IMGUI_CHECKVERSION();
@@ -166,11 +170,14 @@ auto ImGuiRenderer::init(this ImGuiRenderer& self) -> std::expected<void, std::s
     ImGuiShadowLayer{.sigma = 5.0f, .spread = -1.0f, .offset = {0.0f, 2.0f}, .color = {0.0f, 0.0f, 0.0f, 0.65f}},
   };
 
+  self.console = std::make_unique<RuntimeConsole>();
   return {};
 }
 
 auto ImGuiRenderer::deinit(this ImGuiRenderer& self) -> std::expected<void, std::string> {
   ZoneScoped;
+
+  self.console.reset();
 
   // owned draw lists point into the context's shared draw data
   self.shadow_draw_lists.clear();
@@ -249,9 +256,10 @@ auto ImGuiRenderer::apply_ui_scale(this ImGuiRenderer& self) -> void {
   self.applied_ui_scale = ui_scale;
 }
 
-auto ImGuiRenderer::end_frame(this ImGuiRenderer& self) -> void {
+auto ImGuiRenderer::end_frame(this ImGuiRenderer& self, CVarSystem* scene_cvars) -> void {
   ZoneScoped;
 
+  self.console->render(scene_cvars);
   ImGui::Render();
 
   auto& window = App::get_window();
@@ -648,15 +656,26 @@ void ImGuiRenderer::on_mouse_scroll(glm::vec2 offset) {
 }
 
 auto ImGuiRenderer::wants_keyboard(this const ImGuiRenderer& self) -> bool {
-  return self.keyboard_input_enabled || ImGui::GetIO().WantTextInput;
+  return self.keyboard_input_enabled || (self.console && self.console->visible) || ImGui::GetIO().WantTextInput;
 }
 
 ImGuiKey to_imgui_key(SDL_Keycode keycode, SDL_Scancode scancode);
-void ImGuiRenderer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
+auto ImGuiRenderer::on_key(this ImGuiRenderer& self, u32 key_code, u32 scan_code, u16 mods, bool down, bool repeat)
+  -> bool {
   ZoneScoped;
 
-  if (!wants_keyboard()) {
-    return;
+  if (self.console && scan_code == SDL_SCANCODE_GRAVE) {
+    self.console_toggle_key_down = down;
+    if (down && !repeat) {
+      self.console->toggle();
+    }
+    return true;
+  }
+  if (down) {
+    self.console_toggle_key_down = false;
+  }
+  if (!self.wants_keyboard()) {
+    return false;
   }
 
   auto& imgui = ImGui::GetIO();
@@ -669,17 +688,22 @@ void ImGuiRenderer::on_key(u32 key_code, u32 scan_code, u16 mods, bool down) {
   imgui.AddKeyEvent(key, down);
   imgui
     .SetKeyEventNativeData(key, static_cast<i32>(key_code), static_cast<i32>(scan_code), static_cast<i32>(scan_code));
+  return self.console && self.console->visible;
 }
 
-void ImGuiRenderer::on_text_input(const c8* text) {
+auto ImGuiRenderer::on_text_input(this ImGuiRenderer& self, const c8* text) -> bool {
   ZoneScoped;
 
-  if (!wants_keyboard()) {
-    return;
+  if (self.console_toggle_key_down) {
+    return true;
+  }
+  if (!self.wants_keyboard()) {
+    return false;
   }
 
   auto& imgui = ImGui::GetIO();
   imgui.AddInputCharactersUTF8(text);
+  return self.console && self.console->visible;
 }
 
 ImGuiKey to_imgui_key(SDL_Keycode keycode, SDL_Scancode scancode) {

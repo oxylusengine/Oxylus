@@ -98,6 +98,7 @@ public:
   static auto get_rendercontext() -> RenderContext&;
   static auto get_ui_scale() -> f32;
   static auto get_timestep() -> const Timestep&;
+  static auto set_max_step_millis(f64 millis) -> void;
   static auto get_vfs() -> VFS&;
   static auto get_job_manager() -> JobManager&;
   static auto get_event_system() -> EventSystem&;

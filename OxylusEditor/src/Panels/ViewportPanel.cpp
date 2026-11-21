@@ -8,6 +8,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <type_traits>
 #include <vir/Allocator.hpp>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -24,11 +25,13 @@
 #include "OS/File.hpp"
 #include "Physics/Physics.hpp"
 #include "Render/Camera.hpp"
+#include "Render/DebugRenderer.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RendererInstance.hpp"
 #include "Render/Upscaler.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/ComponentRegistry.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -39,6 +42,23 @@
 #include "Utils/OxMath.hpp"
 
 namespace ox {
+// the edges of the unit cube [-0.5, 0.5]^3 under `world`
+static auto draw_unit_box(DebugRenderer& debug_renderer, const glm::mat4& world, const glm::vec4& color) -> void {
+  auto corners = std::array<glm::vec3, 8>{};
+  for (u32 i = 0; i < corners.size(); i++) {
+    const auto local = glm::vec3((i & 1) != 0 ? 0.5f : -0.5f, (i & 2) != 0 ? 0.5f : -0.5f, (i & 4) != 0 ? 0.5f : -0.5f);
+    corners[i] = glm::vec3(world * glm::vec4(local, 1.0f));
+  }
+
+  for (u32 i = 0; i < corners.size(); i++) {
+    for (const u32 bit : {1u, 2u, 4u}) {
+      if ((i & bit) == 0) {
+        debug_renderer.draw_line(corners[i], corners[i | bit], 1.0f, color, false);
+      }
+    }
+  }
+}
+
 static auto dump_frame_ir(const RendererInstance& renderer_instance) -> void {
   const auto ir = renderer_instance.dump_program();
   if (ir.empty()) {
@@ -66,17 +86,15 @@ struct GizmoInfo {
   glm::mat4 view_proj;
   Frustum frustum;
 };
-template <typename T, typename Func>
-void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, Scene* scene, Func&& icon_select_func) {
-  auto& editor = App::mod<Editor>();
-  auto& editor_theme = editor.editor_theme;
+template <typename... Components>
+static auto show_component_gizmos(const GizmoInfo& gizmo_info, Scene& scene, Editor& editor) -> void {
+  ZoneScoped;
+
+  const auto& component_icons = editor.editor_theme.component_icon_map;
   const auto scaled_icon_size = UI::scale(gizmo_info.icon_size);
 
-  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T& component) {
+  const auto draw_icon = [&](flecs::entity entity, const c8* icon, const c8* name) {
     const glm::vec3 pos = Scene::get_world_transform(entity)[3];
-
-    if (entity.has<Hidden>())
-      return;
 
     if (gizmo_info.frustum.is_inside(pos) == (u32)Intersection::Outside)
       return;
@@ -95,7 +113,6 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
 
     ImGui::PushFont(nullptr, gizmo_info.icon_size);
     ImGui::PushID(static_cast<i32>(entity.id()));
-    const char* icon = icon_select_func(editor_theme.component_icon_map.at(typeid(T).hash_code()), component);
     if (ImGui::Button(icon, {scaled_icon_size, scaled_icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
@@ -105,8 +122,34 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
 
     ImGui::PopStyleColor(2);
 
-    UI::tooltip_hover(name.data());
-  });
+    UI::tooltip_hover(name);
+  };
+
+  const auto draw_component = [&]<typename Component>() {
+    const auto icon_entry = component_icons.find(typeid(Component).hash_code());
+    if (icon_entry == component_icons.end()) {
+      return;
+    }
+
+    const auto* name = short_type_name<Component>();
+    ImGui::PushID(name);
+    scene.world.query_builder<const TransformComponent, const Component>().template without<Hidden>().build().each(
+      [&](flecs::entity entity, const TransformComponent&, const Component& component) {
+        const auto* icon = icon_entry->second;
+        if constexpr (std::is_same_v<Component, LightComponent>) {
+          switch (component.type) {
+            case LightComponent::Directional: icon = ICON_MDI_WEATHER_SUNNY; break;
+            case LightComponent::Spot       : icon = ICON_MDI_SPOTLIGHT; break;
+            case LightComponent::Point      : break;
+          }
+        }
+        draw_icon(entity, icon, name);
+      }
+    );
+    ImGui::PopID();
+  };
+
+  (draw_component.template operator()<Components>(), ...);
 }
 
 // drives the settings popup: each section body runs once to scan (search matches, modified rows),
@@ -416,11 +459,6 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
-    if (auto s = self.editor_scene ? self.editor_scene->get_scene() : nullptr) {
-      self.runtime_console.set_scene_cvar_system(reinterpret_cast<CVarSystem*>(&s->renderer_cvar));
-      self.runtime_console.render();
-    }
-
     if (ImGui::BeginPopupContextItem("viewport context")) {
       if (self.editor_scene && !self.editor_scene->is_playing()) {
         if (ImGui::MenuItem("Unload Scene")) {
@@ -1118,6 +1156,10 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
         "SSSR Confidence",
         "SSSR Variance",
         "SSSR Sample Count",
+        "Transparency Coverage",
+        "Refractors",
+        "Refractor Depth",
+        "Reactive Mask",
         "RTGI Half Resolution",
         "RTGI Raw Radiance",
         "RTGI Denoised",
@@ -1574,9 +1616,21 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
   );
 
   ui.section({.name = "Contact Shadows", .toggle = &cvar_sys.cvar_contact_shadows_enabled}, [&] {
-    ui.drag("Steps", cvar_sys.cvar_contact_shadows_steps, 1, 64);
-    ui.drag("Thickness", cvar_sys.cvar_contact_shadows_thickness, 0.0f, 5.0f);
-    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f);
+    ui.drag(
+      "Max steps",
+      cvar_sys.cvar_contact_shadows_steps,
+      1,
+      static_cast<i32>(GPU::CONTACT_SHADOW_MAX_STEPS),
+      "Maximum distance in render pixels to search toward each light with Contact Shadows"
+    );
+    ui.drag(
+      "Thickness",
+      cvar_sys.cvar_contact_shadows_thickness,
+      0.0f,
+      5.0f,
+      "Assumed depth of a caster in world units"
+    );
+    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f, "Maximum shadow ray length in world units");
   });
 }
 
@@ -1687,7 +1741,17 @@ auto ViewportPanel::draw_snap_settings_panel(this ViewportPanel& self) -> void {
   if (UI::begin_properties(UI::default_properties_flags, true, 0.3f)) {
     UI::property("Use Snap", &self.use_snap);
     UI::property<f32>("Snap Step", &self.snap_amount, 0.5f, 100.0f, nullptr, 0.5f, "%.1f");
-    UI::property<f32>("Rotate Snap Step", &self.snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>("Rotate Snap Step", &self.rotate_snap_amount, 45.f, 360.0f, nullptr, 0.5f, "%.1f");
+    UI::property<f32>(
+      "Vertex Snap Radius",
+      &self.vertex_snap.radius,
+      1.0f,
+      200.0f,
+      "Hold V while moving to drag the selection by its vertex nearest the cursor. It snaps onto the nearest mesh "
+      "or sprite vertex within this many pixels.",
+      1.0f,
+      "%.0f px"
+    );
     UI::end_properties();
   }
 }
@@ -1854,47 +1918,20 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       view_proj,
       frustum,
     };
-    show_component_gizmo<LightComponent>(
-      gizmo_info,
-      "LightComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const LightComponent& c) {
-        switch (c.type) {
-          case LightComponent::Directional: return ICON_MDI_WEATHER_SUNNY;
-          case LightComponent::Spot       : return ICON_MDI_SPOTLIGHT;
-          case LightComponent::Point      : return component_icon;
-        }
-
-        return component_icon;
-      }
-    );
-    show_component_gizmo<AudioSourceComponent>(
-      gizmo_info,
-      "AudioSourceComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const AudioSourceComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<AudioListenerComponent>(
-      gizmo_info,
-      "AudioListenerComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const AudioListenerComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<CameraComponent>(
-      gizmo_info,
-      "CameraComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const CameraComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<ParticleSystemComponent>(
-      gizmo_info,
-      "ParticleSystemComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const ParticleSystemComponent& c) { return component_icon; }
-    );
+    // opt in component types to viewport gizmos
+    show_component_gizmos<
+      LightComponent,
+      AudioSourceComponent,
+      AudioListenerComponent,
+      CameraComponent,
+      ParticleSystemComponent,
+      ProbeVolumeComponent,
+      DecalComponent>(gizmo_info, *self.editor_scene->get_scene(), editor);
   }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
+
+  self.vertex_snap.is_active = false;
 
   auto& input_sys = App::mod<Input>();
   if (input_sys.get_key_held(ScanCode::LeftControl)) {
@@ -1978,6 +2015,35 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   if (selected_entity == flecs::entity::null())
     return;
 
+  const auto is_decal = selected_entity.has<DecalComponent>();
+  if (is_decal || selected_entity.has<FogVolumeComponent>()) {
+    auto& debug_renderer = self.editor_scene->get_scene()->debug_renderer;
+    const glm::mat4 box_world = Scene::get_world_transform(selected_entity);
+    const auto box_color = is_decal ? glm::vec4(1.0f, 0.75f, 0.1f, 1.0f) : glm::vec4(0.6f, 0.8f, 1.0f, 1.0f);
+    draw_unit_box(debug_renderer, box_world, box_color);
+
+    if (is_decal) {
+      const auto center = glm::vec3(box_world[3]);
+      const auto direction = glm::normalize(glm::vec3(box_world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+      const auto depth = glm::length(glm::vec3(box_world[2]));
+      debug_renderer.draw_line(center, center + direction * depth, 1.0f, box_color, false);
+    }
+  }
+
+  const auto is_vertex_snapping = self.vertex_snap.update({
+    .scene = self.editor_scene->get_scene().get(),
+    .camera = &cam,
+    .selected_entity = selected_entity,
+    .rect_min = {self.viewport_bounds_[0].x, self.viewport_bounds_[0].y},
+    .rect_max = {self.viewport_bounds_[1].x, self.viewport_bounds_[1].y},
+    .is_translating = (self.gizmo_type & ImGuizmo::TRANSLATE) != 0,
+    .is_gizmo_dragging = ImGuizmo::IsUsing(),
+    .is_hovered = self.is_viewport_hovered,
+    .can_begin_drag = self.is_viewport_hovered && !self.is_ui_capturing_mouse && !self.is_menubar_hovered,
+  });
+  if (is_vertex_snapping)
+    return;
+
   if (auto* tc = selected_entity.try_get_mut<TransformComponent>()) {
     setup_gizmo_rect();
 
@@ -2026,6 +2092,7 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
                                          : glm::mat4(1.0f);
 
         const glm::mat4 inv_parent = glm::inverse(parent_world);
+        const auto old_tc = *tc;
         if (self.gizmo_type == ImGuizmo::TRANSLATE) {
           tc->position += glm::vec3(inv_parent * glm::vec4(delta_translation, 0.0f));
         } else if (self.gizmo_type == ImGuizmo::ROTATE) {
@@ -2034,10 +2101,8 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
           tc->scale *= delta_scale;
         }
 
-        auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
           selected_entity,
-          tc,
           old_tc,
           *tc,
           "gizmo transform"
@@ -2092,6 +2157,42 @@ static auto pick_entity(EditorScene* s, u32 transform_index) -> void {
   }
 }
 
+// the frame's refractor visbuffer and the meshlet list it indexes, or stand-ins holding no refractor when the
+// shape has none, so the stages record the same passes either way
+static auto refractor_stage_resources(RenderStageContext& ctx) -> std::pair<vir::ValueID, vir::ValueID> {
+  if (ctx.image_resources.contains("refractor_visbuffer_attachment")) {
+    return {
+      ctx.get_image_resource("refractor_visbuffer_attachment"),
+      ctx.get_buffer_resource("transparent_meshlet_instances_buffer")
+    };
+  }
+
+  auto& module = ctx.module;
+  auto refractor_visbuffer = module.transient_image(
+    {.extent = {1, 1, 1}, .format = vir::Format::R32Uint, .name = "no refractor visbuffer"}
+  );
+  refractor_visbuffer = module.clear(refractor_visbuffer, vir::ClearValue::rgba_u32(~0_u32, ~0_u32, ~0_u32, ~0_u32));
+  const auto transparent_meshlet_instances = module.transient_buffer({
+    .size = sizeof(GPU::MeshletInstance),
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    .location = vir::MemoryLocation::GpuOnly,
+    .name = "no transparent meshlet instances",
+  });
+
+  return {refractor_visbuffer, transparent_meshlet_instances};
+}
+
+static auto store_refractor_stage_resources(
+  RenderStageContext& ctx, vir::ValueID refractor_visbuffer, vir::ValueID transparent_meshlet_instances
+) -> void {
+  if (!ctx.image_resources.contains("refractor_visbuffer_attachment")) {
+    return;
+  }
+
+  ctx.set_image_resource("refractor_visbuffer_attachment", refractor_visbuffer)
+    .set_buffer_resource("transparent_meshlet_instances_buffer", transparent_meshlet_instances);
+}
+
 using HighlightMaskPush = PushConstants<u32, u32>;
 using PickPush2D = PushConstants<glm::uvec2, u64>;
 using PickPush3D = PushConstants<glm::uvec2, u64, u32>;
@@ -2106,6 +2207,7 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
   auto visbuffer_attachment = ctx.get_image_resource("visbuffer_attachment");
   auto meshlet_instances_buffer = ctx.get_buffer_resource("meshlet_instances_buffer");
   auto mesh_instances_buffer = ctx.get_buffer_resource("mesh_instances_buffer");
+  auto [refractor_visbuffer, transparent_meshlet_instances] = refractor_stage_resources(ctx);
   auto transform_indices = module.declare_buffer_var("highlight transform indices", vir::Access::None);
   const auto push = module.declare_bytes_var("highlight mask push", sizeof(HighlightMaskPush));
   const auto highlight_condition = module.declare_bool_var("is highlighting", false);
@@ -2118,7 +2220,15 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
     {.extent = extent, .format = vir::Format::R8Unorm, .name = "selection silhouette mask"}
   );
 
-  std::tie(silhouette_mask, visbuffer_attachment, meshlet_instances_buffer, mesh_instances_buffer, std::ignore) =
+  std::tie(
+    silhouette_mask,
+    visbuffer_attachment,
+    meshlet_instances_buffer,
+    mesh_instances_buffer,
+    std::ignore,
+    refractor_visbuffer,
+    transparent_meshlet_instances
+  ) =
     std::tuple_cat(module.set_condition(
       highlight_condition,
       [&](vir::Module& arm) {
@@ -2129,7 +2239,9 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
              {visbuffer_attachment, vir::Access::ComputeSampled},
              {meshlet_instances_buffer, vir::Access::ComputeRead},
              {mesh_instances_buffer, vir::Access::ComputeRead},
-             {transform_indices, vir::Access::ComputeRead}}
+             {transform_indices, vir::Access::ComputeRead},
+             {refractor_visbuffer, vir::Access::ComputeSampled},
+             {transparent_meshlet_instances, vir::Access::ComputeRead}}
           )
           .with_name("highlight mask")
           .bind_compute_pipeline(render_context.pipeline("highlight_mask_generate"))
@@ -2138,6 +2250,8 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
           .bind_image(0, 2, visbuffer_attachment)
           .bind_image(0, 3, cleared_mask)
           .bind_buffer(0, 4, transform_indices)
+          .bind_image(0, 5, refractor_visbuffer)
+          .bind_buffer(0, 6, transparent_meshlet_instances)
           .push_constants_from(push)
           .dispatch_invocations_per_pixel(cleared_mask)
           .end_compute();
@@ -2148,11 +2262,14 @@ static auto highlight_mask_stage(RenderStageContext& ctx) -> void {
           visbuffer_attachment,
           meshlet_instances_buffer,
           mesh_instances_buffer,
-          transform_indices
+          transform_indices,
+          refractor_visbuffer,
+          transparent_meshlet_instances
         };
       }
     ));
 
+  store_refractor_stage_resources(ctx, refractor_visbuffer, transparent_meshlet_instances);
   ctx.set_shared_image_resource("silhouette_mask", silhouette_mask)
     .set_image_resource("visbuffer_attachment", visbuffer_attachment)
     .set_buffer_resource("meshlet_instances_buffer", meshlet_instances_buffer)
@@ -2312,7 +2429,7 @@ auto ViewportPanel::mouse_picking_stages(
   self.resolve_pending_pick(self.pending_pick_2d, true);
 
   auto& render_context = App::get_rendercontext();
-  const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+  const auto using_gizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing() || self.vertex_snap.is_active;
   const bool should_pick = !using_gizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && self.is_viewport_hovered &&
                            !self.is_ui_capturing_mouse && !self.is_menubar_hovered && !self.pending_pick_2d.pending &&
                            !self.pending_pick_3d.pending;
@@ -2397,34 +2514,58 @@ auto ViewportPanel::mouse_picking_stages(
         auto visbuffer = ctx.get_image_resource("visbuffer_attachment");
         auto meshlet_instances = ctx.get_buffer_resource("meshlet_instances_buffer");
         auto mesh_instances = ctx.get_buffer_resource("mesh_instances_buffer");
+        auto [refractor_visbuffer, transparent_meshlet_instances] = refractor_stage_resources(ctx);
         auto readback = module.declare_buffer_var("pick readback", vir::Access::HostRead);
         const auto push = module.declare_bytes_var("pick push", sizeof(PickPush3D));
         const auto pick_condition = module.declare_bool_var("is picking", false);
         ctx.variables["pick readback"] = readback;
         ctx.variables["pick push"] = push;
         ctx.variables["is picking"] = pick_condition;
-        std::tie(readback, visbuffer, meshlet_instances, mesh_instances) = std::tuple_cat(module.set_condition(
-          pick_condition,
-          [&](vir::Module& arm) {
-            return arm
-              .begin_compute(
-                {{readback, vir::Access::ComputeWrite},
-                 {visbuffer, vir::Access::ComputeSampled},
-                 {meshlet_instances, vir::Access::ComputeRead},
-                 {mesh_instances, vir::Access::ComputeRead}}
-              )
-              .with_name("mouse picking")
-              .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
-              .bind_buffer(0, 0, meshlet_instances)
-              .bind_buffer(0, 1, mesh_instances)
-              .bind_image(0, 2, visbuffer)
-              .push_constants_from(push)
-              .dispatch(1, 1, 1)
-              .end_compute();
-          },
-          [&](vir::Module&) { return std::array{readback, visbuffer, meshlet_instances, mesh_instances}; }
-        ));
+        std::tie(
+          readback,
+          visbuffer,
+          meshlet_instances,
+          mesh_instances,
+          refractor_visbuffer,
+          transparent_meshlet_instances
+        ) = std::tuple_cat( //
+          module.set_condition(
+            pick_condition,
+            [&](vir::Module& arm) {
+              return arm
+                .begin_compute(
+                  {{readback, vir::Access::ComputeWrite},
+                   {visbuffer, vir::Access::ComputeSampled},
+                   {meshlet_instances, vir::Access::ComputeRead},
+                   {mesh_instances, vir::Access::ComputeRead},
+                   {refractor_visbuffer, vir::Access::ComputeSampled},
+                   {transparent_meshlet_instances, vir::Access::ComputeRead}}
+                )
+                .with_name("mouse picking")
+                .bind_compute_pipeline(ctx.render_context.pipeline("entity_mouse_picking"))
+                .bind_buffer(0, 0, meshlet_instances)
+                .bind_buffer(0, 1, mesh_instances)
+                .bind_image(0, 2, visbuffer)
+                .bind_image(0, 3, refractor_visbuffer)
+                .bind_buffer(0, 4, transparent_meshlet_instances)
+                .push_constants_from(push)
+                .dispatch(1, 1, 1)
+                .end_compute();
+            },
+            [&](vir::Module&) {
+              return std::array{
+                readback,
+                visbuffer,
+                meshlet_instances,
+                mesh_instances,
+                refractor_visbuffer,
+                transparent_meshlet_instances
+              };
+            }
+          )
+        );
         module.export_to(readback, vir::Access::HostRead);
+        store_refractor_stage_resources(ctx, refractor_visbuffer, transparent_meshlet_instances);
         ctx.set_image_resource("visbuffer_attachment", visbuffer)
           .set_buffer_resource("meshlet_instances_buffer", meshlet_instances)
           .set_buffer_resource("mesh_instances_buffer", mesh_instances);
@@ -2624,6 +2765,52 @@ void ViewportPanel::transform_gizmos_button_group(this ViewportPanel& self, ImVe
   ImGui::EndGroup();
 }
 
+#ifdef OX_DOTNET
+// true on the frame Play should go ahead
+static auto draw_debugger_wait_popup(bool& is_waiting) -> bool {
+  constexpr auto POPUP_NAME = "Waiting for a C# Debugger";
+
+  if (!is_waiting) {
+    return false;
+  }
+
+  if (!ImGui::IsPopupOpen(POPUP_NAME)) {
+    ImGui::OpenPopup(POPUP_NAME);
+  }
+
+  UI::center_next_window(ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal(POPUP_NAME, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    return false;
+  }
+
+  auto& scripts = App::mod<Editor>().csharp_scripts;
+  auto should_play = scripts.is_debugger_attached();
+  ImGui::TextUnformatted("Play starts once a debugger attaches, so breakpoints in OnAdd and OnStart are hit.");
+  ImGui::BeginDisabled(!scripts.can_attach_debugger());
+  if (ImGui::Button("Attach Debugger...")) {
+    scripts.attach_debugger();
+  }
+  ImGui::EndDisabled();
+
+  ImGui::SameLine();
+  if (ImGui::Button("Play Without Debugger")) {
+    should_play = true;
+  }
+
+  ImGui::SameLine();
+  const auto is_cancelled = ImGui::Button("Cancel");
+  if (should_play || is_cancelled) {
+    is_waiting = false;
+    ImGui::CloseCurrentPopup();
+  }
+
+  ImGui::EndPopup();
+
+  // the scripts may have changed since Play was pressed
+  return should_play && scripts.prepare_for_play();
+}
+#endif
+
 void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cursor_pos) {
   constexpr float button_count = 2.0f;
   const float y_pad = UI::scale(3.0f);
@@ -2641,17 +2828,20 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
 
     auto is_scene_playing = self.editor_scene->is_playing();
 
+    auto should_play = false;
     ImGui::BeginDisabled(is_scene_playing);
     if (ImGui::Button(ICON_MDI_PLAY, button_size)) {
 #ifdef OX_DOTNET
+      auto& editor = App::mod<Editor>();
       // waits for the build when the C# scripts changed, and stays in edit mode while they don't compile
-      const auto is_ready = App::mod<Editor>().csharp_scripts.prepare_for_play();
+      const auto is_ready = editor.csharp_scripts.prepare_for_play();
+      const auto is_debugger_wanted = editor.editor_cvar.cvar_wait_for_debugger.as_bool() &&
+                                      editor.csharp_scripts.can_attach_debugger();
+      self.is_waiting_for_debugger = is_ready && is_debugger_wanted;
+      should_play = is_ready && !is_debugger_wanted;
 #else
-      const auto is_ready = true;
+      should_play = true;
 #endif
-      if (is_ready) {
-        std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
-      }
     }
     ImGui::EndDisabled();
 
@@ -2664,6 +2854,14 @@ void ViewportPanel::scene_button_group(this ViewportPanel& self, ImVec2 start_cu
     ImGui::EndDisabled();
 
     ImGui::PopStyleVar(3);
+
+#ifdef OX_DOTNET
+    should_play = draw_debugger_wait_popup(self.is_waiting_for_debugger) || should_play;
+#endif
+
+    if (should_play) {
+      std::ignore = event_system.emit<Editor::ScenePlayEvent>(Editor::ScenePlayEvent(self.editor_scene->get_id()));
+    }
   }
   ImGui::EndGroup();
 }

@@ -185,6 +185,53 @@ TEST_F(InputManagerTest, KeyboardTestHeld) {
   EXPECT_TRUE(held_callback_mod);
 }
 
+TEST_F(InputManagerTest, PersistentContextKeepsActiveContext) {
+  bool tool_callback = false;
+  bool game_callback = false;
+
+  app->step();
+
+  auto& input = app->mod<ox::Input>();
+  input.set_context_persistent("tool", true);
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "tool_action",
+      .primary_inputs = {ox::InputCode(ox::ScanCode::B)},
+      .context = "tool",
+      .on_pressed_callback = [&tool_callback](const ox::ActionContext&) { tool_callback = true; }
+    }
+  );
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "game_action",
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A)},
+      .on_pressed_callback = [&game_callback](const ox::ActionContext&) { game_callback = true; }
+    }
+  );
+  std::ignore = input.bind_action(
+    ox::ActionBinding{
+      .action_id = "menu_action",
+      .primary_inputs = {ox::InputCode(ox::ScanCode::A)},
+      .context = "menu",
+    }
+  );
+
+  v_keyboard->press(ox::ScanCode::A);
+  v_keyboard->press(ox::ScanCode::B);
+
+  app->get_window().update(app->get_timestep());
+
+  EXPECT_EQ(input.get_active_context(), "default");
+  EXPECT_TRUE(input.get_action_pressed("game_action"));
+  EXPECT_TRUE(input.get_action_pressed("tool_action"));
+  EXPECT_FALSE(input.get_action_pressed("menu_action"));
+  EXPECT_TRUE(game_callback);
+  EXPECT_TRUE(tool_callback);
+
+  input.set_context_persistent("tool", false);
+  EXPECT_FALSE(input.get_action_pressed("tool_action"));
+}
+
 TEST_F(InputManagerTest, MouseTestPressed) {
   bool pressed = false;
   bool pressed_callback = false;

@@ -50,6 +50,8 @@ auto EditorCVar::init(this EditorCVar& self) -> void {
   self.cvar_show_imgui_demo.init(self.system, "ui.imgui_demo", "show imgui demo window", 0);
   self.cvar_external_editor
     .init(self.system, "editor.external_editor", "command that opens scripts, empty uses the system default", "");
+  self.cvar_wait_for_debugger
+    .init(self.system, "editor.wait_for_debugger", "Play waits for a debugger to attach to the C# scripts", 0);
 }
 
 auto EditorCVar::load(this EditorCVar& self) -> void {
@@ -100,6 +102,8 @@ auto EditorCVar::load(this EditorCVar& self) -> void {
     self.cvar_content_type_filter.set(static_cast<i32>(v->get()));
   if (auto v = config["external_editor"].as_string())
     self.cvar_external_editor.set(std::string(v->get()));
+  if (auto v = config["wait_for_debugger"].as_boolean())
+    self.cvar_wait_for_debugger.set(v->get());
 
   return;
 }
@@ -131,6 +135,7 @@ auto EditorCVar::save(this EditorCVar& self) -> void {
        {"content_sort_ascending", self.cvar_content_sort_ascending.as_bool()},
        {"content_type_filter", self.cvar_content_type_filter.get()},
        {"external_editor", self.cvar_external_editor.get()},
+       {"wait_for_debugger", self.cvar_wait_for_debugger.as_bool()},
      }}
   };
 

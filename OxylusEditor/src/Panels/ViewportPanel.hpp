@@ -3,10 +3,10 @@
 #include <vir/Resource.hpp>
 
 #include "EditorPanelState.hpp"
-#include "UI/RuntimeConsole.hpp"
 #include "Utils/PendingPick.hpp"
 #include "Utils/SceneManager.hpp"
 #include "Utils/SceneTarget.hpp"
+#include "Utils/VertexSnap.hpp"
 
 namespace ox {
 class ViewportPanel : public EditorPanelState {
@@ -50,8 +50,8 @@ private:
 
   std::shared_ptr<EditorScene> editor_scene = nullptr;
   bool draw_scene_stats = false;
-
-  RuntimeConsole runtime_console = {};
+  // Play was pressed and is held until a debugger attaches
+  bool is_waiting_for_debugger = false;
 
   enum class AspectRatio : i32 {
     Auto = 0,
@@ -78,6 +78,8 @@ private:
   bool use_snap = true;
   f32 snap_amount = 1.f;
   f32 rotate_snap_amount = 45.f;
+
+  VertexSnap vertex_snap = {};
 
   f32 volume_level = 0.f;
 

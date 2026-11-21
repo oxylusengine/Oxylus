@@ -45,9 +45,7 @@ func fs_main(
         return f32x4(0.0);
     }
 
-    let NDC = f32x3(input.tex_coord * 2.0 - 1.0, depth);
-    let world_position_h = mul(camera.inv_projection_view, f32x4(NDC, 1.0));
-    let world_position = world_position_h.xyz / world_position_h.w;
+    let world_position = camera.unproject_uv(input.tex_coord, depth);
 
     let L = lighting.sun_direction;
     let Li = lighting.sun_intensity;
@@ -82,7 +80,8 @@ func fs_main(
     var visibility = 0.0;
     if (NoL > 0.0) {
         visibility = sun_visibility(
-            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light, *lighting, vsm_clipmaps);
+            make_lighting_resources(lighting, lights, light_grid, vsm_pointspot_views, vsm_clipmaps),
+            input.tex_coord, input.position.xy, depth, smooth_normal, world_position, has_directional_light);
     }
 
     let albedo_occlusion = albedo_image.SampleLevel(linear_repeat_sampler, input.tex_coord, 0);
@@ -143,8 +142,8 @@ func fs_main(
     }
 
     var color = material_surface_color + indirect_illuminance + emission + aerial_perspective_contribution;
-    point_spot_lighting(
-        input.tex_coord, depth, world_position, N, V, smooth_normal, albedo_color, metallic, brdf_params,
-        *lighting, lights, light_grid, vsm_pointspot_views, color);
+    lighting_point_spot(
+        make_lighting_resources(lighting, lights, light_grid, vsm_pointspot_views, vsm_clipmaps),
+        input.tex_coord, depth, world_position, N, V, smooth_normal, albedo_color, metallic, brdf_params, color);
     return f32x4(color, 1.0);
 }
