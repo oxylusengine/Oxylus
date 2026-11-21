@@ -150,6 +150,30 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   }
 
   {
+    using C = HeightFogComponent;
+    registry.bind<
+      &C::density,
+      &C::height_falloff,
+      &C::albedo,
+      &C::ambient_intensity,
+      &C::sun_scattering,
+      &C::anisotropy,
+      &C::start_distance,
+      &C::max_opacity,
+      &C::sky_distance,
+      &C::volumetric,
+      &C::volumetric_distance,
+      &C::volumetric_history_weight,
+      &C::local_light_scattering>();
+  }
+
+  {
+    using C = FogVolumeComponent;
+    registry
+      .bind<&C::density, &C::albedo, &C::emissive, &C::edge_fade, &C::noise_scale, &C::noise_strength, &C::wind>();
+  }
+
+  {
     using C = SkyComponent;
     registry.bind<&C::solid_color, &C::ambient_color, &C::texture>();
   }

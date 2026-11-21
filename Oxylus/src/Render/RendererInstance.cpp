@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 #include <ranges>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -79,6 +80,53 @@ static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atm
          a.terrain_albedo == b.terrain_albedo &&               //
          a.planet_radius == b.planet_radius &&                 //
          a.atmos_radius == b.atmos_radius;
+}
+
+// the same integral the sky_transmittance pass bakes, over MediumScattering in sky.slang, so the fog's sun
+// matches what surfaces get from the LUT. One ray a frame, so it runs on the host where every shader can share it
+static auto sun_transmittance(const GPU::Atmosphere& atmosphere, f32 eye_radius, f32 sun_cos_theta) -> glm::vec3 {
+  constexpr auto STEP_COUNT = 64;
+  constexpr auto MIN_SCALE_HEIGHT = 1e-3f;
+
+  const auto origin = glm::vec3(0.0f, eye_radius, 0.0f);
+  const auto direction = glm::vec3(
+    std::sqrt(std::max(1.0f - sun_cos_theta * sun_cos_theta, 0.0f)),
+    sun_cos_theta,
+    0.0f
+  );
+  // the ray starts inside the atmosphere, so the far root is where it leaves
+  const auto b = glm::dot(origin, direction);
+  const auto c = glm::dot(origin, origin) - atmosphere.atmos_radius * atmosphere.atmos_radius;
+  const auto step = (-b + std::sqrt(std::max(b * b - c, 0.0f))) / static_cast<f32>(STEP_COUNT);
+
+  auto optical_depth = glm::vec3(0.0f);
+  for (auto i = 0; i < STEP_COUNT; i++) {
+    const auto position = origin + direction * ((static_cast<f32>(i) + 0.5f) * step);
+    const auto height = std::max(glm::length(position) - atmosphere.planet_radius, 0.0f);
+    const auto rayleigh = std::exp(-height / std::max(atmosphere.rayleigh_density, MIN_SCALE_HEIGHT));
+    const auto mie_boundary = std::exp(-height / std::max(atmosphere.mie_density, MIN_SCALE_HEIGHT));
+    const auto mie_haze = std::exp(-height / std::max(atmosphere.mie_haze_scale_height, MIN_SCALE_HEIGHT));
+    const auto mie = glm::mix(mie_boundary, mie_haze, glm::clamp(atmosphere.mie_haze_amount, 0.0f, 1.0f));
+    const auto ozone_distance = std::abs(height - atmosphere.ozone_height);
+    const auto ozone = 1.0f -
+                       glm::smoothstep(0.0f, std::max(atmosphere.ozone_thickness, MIN_SCALE_HEIGHT), ozone_distance);
+    optical_depth += (atmosphere.rayleigh_scatter * rayleigh + glm::vec3(atmosphere.mie_extinction * mie) +
+                      atmosphere.ozone_absorption * ozone) *
+                     step;
+  }
+
+  return glm::exp(-optical_depth);
+}
+
+static auto radical_inverse(u32 index, u32 base) -> f32 {
+  auto result = 0.0f;
+  auto fraction = 1.0f / static_cast<f32>(base);
+  for (; index > 0; index /= base) {
+    result += static_cast<f32>(index % base) * fraction;
+    fraction /= static_cast<f32>(base);
+  }
+
+  return result;
 }
 
 static auto shadow_light_priority(const GPU::Light& light) -> f32 {
@@ -486,6 +534,8 @@ auto FrameShapeHash::operator()(const FrameShape& shape) const noexcept -> u64 {
     shape.has_refractors,
     shape.has_terrain,
     shape.has_decals,
+    shape.has_height_fog,
+    shape.has_volumetric_fog,
     shape.has_sprites,
     shape.has_particles,
     shape.has_atmosphere,
@@ -982,6 +1032,13 @@ auto RendererInstance::render(
   } else {
     self.sssr_history_valid = false;
   }
+
+  if (shape.has_volumetric_fog && ticket) {
+    self.volumetric_fog_history_ping = !self.volumetric_fog_history_ping;
+    self.volumetric_fog_history_valid = true;
+  } else {
+    self.volumetric_fog_history_valid = false;
+  }
   if (self.frame_params.is_upscaling) {
     if (ticket) {
       self.fsr3_history_ping = !self.fsr3_history_ping;
@@ -1089,6 +1146,8 @@ auto RendererInstance::frame_shape(
     .has_refractors = has_refractors,
     .has_terrain = self.scene.terrain != nullptr && self.scene.terrain->is_baked(),
     .has_decals = !self.decals.empty(),
+    .has_height_fog = self.camera_data.fog.density > 0.0f || self.camera_data.fog.volumetric_distance > 0.0f,
+    .has_volumetric_fog = self.camera_data.fog.volumetric_distance > 0.0f,
     .has_sprites = !self.render_queue_2d.sprite_data.empty(),
     .has_particles = has_particles,
     .has_atmosphere = static_cast<bool>(flags & GPU::SceneFlags::HasAtmosphere),
@@ -1134,6 +1193,7 @@ auto RendererInstance::prepare_frame_params(
   const auto shading_step = self.scene.is_running() ? static_cast<f64>(self.scene.last_step_delta)
                                                     : static_cast<f64>(params.delta_time);
   self.shading_time = std::fmod(self.shading_time + shading_step, 3600.0);
+  self.fog_noise_time += shading_step;
   params.time = static_cast<f32>(self.shading_time);
   params.frame_index = static_cast<u32>(self.renderer.render_context->num_frames);
   params.is_upscaling = shape.upscaler != UpscalerBackend::None;
@@ -1159,7 +1219,7 @@ auto RendererInstance::prepare_frame_params(
 
     const auto is_resolution_changed = self.fsr3_previous_render_size != render_size ||
                                        self.fsr3_previous_display_size != display_size;
-    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed;
+    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed || self.is_camera_cut;
     if (is_reset) {
       self.fsr3_frame_index = 0;
     }
@@ -1204,10 +1264,14 @@ auto RendererInstance::prepare_frame_params(
     params.fsr3_history_ping = self.fsr3_history_ping;
   }
 
+  if (shape.has_volumetric_fog) {
+    self.allocate_volumetric_fog_resources(shape.render_size);
+  }
+
   params.sssr_reset = false;
   if (shape.has_sssr) {
     self.allocate_sssr_resources(shape.render_size);
-    params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.sssr_reset = !self.sssr_history_valid || self.is_camera_cut || (params.is_upscaling && params.fsr3_reset);
     params.sssr_history_ping = self.sssr_history_ping;
   }
 
@@ -1407,6 +1471,41 @@ auto RendererInstance::bind_frame(
   }
 
   program.set_bytes(prepared.decal_count, has_decals ? static_cast<u32>(self.decals.size()) : 0_u32);
+
+  if (program.has_variable(prepared.volumetric_fog.params)) {
+    auto params = self.volumetric_fog_params;
+    params.grid_size = {
+      (self.render_size_.x + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE,
+      (self.render_size_.y + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE,
+      GPU::FROXEL_DEPTH_SLICES,
+    };
+    params.is_history_valid = self.volumetric_fog_history_valid && !self.is_camera_cut ? 1_u32 : 0_u32;
+    auto staging = render_context.upload_frame_buffer(host_bytes(params), "volumetric fog params");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "volumetric fog params");
+    }
+    program.set(prepared.volumetric_fog.params, staging.value_or(vir::Buffer{}));
+  }
+
+  if (program.has_variable(prepared.volumetric_fog.fog_volumes)) {
+    // never empty, the shader only reads `fog_volume_count` of them
+    const auto placeholder = GPU::FogVolume{};
+    const auto bytes = self.fog_volumes.empty() ? host_bytes(placeholder) : host_bytes(self.fog_volumes);
+    auto staging = render_context.upload_frame_buffer(bytes, "fog volumes");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "fog volumes");
+    }
+    program.set(prepared.volumetric_fog.fog_volumes, staging.value_or(vir::Buffer{}));
+  }
+
+  if (program.has_variable(prepared.volumetric_fog.history)) {
+    const auto current_index = self.volumetric_fog_history_ping ? 1 : 0;
+    program.set(prepared.volumetric_fog.history, self.volumetric_fog_history[current_index].attachment_info());
+    program.set(
+      prepared.volumetric_fog.previous_history,
+      self.volumetric_fog_history[1 - current_index].attachment_info()
+    );
+  }
 
   if (program.has_variable(prepared.sprites)) {
     auto staging = render_context.upload_frame_buffer(host_bytes(self.render_queue_2d.sprite_data), "sprites");
@@ -1850,6 +1949,7 @@ auto RendererInstance::record_frame(
   );
 
   depth_attachment = module.clear(depth_attachment, vir::ClearValue::depth(0.0f));
+  auto froxel_tile_depth_attachment = vir::ValueID::Invalid;
 
   const auto hiz_extent = vir::Extent3D{
     .width = std::bit_ceil((render_extent.width + 1) >> 1),
@@ -2206,10 +2306,15 @@ auto RendererInstance::record_frame(
     metallic_roughness_occlusion_attachment = main_geometry_context.metallic_roughness_occlusion_attachment;
     velocity_attachment = main_geometry_context.velocity_attachment;
 
+    if (shape.has_volumetric_fog) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
     if ((shape.has_directional_shadows || shape.has_pointspot_shadows) && shape.has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .depth_extent = render_extent,
         .depth_attachment = depth_attachment,
+        .froxel_tile_depth_attachment = froxel_tile_depth_attachment,
         .normal_attachment = normal_attachment,
         .virtual_page_table_attachment = vsm_virtual_page_table_attachment,
         .physical_page_table_attachment = vsm_physical_pages_attachment,
@@ -2222,6 +2327,7 @@ auto RendererInstance::record_frame(
       refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
       refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
+      froxel_tile_depth_attachment = rmvsm_context.froxel_tile_depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;
       light_grid_buffer = rmvsm_context.light_grid_buffer;
       pointspot_views_buffer = rmvsm_context.pointspot_views_buffer;
@@ -2360,10 +2466,10 @@ auto RendererInstance::record_frame(
     }
   }
 
-  // sssr and transparency bind the probe resources under a spec constant, a scene without probe volumes shares
-  // one set of stand-ins they never sample
+  // sssr, transparency and volumetric fog bind the probe resources under a spec constant, a scene without probe volumes
+  // shares one set of stand-ins they never sample
   const auto has_transparency = shape.has_blend_meshes || shape.has_refractors;
-  if (shape.probe_volume_count == 0 && (shape.has_sssr || has_transparency)) {
+  if (shape.probe_volume_count == 0 && (shape.has_sssr || has_transparency || shape.has_volumetric_fog)) {
     probe_volumes_buffer = module.transient_buffer({
       .size = sizeof(u32),
       .usage = TRANSIENT_BUFFER_USAGE,
@@ -2475,6 +2581,69 @@ auto RendererInstance::record_frame(
     sky_view_lut_attachment = sssr_context.sky_view_lut_attachment;
   }
 
+  // --- volumetric fog ---
+  // the fog passes, transparents and particles all sample the froxels, a frame without them gets a stand in
+  auto froxel_attachment = vir::ValueID::Invalid;
+  if (shape.has_volumetric_fog) {
+    if (froxel_tile_depth_attachment == vir::ValueID::Invalid) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
+    auto volumetric_fog_context = VolumetricFogContext{
+      .lighting_buffer = pbr_context.lighting_buffer,
+      .light_grid_buffer = light_grid_buffer,
+      .pointspot_views_buffer = pointspot_views_buffer,
+      .directional_clipmaps_buffer = vsm_directional_clipmaps_buffer,
+      .vsm_page_table_attachment = vsm_virtual_page_table_attachment,
+      .pointspot_page_table_attachment = vsm_pointspot_page_table_attachment,
+      .vsm_physical_pages_attachment = vsm_physical_pages_attachment,
+      .probe_volumes_buffer = probe_volumes_buffer,
+      .probe_states_buffer = probe_states_buffer,
+      .irradiance_attachment = ddgi_irradiance_attachment,
+      .distance_attachment = ddgi_distance_attachment,
+      .sky_cubemap_attachment = sky_cubemap_attachment,
+      .tile_depth_attachment = froxel_tile_depth_attachment,
+    };
+    self.record_volumetric_fog(module, recording, volumetric_fog_context);
+    probe_volumes_buffer = volumetric_fog_context.probe_volumes_buffer;
+    probe_states_buffer = volumetric_fog_context.probe_states_buffer;
+    ddgi_irradiance_attachment = volumetric_fog_context.irradiance_attachment;
+    ddgi_distance_attachment = volumetric_fog_context.distance_attachment;
+    sky_cubemap_attachment = volumetric_fog_context.sky_cubemap_attachment;
+    pbr_context.lighting_buffer = volumetric_fog_context.lighting_buffer;
+    light_grid_buffer = volumetric_fog_context.light_grid_buffer;
+    pointspot_views_buffer = volumetric_fog_context.pointspot_views_buffer;
+    vsm_directional_clipmaps_buffer = volumetric_fog_context.directional_clipmaps_buffer;
+    vsm_virtual_page_table_attachment = volumetric_fog_context.vsm_page_table_attachment;
+    vsm_pointspot_page_table_attachment = volumetric_fog_context.pointspot_page_table_attachment;
+    vsm_physical_pages_attachment = volumetric_fog_context.vsm_physical_pages_attachment;
+    froxel_tile_depth_attachment = volumetric_fog_context.tile_depth_attachment;
+    froxel_attachment = volumetric_fog_context.integrated_attachment;
+  } else {
+    froxel_attachment = module.transient_image({
+      .extent = {1, 1, 1},
+      .format = vir::Format::RGBA16Sfloat,
+      .image_type = vir::ImageType::e3D,
+      .view_type = vir::ImageViewType::e3D,
+      .name = "unused froxels",
+    });
+    froxel_attachment = module.clear(froxel_attachment, zero);
+  }
+
+  // --- height fog ---
+  // after every pass that adds opaque light and before anything blends over it, which fogs itself
+  if (shape.has_height_fog) {
+    auto height_fog_context = HeightFogContext{
+      .depth_attachment = depth_attachment,
+      .final_attachment = final_attachment,
+      .froxel_attachment = froxel_attachment,
+    };
+    self.apply_height_fog(module, recording, height_fog_context);
+    depth_attachment = height_fog_context.depth_attachment;
+    final_attachment = height_fog_context.final_attachment;
+    froxel_attachment = height_fog_context.froxel_attachment;
+  }
+
   // --- transparency ---
   auto wboit_revealage_attachment = vir::ValueID::Invalid;
   auto wboit_revealage_front_attachment = vir::ValueID::Invalid;
@@ -2504,6 +2673,7 @@ auto RendererInstance::record_frame(
       .refractor_visbuffer_attachment = refractor_visbuffer_attachment,
       .refractor_depth_attachment = refractor_depth_attachment,
       .environment_buffer = is_atmosphere ? values.atmosphere : pbr_context.sky_buffer,
+      .froxel_attachment = froxel_attachment,
     };
 
     // the rear pair resolves over the scene first, so refractors see blended content behind them
@@ -2580,6 +2750,7 @@ auto RendererInstance::record_frame(
     final_attachment = transparency_context.final_attachment;
     depth_attachment = transparency_context.depth_attachment;
     reactive_mask_attachment = transparency_context.reactive_mask_attachment;
+    froxel_attachment = transparency_context.froxel_attachment;
     hiz_attachment = transparency_context.hiz_attachment;
     cull_geometry_context.visibility_buffer = transparency_context.visibility_buffer;
     refractor_visbuffer_attachment = transparency_context.refractor_visbuffer_attachment;
@@ -2707,9 +2878,11 @@ auto RendererInstance::record_frame(
       .constants_buffer = prepared.particle.constants,
       .depth_attachment = depth_attachment,
       .reactive_mask_attachment = reactive_mask_attachment,
+      .froxel_attachment = froxel_attachment,
     };
     self.simulate_particles(module, recording, particle_context);
     final_attachment = self.draw_particles(module, recording, particle_context, final_attachment);
+    froxel_attachment = particle_context.froxel_attachment;
     depth_attachment = particle_context.depth_attachment;
     reactive_mask_attachment = particle_context.reactive_mask_attachment;
   }
@@ -2978,6 +3151,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // an explicitly active camera wins over a later one; with none marked the last one still does,
   // which is what every single-camera scene has always relied on
   auto found_active_camera = false;
+  flecs::entity_t camera_entity = 0;
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -3001,11 +3175,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       if (c.active || !found_active_camera) {
         current_camera = c;
+        camera_entity = e.id();
         found_active_camera = c.active;
       }
     });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
+
+  // a switch to another camera is how a cinematic cuts, a jump further than anything travels in a frame is a teleport.
+  // A turn alone isn't a cut, reprojection already follows it
+  constexpr auto CAMERA_CUT_DISTANCE = 5.0f;
+  const auto camera_travel = glm::distance(cam.position, glm::vec3(self.previous_camera_data.position));
+  self.is_camera_cut = camera_entity != self.previous_camera_entity || camera_travel > CAMERA_CUT_DISTANCE;
+  self.previous_camera_entity = camera_entity;
 
   self.camera_data = GPU::Camera{
     .position = glm::vec4(cam.position, 0.0f),
@@ -3143,6 +3325,146 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.sky_data.ambient_color = sky_info.ambient_color;
       self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
     });
+
+  self.camera_data.fog = {};
+  self.volumetric_fog_params = {};
+  self.fog_volumes.clear();
+  {
+    auto is_fog_found = false;
+    self.scene.world
+      .query_builder<const TransformComponent, const HeightFogComponent>() //
+      .build()
+      .each([&self, &is_fog_found](flecs::entity e, const TransformComponent&, const HeightFogComponent& c) {
+        // volumetric fog with no height fog of its own still draws its fog volumes
+        if (is_fog_found || !e.enabled() || (c.density <= 0.0f && !c.volumetric)) {
+          return;
+        }
+
+        is_fog_found = true;
+        auto sun_illuminance = glm::vec3(0.0f);
+        if ((self.gpu_scene_flags & GPU::SceneFlags::HasDirectionalLight) != 0) {
+          sun_illuminance = glm::vec3(self.directional_light.intensity);
+          // the lighting passes attenuate the sun the same way, and leave it whole without an atmosphere
+          if ((self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0) {
+            const auto sun_cos_theta = glm::clamp(self.directional_light.direction.y, -1.0f, 1.0f);
+            const auto min_radius = self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
+            const auto eye_radius = std::max(
+              self.camera_data.position.y * GPU::CAMERA_SCALE_UNIT + min_radius,
+              min_radius
+            );
+            sun_illuminance *= sun_transmittance(self.atmosphere, eye_radius, sun_cos_theta) *
+                               glm::smoothstep(-0.1f, 0.3f, sun_cos_theta);
+          }
+        }
+
+        self.camera_data.fog = GPU::HeightFog{
+          .ambient_radiance = c.albedo * std::max(c.ambient_intensity, 0.0f),
+          .density = c.density,
+          .sun_radiance = c.albedo * sun_illuminance * std::max(c.sun_scattering, 0.0f),
+          .height_falloff = std::max(c.height_falloff, 0.0f),
+          .sun_direction = self.directional_light.direction,
+          .base_height = self.scene.get_world_transform(e)[3].y,
+          .start_distance = std::max(c.start_distance, 0.0f),
+          .max_opacity = std::clamp(c.max_opacity, 0.0f, 1.0f),
+          .anisotropy = std::clamp(c.anisotropy, -0.95f, 0.95f),
+          .sky_distance = std::max(c.sky_distance, 0.0f),
+        };
+
+        constexpr auto VOLUMETRIC_NEAR = 0.25f;
+        if (c.volumetric && c.volumetric_distance > VOLUMETRIC_NEAR * 2.0f) {
+          self.camera_data.fog.volumetric_distance = c.volumetric_distance;
+          self.camera_data.fog.volumetric_near = VOLUMETRIC_NEAR;
+          // a different spot in each froxel every frame, which the history blend averages into a smooth result
+          const auto jitter_index = static_cast<u32>(self.renderer.render_context->num_frames % 64) + 1;
+          self.camera_data.fog.volumetric_jitter = {
+            radical_inverse(jitter_index, 2),
+            radical_inverse(jitter_index, 3),
+            radical_inverse(jitter_index, 5),
+          };
+          self.volumetric_fog_params = GPU::VolumetricFogParams{
+            .height_albedo = c.albedo,
+            .ambient_intensity = std::max(c.ambient_intensity, 0.0f),
+            .sun_illuminance = sun_illuminance * std::max(c.sun_scattering, 0.0f),
+            .local_light_scattering = std::max(c.local_light_scattering, 0.0f),
+            .history_weight = std::clamp(c.volumetric_history_weight, 0.0f, 0.98f),
+            .sky_ambient = (self.gpu_scene_flags & GPU::SceneFlags::HasSky) != 0 ? self.sky_data.ambient_color
+                                                                                 : BASE_AMBIENT_COLOR,
+            .horizon_darkening = glm::smoothstep(-0.1f, 0.3f, self.directional_light.direction.y),
+          };
+        }
+      });
+
+    ankerl::svector<f32, GPU::MAX_FOG_VOLUMES> fog_volume_distances = {};
+    if (self.camera_data.fog.volumetric_distance > 0.0f) {
+      // the froxels end at volumetric_distance, a volume past it is never drawn
+      auto froxel_camera = cam;
+      froxel_camera.far_clip = std::min(cam.far_clip, self.camera_data.fog.volumetric_distance);
+      const auto frustum = Camera::get_frustum(froxel_camera, cam.position);
+      self.scene.world
+        .query_builder<const TransformComponent, const FogVolumeComponent>() //
+        .build()
+        .each([&](flecs::entity e, const TransformComponent&, const FogVolumeComponent& c) {
+          if (!e.enabled() || c.density <= 0.0f) {
+            return;
+          }
+
+          const auto world = self.scene.get_world_transform(e);
+          if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+            return;
+          }
+
+          const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+          if (!bounds.is_on_frustum(frustum)) {
+            return;
+          }
+
+          const auto noise_frequency = c.noise_scale > 0.0f ? 1.0f / c.noise_scale : 0.0f;
+          const auto period = static_cast<f64>(GPU::FOG_NOISE_PERIOD);
+          auto noise_offset = glm::vec3(0.0f);
+          for (auto axis = 0; axis < 3; axis++) {
+            const auto cells = static_cast<f64>(c.wind[axis]) * static_cast<f64>(noise_frequency) * self.fog_noise_time;
+            // the noise drifts with the wind, so its lattice moves against it
+            noise_offset[axis] = static_cast<f32>(period - std::fmod(cells, period));
+          }
+
+          self.fog_volumes.push_back({
+            .world_to_volume = glm::inverse(world),
+            .albedo = c.albedo,
+            .density = c.density,
+            .emissive = c.emissive,
+            .edge_fade = std::clamp(c.edge_fade, 0.0f, 1.0f) * 0.5f,
+            .noise_offset = noise_offset,
+            .noise_frequency = noise_frequency,
+            .noise_strength = std::clamp(c.noise_strength, 0.0f, 1.0f),
+          });
+          fog_volume_distances.push_back(glm::distance(glm::clamp(cam.position, bounds.min, bounds.max), cam.position));
+        });
+    }
+
+    if (self.fog_volumes.size() > GPU::MAX_FOG_VOLUMES) {
+      if (!self.has_warned_fog_volume_limit) {
+        OX_LOG_WARN("more than {} fog volumes are visible, the farthest are skipped", GPU::MAX_FOG_VOLUMES);
+        self.has_warned_fog_volume_limit = true;
+      }
+
+      memory::ScopedStack stack;
+      auto order = stack.alloc<u32>(self.fog_volumes.size());
+      std::iota(order.begin(), order.end(), 0_u32);
+      const auto kept_end = order.begin() + GPU::MAX_FOG_VOLUMES;
+      std::nth_element(order.begin(), kept_end, order.end(), [&](const u32 a, const u32 b) {
+        return fog_volume_distances[a] < fog_volume_distances[b];
+      });
+      // ascending, so each kept volume moves down onto a slot that is already copied out or discarded
+      std::sort(order.begin(), kept_end);
+      for (auto i = 0_u32; i < GPU::MAX_FOG_VOLUMES; i++) {
+        self.fog_volumes[i] = self.fog_volumes[order[i]];
+      }
+
+      self.fog_volumes.resize(GPU::MAX_FOG_VOLUMES);
+    }
+
+    self.volumetric_fog_params.fog_volume_count = static_cast<u32>(self.fog_volumes.size());
+  }
 
   if (
     (self.gpu_scene_flags & GPU::SceneFlags::HasAtmosphere) != 0 &&

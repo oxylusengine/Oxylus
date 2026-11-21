@@ -42,6 +42,23 @@
 #include "Utils/OxMath.hpp"
 
 namespace ox {
+// the edges of the unit cube [-0.5, 0.5]^3 under `world`
+static auto draw_unit_box(DebugRenderer& debug_renderer, const glm::mat4& world, const glm::vec4& color) -> void {
+  auto corners = std::array<glm::vec3, 8>{};
+  for (u32 i = 0; i < corners.size(); i++) {
+    const auto local = glm::vec3((i & 1) != 0 ? 0.5f : -0.5f, (i & 2) != 0 ? 0.5f : -0.5f, (i & 4) != 0 ? 0.5f : -0.5f);
+    corners[i] = glm::vec3(world * glm::vec4(local, 1.0f));
+  }
+
+  for (u32 i = 0; i < corners.size(); i++) {
+    for (const u32 bit : {1u, 2u, 4u}) {
+      if ((i & bit) == 0) {
+        debug_renderer.draw_line(corners[i], corners[i | bit], 1.0f, color, false);
+      }
+    }
+  }
+}
+
 static auto dump_frame_ir(const RendererInstance& renderer_instance) -> void {
   const auto ir = renderer_instance.dump_program();
   if (ir.empty()) {
@@ -1916,32 +1933,19 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
   if (selected_entity == flecs::entity::null())
     return;
 
-  if (selected_entity.has<DecalComponent>()) {
+  const auto is_decal = selected_entity.has<DecalComponent>();
+  if (is_decal || selected_entity.has<FogVolumeComponent>()) {
     auto& debug_renderer = self.editor_scene->get_scene()->debug_renderer;
-    const glm::mat4 decal_world = Scene::get_world_transform(selected_entity);
-    const auto decal_color = glm::vec4(1.0f, 0.75f, 0.1f, 1.0f);
+    const glm::mat4 box_world = Scene::get_world_transform(selected_entity);
+    const auto box_color = is_decal ? glm::vec4(1.0f, 0.75f, 0.1f, 1.0f) : glm::vec4(0.6f, 0.8f, 1.0f, 1.0f);
+    draw_unit_box(debug_renderer, box_world, box_color);
 
-    auto corners = std::array<glm::vec3, 8>{};
-    for (u32 i = 0; i < corners.size(); i++) {
-      const auto local = glm::vec3(
-        (i & 1) != 0 ? 0.5f : -0.5f,
-        (i & 2) != 0 ? 0.5f : -0.5f,
-        (i & 4) != 0 ? 0.5f : -0.5f
-      );
-      corners[i] = glm::vec3(decal_world * glm::vec4(local, 1.0f));
+    if (is_decal) {
+      const auto center = glm::vec3(box_world[3]);
+      const auto direction = glm::normalize(glm::vec3(box_world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+      const auto depth = glm::length(glm::vec3(box_world[2]));
+      debug_renderer.draw_line(center, center + direction * depth, 1.0f, box_color, false);
     }
-
-    for (u32 i = 0; i < corners.size(); i++) {
-      for (const u32 bit : {1u, 2u, 4u}) {
-        if ((i & bit) == 0)
-          debug_renderer.draw_line(corners[i], corners[i | bit], 1.0f, decal_color, false);
-      }
-    }
-
-    const auto center = glm::vec3(decal_world[3]);
-    const auto direction = glm::normalize(glm::vec3(decal_world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
-    const auto depth = glm::length(glm::vec3(decal_world[2]));
-    debug_renderer.draw_line(center, center + direction * depth, 1.0f, decal_color, false);
   }
 
   const auto is_vertex_snapping = self.vertex_snap.update({

@@ -291,6 +291,74 @@ struct Sky {
   u32 has_texture = 0;
 };
 
+// exponential in height, so a ray's optical depth through it has a closed form
+struct HeightFog {
+  f32x3 ambient_radiance = {};
+  // 0 when the scene has no fog
+  f32 density = 0.0f;
+  // the sun's illuminance after the atmosphere, times albedo and the scattering scale
+  f32x3 sun_radiance = {};
+  f32 height_falloff = 0.0f;
+  // toward the sun
+  f32x3 sun_direction = {};
+  f32 base_height = 0.0f;
+  f32 start_distance = 0.0f;
+  f32 max_opacity = 1.0f;
+  f32 anisotropy = 0.0f;
+  f32 sky_distance = 0.0f;
+  // view depth the froxels reach, 0 without volumetric fog. The analytic fog only starts past it
+  f32 volumetric_distance = 0.0f;
+  f32 volumetric_near = 0.0f;
+  // where in its froxel this frame samples, in [0, 1). Fog injection and the shadow page marking both read it
+  f32x3 volumetric_jitter = {};
+  u32x3 pad = {};
+};
+
+// --- Volumetric fog ---
+
+OX_CONST u32 FROXEL_TILE_SIZE = 8;
+OX_CONST u32 FROXEL_DEPTH_SLICES = 64;
+// one texel past the last slice holds each column's ambient at the far end, for the analytic fog beyond it
+OX_CONST u32 FROXEL_DEPTH_TEXELS = FROXEL_DEPTH_SLICES + 1;
+OX_CONST u32 MAX_FOG_VOLUMES = 64;
+// the volume noise repeats every this many cells, so its drift can wrap without a jump
+OX_CONST u32 FOG_NOISE_PERIOD = 256;
+
+struct FogVolume {
+  // world to the unit box [-0.5, 0.5]^3
+  mat4 world_to_volume = {};
+  f32x3 albedo = {};
+  f32 density = 0.0f;
+  f32x3 emissive = {};
+  // in box space, 0.5 fades over the whole half size
+  f32 edge_fade = 0.0f;
+  // where the wind has carried the noise, in noise cells and wrapped to FOG_NOISE_PERIOD
+  f32x3 noise_offset = {};
+  // noise cells per meter, 0 without noise
+  f32 noise_frequency = 0.0f;
+  f32 noise_strength = 0.0f;
+  u32x3 pad = {};
+};
+
+struct VolumetricFogParams {
+  // the height fog's albedo, which HeightFog folds into its radiances
+  f32x3 height_albedo = {};
+  // scales the probe or sky light the fog scatters
+  f32 ambient_intensity = 0.0f;
+  // the sun after the atmosphere, times the scattering scale, before any albedo
+  f32x3 sun_illuminance = {};
+  f32 local_light_scattering = 0.0f;
+  u32x3 grid_size = {};
+  f32 history_weight = 0.0f;
+  // the ambient without an atmosphere or probes, the scene's sky ambient or the renderer's base one
+  f32x3 sky_ambient = {};
+  u32 fog_volume_count = 0;
+  u32 is_history_valid = 0;
+  // the lighting passes dim the sky's light by the same amount as the sun sets
+  f32 horizon_darkening = 0.0f;
+  u32x2 pad = {};
+};
+
 struct Camera {
   f32x4 position = {};
 
@@ -324,6 +392,7 @@ struct Camera {
   f32 acceptable_lod_error = 2.0f; // TODO: Make this configurable
   // negative when upscaling, so material textures keep display resolution detail
   f32 texture_mip_bias = 0.0f;
+  HeightFog fog = {};
 };
 
 struct CullCamera {

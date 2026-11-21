@@ -159,7 +159,13 @@ func water_refracted_uv(in RefractorSurface s, f32x3 geometric_normal, f32 colum
     return accept_refracted_uv(s, s.pixel_uv + select(is_projectable, offset, f32x2(0.0)));
 }
 
-func shade_glass(in RefractorSurface s) -> RefractorResult {
+// fog composes along the ray, and the refracted background already holds the fog between the eye and itself. So the
+// surface terms take the fog in front of them, and of its inscatter only what the transmitted share doesn't carry
+func fog_refractor(in FogSample fog, f32x3 surface_color, f32x3 transmitted, f32x3 transmitted_weight) -> f32x3 {
+    return surface_color * fog.transmittance + fog.inscatter * saturate(1.0 - transmitted_weight) + transmitted;
+}
+
+func shade_glass(in RefractorSurface s, in FogSample fog) -> RefractorResult {
     let N = s.surface.normal;
     let albedo = s.surface.albedo.rgb;
     let metallic = clamp(s.surface.metallic, 0.0, 1.0);
@@ -171,12 +177,14 @@ func shade_glass(in RefractorSurface s) -> RefractorResult {
     let transmitted_sample = sample_transmitted(s, refracted_uv(s));
 
     let transmission = s.transmission;
-    let transmitted = transmitted_sample.rgb * (1.0 - F) * transmission * albedo * glass_absorption(s);
+    let transmitted_weight = (1.0 - F) * transmission * albedo * glass_absorption(s);
+    let transmitted = transmitted_sample.rgb * transmitted_weight;
     let reflection = s.light.specular;
     let diffuse = s.light.diffuse * (1.0 - transmission);
 
     RefractorResult result;
-    let color = reflection + diffuse + transmitted + s.surface.emissive + s.light.aerial_perspective;
+    let surface_color = reflection + diffuse + s.surface.emissive + s.light.aerial_perspective;
+    let color = fog_refractor(fog, surface_color, transmitted, transmitted_weight);
     result.color = clamp(com::sanitize(color), f32x3(0.0), f32x3(8000.0));
     let mean_fresnel = dot(F, f32x3(1.0 / 3.0));
     result.alpha = saturate(1.0 - transmission * (1.0 - mean_fresnel) * (1.0 - transmitted_sample.a));
@@ -185,7 +193,9 @@ func shade_glass(in RefractorSurface s) -> RefractorResult {
     return result;
 }
 
-func shade_water(in RefractorSurface s, in Material material, f32x3 geometric_normal, f32 column, f32 shore) -> RefractorResult {
+func shade_water(
+    in RefractorSurface s, in Material material, f32x3 geometric_normal, f32 column, f32 shore, in FogSample fog
+) -> RefractorResult {
     let N = s.surface.normal;
     let F = F_Schlick(saturate(dot(N, s.view_direction)), f32x3(dielectric_f0(s.ior)));
 
@@ -194,10 +204,12 @@ func shade_water(in RefractorSurface s, in Material material, f32x3 geometric_no
     let transmittance = exp(-absorption_coefficient(s) * background_distance(s, uv));
     // single scattering toward the eye, lit by whatever sun and sky reach the surface
     let inscatter = material.get_water_scatter_color() * (1.0 - transmittance) * s.light.scatter_radiance;
-    let transmitted = (transmitted_sample.rgb * transmittance + inscatter) * (1.0 - F);
+    let transmitted_weight = transmittance * (1.0 - F);
+    let transmitted = transmitted_sample.rgb * transmitted_weight;
 
     RefractorResult result;
-    let color = s.light.specular + transmitted + s.surface.emissive + s.light.aerial_perspective;
+    let surface_color = s.light.specular + inscatter * (1.0 - F) + s.surface.emissive + s.light.aerial_perspective;
+    let color = fog_refractor(fog, surface_color, transmitted, transmitted_weight);
     result.color = clamp(com::sanitize(color), f32x3(0.0), f32x3(8000.0));
     let mean_fresnel = dot(F, f32x3(1.0 / 3.0));
     result.alpha = saturate(1.0 - (1.0 - mean_fresnel) * (1.0 - transmitted_sample.a));
@@ -261,11 +273,12 @@ func fs_main(VertexOutput input) -> RefractorOutput {
         }
     }
 
+    let fog = evaluate_fog(camera, world_position, pixel_uv, froxels, linear_clamp_sampler);
     RefractorResult shaded;
     if (refractor.is_water) {
-        shaded = shade_water(s, material, decoded.triangle.world_normal, refractor.column, refractor.shore);
+        shaded = shade_water(s, material, decoded.triangle.world_normal, refractor.column, refractor.shore, fog);
     } else {
-        shaded = shade_glass(s);
+        shaded = shade_glass(s, fog);
     }
 
     let background = transmission_source.Load(i32x3(pixel, 0));

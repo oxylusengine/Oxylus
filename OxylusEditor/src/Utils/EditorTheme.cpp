@@ -93,6 +93,8 @@ auto EditorTheme::init(this EditorTheme& self) -> void {
   self.component_icon_map[typeid(AutoExposureComponent).hash_code()] = ICON_MDI_CAMERA_ENHANCE;
   self.component_icon_map[typeid(ProbeVolumeComponent).hash_code()] = ICON_MDI_GRID;
   self.component_icon_map[typeid(DecalComponent).hash_code()] = ICON_MDI_STICKER;
+  self.component_icon_map[typeid(HeightFogComponent).hash_code()] = ICON_MDI_WEATHER_FOG;
+  self.component_icon_map[typeid(FogVolumeComponent).hash_code()] = ICON_MDI_CLOUD_OUTLINE;
 
   self.apply_theme();
   self.set_style();

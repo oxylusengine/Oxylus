@@ -683,6 +683,39 @@ auto RendererInstance::draw_virtual_shadowmap(
         unused_depth = opaque_depth;
       }
     }
+
+    // volumetric fog samples the sun's shadow in the air, where no visible pixel marked a page
+    if (shape.has_volumetric_fog) {
+      const auto froxel_count_x = (shape.render_size.x + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE;
+      const auto froxel_count_y = (shape.render_size.y + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE;
+      std::tie(
+        values.camera,
+        context.directional_clipmaps_buffer,
+        context.virtual_page_table_attachment,
+        page_occupancy,
+        page_allocator,
+        context.froxel_tile_depth_attachment
+      ) = std::tuple_cat(module
+                           .begin_compute(
+                             {{values.camera, vir::Access::ComputeUniformRead},
+                              {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
+                              {context.virtual_page_table_attachment, vir::Access::ComputeRW},
+                              {page_occupancy, vir::Access::ComputeRW},
+                              {page_allocator, vir::Access::ComputeRW},
+                              {context.froxel_tile_depth_attachment, vir::Access::ComputeSampled}}
+                           )
+                           .with_name("vsm mark froxel pages")
+                           .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_froxel_pages"))
+                           .bind_buffer(0, 0, values.camera)
+                           .bind_buffer(0, 1, context.directional_clipmaps_buffer)
+                           .bind_image(0, 2, context.virtual_page_table_attachment)
+                           .bind_buffer(0, 3, page_occupancy)
+                           .bind_buffer(0, 4, page_allocator)
+                           .bind_image(0, 5, context.froxel_tile_depth_attachment)
+                           .push_constants_from(vsm_ctx)
+                           .dispatch_invocations(froxel_count_x, froxel_count_y, GPU::FROXEL_DEPTH_SLICES)
+                           .end_compute());
+    }
   }
 
   if (is_pointspot) {
