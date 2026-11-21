@@ -1205,7 +1205,7 @@ auto RendererInstance::prepare_frame_params(
 
     const auto is_resolution_changed = self.fsr3_previous_render_size != render_size ||
                                        self.fsr3_previous_display_size != display_size;
-    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed;
+    const auto is_reset = !self.fsr3_history_valid || is_resolution_changed || self.is_camera_cut;
     if (is_reset) {
       self.fsr3_frame_index = 0;
     }
@@ -1257,7 +1257,7 @@ auto RendererInstance::prepare_frame_params(
   params.sssr_reset = false;
   if (shape.has_sssr) {
     self.allocate_sssr_resources(shape.render_size);
-    params.sssr_reset = !self.sssr_history_valid || (params.is_upscaling && params.fsr3_reset);
+    params.sssr_reset = !self.sssr_history_valid || self.is_camera_cut || (params.is_upscaling && params.fsr3_reset);
     params.sssr_history_ping = self.sssr_history_ping;
   }
 
@@ -1465,7 +1465,7 @@ auto RendererInstance::bind_frame(
       (self.render_size_.y + GPU::FROXEL_TILE_SIZE - 1) / GPU::FROXEL_TILE_SIZE,
       GPU::FROXEL_DEPTH_SLICES,
     };
-    params.is_history_valid = self.volumetric_fog_history_valid ? 1_u32 : 0_u32;
+    params.is_history_valid = self.volumetric_fog_history_valid && !self.is_camera_cut ? 1_u32 : 0_u32;
     auto staging = render_context.upload_frame_buffer(host_bytes(params), "volumetric fog params");
     if (!staging) {
       OX_LOG_ERROR("failed to stage {}", "volumetric fog params");
@@ -3137,6 +3137,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // an explicitly active camera wins over a later one; with none marked the last one still does,
   // which is what every single-camera scene has always relied on
   auto found_active_camera = false;
+  flecs::entity_t camera_entity = 0;
 
   self.scene.world
     .query_builder<const TransformComponent, const CameraComponent>() //
@@ -3160,11 +3161,19 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
       if (c.active || !found_active_camera) {
         current_camera = c;
+        camera_entity = e.id();
         found_active_camera = c.active;
       }
     });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
+
+  // a switch to another camera is how a cinematic cuts, a jump further than anything travels in a frame is a teleport.
+  // A turn alone isn't a cut, reprojection already follows it
+  constexpr auto CAMERA_CUT_DISTANCE = 5.0f;
+  const auto camera_travel = glm::distance(cam.position, glm::vec3(self.previous_camera_data.position));
+  self.is_camera_cut = camera_entity != self.previous_camera_entity || camera_travel > CAMERA_CUT_DISTANCE;
+  self.previous_camera_entity = camera_entity;
 
   self.camera_data = GPU::Camera{
     .position = glm::vec4(cam.position, 0.0f),

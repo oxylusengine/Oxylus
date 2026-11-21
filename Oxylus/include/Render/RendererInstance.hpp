@@ -22,6 +22,11 @@
 #include "Scene/SceneGPU.hpp"
 #include "Scene/Terrain.hpp"
 
+// repeating the alias avoids dragging flecs.h into every consumer of this header
+namespace flecs {
+using entity_t = std::uint64_t;
+}
+
 namespace vir {
 struct ColorBlendAttachmentState;
 }
@@ -1548,6 +1553,9 @@ private:
 
   GPU::Camera camera_data = {};
   GPU::Camera previous_camera_data = {};
+  flecs::entity_t previous_camera_entity = 0;
+  // this frame's view is unrelated to the last one, so temporal history reprojected from it is stale
+  bool is_camera_cut = true;
 
   GPU::SceneFlags gpu_scene_flags = {};
 
