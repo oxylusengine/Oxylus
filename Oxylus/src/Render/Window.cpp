@@ -261,19 +261,23 @@ auto Window::update(const Timestep& timestep) const -> void {
                               const bool down,
                               const bool repeat
                             ) {
-    if (App::has_mod<ImGuiRenderer>()) {
-      auto& imgui_renderer = App::mod<ImGuiRenderer>();
-      imgui_renderer.on_key(key_code, scan_code, mods, down);
+    auto& input_system = App::mod<Input>();
+    const auto ox_scan_code = static_cast<ScanCode>(scan_code);
+    const auto ox_mod = static_cast<ModCode>(mods);
+    input_system.set_mod(ox_mod);
+
+    if (
+      App::has_mod<ImGuiRenderer>() && App::mod<ImGuiRenderer>().on_key(key_code, scan_code, mods, down, repeat) &&
+      (down || !input_system.get_key_held(ox_scan_code))
+    ) {
+      // still release keys that the game received before the console opened
+      return;
     }
 
     if (App::has_mod<RmlUI>()) {
       App::mod<RmlUI>().process_key(key_code, mods, down);
     }
 
-    auto& input_system = App::mod<Input>();
-    const auto ox_scan_code = static_cast<ScanCode>(scan_code);
-    const auto ox_mod = static_cast<ModCode>(mods);
-    input_system.set_mod(ox_mod);
     if (down) {
       input_system.set_key_pressed(ox_scan_code, !repeat);
       input_system.set_key_released(ox_scan_code, false);
@@ -285,9 +289,8 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
   };
   window_callbacks.on_text_input = [](void* user_data, const c8* text) {
-    if (App::has_mod<ImGuiRenderer>()) {
-      auto& imgui_renderer = App::mod<ImGuiRenderer>();
-      imgui_renderer.on_text_input(text);
+    if (App::has_mod<ImGuiRenderer>() && App::mod<ImGuiRenderer>().on_text_input(text)) {
+      return;
     }
     if (App::has_mod<RmlUI>()) {
       App::mod<RmlUI>().process_text(text);

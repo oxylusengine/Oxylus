@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <string>
+#include <vector>
 #include <vir/Fwd.hpp>
 
 #include "Core/EventSystem.hpp"
@@ -118,6 +120,10 @@ private:
 
   // the optional test cook runs on a worker, one at a time
   std::atomic<bool> cooking_assets = false;
+
+  // names of jobs with a spinner up, and this frame's scratch to diff them against
+  std::vector<std::string> loading_job_names = {};
+  std::vector<std::string> active_job_names = {};
 
   auto save_project(const std::string& path) -> void;
 

@@ -44,8 +44,13 @@ auto NotificationSystem::drain_pending(this NotificationSystem& self) -> void {
   }
 
   for (auto& notif : incoming) {
-    if (self.active_notifications.contains(notif.title) && notif.completed) {
-      self.active_notifications.insert_or_assign(notif.title, std::move(notif));
+    // a job finishing replaces its spinner, and one starting again under the same name brings it back
+    // instead of being dropped behind the finished toast that is still fading out
+    if (
+      auto it = self.active_notifications.find(notif.title);
+      it != self.active_notifications.end() && (notif.completed || it->second.completed)
+    ) {
+      it->second = std::move(notif);
       continue;
     }
 

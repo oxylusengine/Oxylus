@@ -8,6 +8,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
+#include <type_traits>
 #include <vir/Allocator.hpp>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -30,6 +31,7 @@
 #include "Render/Upscaler.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "Scene/ComponentRegistry.hpp"
 #include "Scene/Components.hpp"
 #include "UI/ImGuiRenderer.hpp"
 #include "UI/PayloadData.hpp"
@@ -67,17 +69,15 @@ struct GizmoInfo {
   glm::mat4 view_proj;
   Frustum frustum;
 };
-template <typename T, typename Func>
-void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, Scene* scene, Func&& icon_select_func) {
-  auto& editor = App::mod<Editor>();
-  auto& editor_theme = editor.editor_theme;
+template <typename... Components>
+static auto show_component_gizmos(const GizmoInfo& gizmo_info, Scene& scene, Editor& editor) -> void {
+  ZoneScoped;
+
+  const auto& component_icons = editor.editor_theme.component_icon_map;
   const auto scaled_icon_size = UI::scale(gizmo_info.icon_size);
 
-  scene->world.query_builder<T>().build().each([&](flecs::entity entity, const T& component) {
+  const auto draw_icon = [&](flecs::entity entity, const c8* icon, const c8* name) {
     const glm::vec3 pos = Scene::get_world_transform(entity)[3];
-
-    if (entity.has<Hidden>())
-      return;
 
     if (gizmo_info.frustum.is_inside(pos) == (u32)Intersection::Outside)
       return;
@@ -96,7 +96,6 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
 
     ImGui::PushFont(nullptr, gizmo_info.icon_size);
     ImGui::PushID(static_cast<i32>(entity.id()));
-    const char* icon = icon_select_func(editor_theme.component_icon_map.at(typeid(T).hash_code()), component);
     if (ImGui::Button(icon, {scaled_icon_size, scaled_icon_size})) {
       auto& editor_context = editor.get_context();
       editor_context.reset(EditorContext::Type::Entity, nullopt, entity);
@@ -106,8 +105,34 @@ void show_component_gizmo(const GizmoInfo& gizmo_info, const std::string& name, 
 
     ImGui::PopStyleColor(2);
 
-    UI::tooltip_hover(name.data());
-  });
+    UI::tooltip_hover(name);
+  };
+
+  const auto draw_component = [&]<typename Component>() {
+    const auto icon_entry = component_icons.find(typeid(Component).hash_code());
+    if (icon_entry == component_icons.end()) {
+      return;
+    }
+
+    const auto* name = short_type_name<Component>();
+    ImGui::PushID(name);
+    scene.world.query_builder<const TransformComponent, const Component>().template without<Hidden>().build().each(
+      [&](flecs::entity entity, const TransformComponent&, const Component& component) {
+        const auto* icon = icon_entry->second;
+        if constexpr (std::is_same_v<Component, LightComponent>) {
+          switch (component.type) {
+            case LightComponent::Directional: icon = ICON_MDI_WEATHER_SUNNY; break;
+            case LightComponent::Spot       : icon = ICON_MDI_SPOTLIGHT; break;
+            case LightComponent::Point      : break;
+          }
+        }
+        draw_icon(entity, icon, name);
+      }
+    );
+    ImGui::PopID();
+  };
+
+  (draw_component.template operator()<Components>(), ...);
 }
 
 // drives the settings popup: each section body runs once to scan (search matches, modified rows),
@@ -417,11 +442,6 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.f));
   if (self.on_begin(flags)) {
-    if (auto s = self.editor_scene ? self.editor_scene->get_scene() : nullptr) {
-      self.runtime_console.set_scene_cvar_system(reinterpret_cast<CVarSystem*>(&s->renderer_cvar));
-      self.runtime_console.render();
-    }
-
     if (ImGui::BeginPopupContextItem("viewport context")) {
       if (self.editor_scene && !self.editor_scene->is_playing()) {
         if (ImGui::MenuItem("Unload Scene")) {
@@ -1497,9 +1517,21 @@ auto ViewportPanel::draw_render_settings(this ViewportPanel& self, SettingsUI& u
   );
 
   ui.section({.name = "Contact Shadows", .toggle = &cvar_sys.cvar_contact_shadows_enabled}, [&] {
-    ui.drag("Steps", cvar_sys.cvar_contact_shadows_steps, 1, 64);
-    ui.drag("Thickness", cvar_sys.cvar_contact_shadows_thickness, 0.0f, 5.0f);
-    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f);
+    ui.drag(
+      "Max steps",
+      cvar_sys.cvar_contact_shadows_steps,
+      1,
+      static_cast<i32>(GPU::CONTACT_SHADOW_MAX_STEPS),
+      "Maximum distance in render pixels to search toward each light with Contact Shadows"
+    );
+    ui.drag(
+      "Thickness",
+      cvar_sys.cvar_contact_shadows_thickness,
+      0.0f,
+      5.0f,
+      "Assumed depth of a caster in world units"
+    );
+    ui.drag("Length", cvar_sys.cvar_contact_shadows_length, 0.0f, 5.0f, "Maximum shadow ray length in world units");
   });
 }
 
@@ -1787,44 +1819,15 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
       view_proj,
       frustum,
     };
-    show_component_gizmo<LightComponent>(
-      gizmo_info,
-      "LightComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const LightComponent& c) {
-        switch (c.type) {
-          case LightComponent::Directional: return ICON_MDI_WEATHER_SUNNY;
-          case LightComponent::Spot       : return ICON_MDI_SPOTLIGHT;
-          case LightComponent::Point      : return component_icon;
-        }
-
-        return component_icon;
-      }
-    );
-    show_component_gizmo<AudioSourceComponent>(
-      gizmo_info,
-      "AudioSourceComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const AudioSourceComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<AudioListenerComponent>(
-      gizmo_info,
-      "AudioListenerComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const AudioListenerComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<CameraComponent>(
-      gizmo_info,
-      "CameraComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const CameraComponent& c) { return component_icon; }
-    );
-    show_component_gizmo<ParticleSystemComponent>(
-      gizmo_info,
-      "ParticleSystemComponent",
-      self.editor_scene->get_scene().get(),
-      [](const char* component_icon, const ParticleSystemComponent& c) { return component_icon; }
-    );
+    // opt in component types to viewport gizmos
+    show_component_gizmos<
+      LightComponent,
+      AudioSourceComponent,
+      AudioListenerComponent,
+      CameraComponent,
+      ParticleSystemComponent,
+      ProbeVolumeComponent,
+      DecalComponent>(gizmo_info, *self.editor_scene->get_scene(), editor);
   }
 
   const flecs::entity selected_entity = editor_context.entity.value_or(flecs::entity::null());
@@ -2003,6 +2006,7 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
                                          : glm::mat4(1.0f);
 
         const glm::mat4 inv_parent = glm::inverse(parent_world);
+        const auto old_tc = *tc;
         if (self.gizmo_type == ImGuizmo::TRANSLATE) {
           tc->position += glm::vec3(inv_parent * glm::vec4(delta_translation, 0.0f));
         } else if (self.gizmo_type == ImGuizmo::ROTATE) {
@@ -2011,10 +2015,8 @@ void ViewportPanel::draw_gizmos(this ViewportPanel& self) {
           tc->scale *= delta_scale;
         }
 
-        auto old_tc = *tc;
         undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
           selected_entity,
-          tc,
           old_tc,
           *tc,
           "gizmo transform"

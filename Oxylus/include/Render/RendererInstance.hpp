@@ -908,6 +908,7 @@ struct PBRVariables {
   vir::ValueID vbgtao_settings = vir::ValueID::Invalid;
   vir::ValueID vbgtao_denoise_push = vir::ValueID::Invalid;
   vir::ValueID rtao_push = vir::ValueID::Invalid;
+  vir::ValueID contact_shadows = vir::ValueID::Invalid;
   vir::ValueID lighting = vir::ValueID::Invalid;
   vir::ValueID sky = vir::ValueID::Invalid;
 };
@@ -1502,6 +1503,7 @@ private:
   GPU::TonemapType tonemap_type = GPU::TonemapType::AgX;
 
   bool directional_light_cast_shadows = true;
+  f32 directional_contact_shadow_strength = 0.0f;
   bool sun_direction_changed = false;
   glm::vec3 light_grid_origin = {};
   glm::vec3 previous_sun_direction = {};

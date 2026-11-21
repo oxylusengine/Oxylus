@@ -1,9 +1,13 @@
 #include "UI/RuntimeConsole.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <mutex>
 
 #include "Core/App.hpp"
-#include "Core/Input.hpp"
 #include "Render/RenderContext.hpp"
 #include "UI/UI.hpp"
 #include "Utils/CVars.hpp"
@@ -43,7 +47,7 @@ RuntimeConsole::RuntimeConsole() : id(fmt::format("runtime_console_{}", ++consol
   );
 
   // Default commands
-  register_command("quit", "", [](const ParsedCommandValue&) { App::get()->stop(); });
+  register_command("quit", "", [](const ParsedCommandValue&) { App::get()->should_stop(); });
   register_command("clear", "", [this](const ParsedCommandValue&) { clear_log(); });
   register_command("help", "", [this](const ParsedCommandValue& value) { help_command(value); });
 
@@ -76,6 +80,9 @@ void RuntimeConsole::register_command(const std::string& command, const std::str
 
 void RuntimeConsole::add_log(const char* fmt, loguru::Verbosity verb) {
   auto lock = std::unique_lock(pending_mutex);
+  if (pending.size() >= MAX_TEXT_BUFFER_SIZE) {
+    pending.erase(pending.begin());
+  }
   pending.emplace_back(fmt, verb);
 }
 
@@ -108,14 +115,18 @@ void RuntimeConsole::clear_log() {
   text_buffer.clear();
 }
 
-void RuntimeConsole::render(this RuntimeConsole& self) {
+auto RuntimeConsole::toggle(this RuntimeConsole& self) -> void {
+  self.visible = !self.visible;
+  self.request_keyboard_focus = self.visible;
+}
+
+auto RuntimeConsole::render(this RuntimeConsole& self, CVarSystem* scene_cvars) -> void {
   self.drain_pending();
 
-  if (App::mod<Input>().get_key_pressed(ScanCode::Grave)) {
-    self.visible = !self.visible;
-    self.request_keyboard_focus = true;
-  }
   if (self.visible) {
+    self.scene_cvar_system = scene_cvars;
+    OX_DEFER(&) { self.scene_cvar_system = nullptr; };
+
     constexpr auto animation_duration = 0.5f;
     constexpr auto animation_speed = 3.0f;
 
@@ -125,15 +136,19 @@ void RuntimeConsole::render(this RuntimeConsole& self) {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->WorkPos, ImGuiCond_Always);
     ImVec2 size = {ImGui::GetMainViewport()->WorkSize.x, ImGui::GetMainViewport()->WorkSize.y * self.animation_counter};
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    if (self.request_keyboard_focus) {
+      ImGui::SetNextWindowFocus();
+    }
 
-    constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration |
-                                             ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse;
+    constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration |
+                                              ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking |
+                                              ImGuiWindowFlags_NoSavedSettings;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     // ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.000f, 0.000f, 0.000f, 1.000f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.000f, 0.000f, 0.000f, 0.784f));
     // ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.100f, 0.100f, 0.100f, 1.000f));
 
-    if (ImGui::Begin(self.id.c_str(), nullptr, windowFlags)) {
+    if (ImGui::Begin(self.id.c_str(), nullptr, window_flags)) {
       if (ImGui::BeginMenuBar()) {
         if (ImGui::MenuItem("Clear")) {
           self.clear_log();
@@ -201,11 +216,13 @@ void RuntimeConsole::render(this RuntimeConsole& self) {
         ImGui::SetKeyboardFocusHere();
         self.request_keyboard_focus = false;
       }
-      std::string input_buf = {};
-      if (ImGui::InputText("##", &input_buf, input_flags, callback, &self)) {
+      if (
+        ImGui::InputText("##command", &self.input_buffer, input_flags, callback, &self) && !self.input_buffer.empty()
+      ) {
         self.history_position = -1;
-        self.process_command(input_buf);
-        self.input_log.emplace_back(input_buf);
+        self.process_command(self.input_buffer);
+        self.input_log.emplace_back(self.input_buffer);
+        self.input_buffer.clear();
         self.request_keyboard_focus = true;
       }
 
@@ -260,6 +277,9 @@ auto RuntimeConsole::process_command(this RuntimeConsole& self, const std::strin
   CVarParameter* cvar = nullptr;
   CVarSystem* cvar_system = nullptr;
   for (auto* s : cvar_systems) {
+    if (!s) {
+      continue;
+    }
     cvar = s->get_cvar(hashed);
     cvar_system = s;
     if (cvar) {
@@ -276,7 +296,7 @@ auto RuntimeConsole::process_command(this RuntimeConsole& self, const std::strin
         if (!value.str_value.empty()) {
           const auto parsed = value.as<int32_t>();
           if (parsed.has_value()) {
-            cvar_system->set_int_cvar(hasher(cvar->name.c_str()), *parsed);
+            cvar_system->set_int_cvar(hashed, *parsed);
             current_value = *parsed;
             changed = true;
           }
@@ -290,7 +310,7 @@ auto RuntimeConsole::process_command(this RuntimeConsole& self, const std::strin
         if (!value.str_value.empty()) {
           const auto parsed = value.as<float>();
           if (parsed.has_value()) {
-            cvar_system->set_float_cvar(hasher(cvar->name.c_str()), *parsed);
+            cvar_system->set_float_cvar(hashed, *parsed);
             current_value = *parsed;
             changed = true;
           }
@@ -302,7 +322,7 @@ auto RuntimeConsole::process_command(this RuntimeConsole& self, const std::strin
         auto current_value = cvar_system->string_cvars.at(cvar->array_index).current;
         bool changed = false;
         if (!value.str_value.empty()) {
-          cvar_system->set_string_cvar(hasher(cvar->name.c_str()), value.str_value.c_str());
+          cvar_system->set_string_cvar(hashed, value.str_value);
           current_value = value.str_value;
           changed = true;
         }
@@ -461,6 +481,9 @@ auto RuntimeConsole::help_command(this RuntimeConsole& self, const ParsedCommand
     const auto hashed = hasher(value.as_string());
     CVarParameter* cvar = nullptr;
     for (auto* s : cvar_systems) {
+      if (!s) {
+        continue;
+      }
       cvar = s->get_cvar(hashed);
       if (cvar) {
         break;
@@ -492,6 +515,9 @@ auto RuntimeConsole::get_available_commands(this RuntimeConsole& self) -> std::v
   };
 
   for (const auto* s : cvar_systems) {
+    if (!s) {
+      continue;
+    }
     for (const auto& var : s->int_cvars) {
       available_commands.emplace_back(var.parameter->name);
     }
@@ -499,8 +525,15 @@ auto RuntimeConsole::get_available_commands(this RuntimeConsole& self) -> std::v
     for (const auto& var : s->float_cvars) {
       available_commands.emplace_back(var.parameter->name);
     }
+
+    for (const auto& var : s->string_cvars) {
+      available_commands.emplace_back(var.parameter->name);
+    }
   }
 
+  std::ranges::sort(available_commands);
+  const auto duplicates = std::ranges::unique(available_commands);
+  available_commands.erase(duplicates.begin(), duplicates.end());
   return available_commands;
 }
 } // namespace ox

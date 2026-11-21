@@ -414,6 +414,10 @@ public:
   ) -> flecs::entity;
   // acquires what json_to_entity collected, which is the ref every asset uuid field owns
   auto load_requested_assets(this Scene& self, std::span<const UUID> requested_assets) -> void;
+  // one component's fields as a JSON object, read back by json_to_component
+  static auto component_to_json(flecs::entity e, flecs::entity component) -> std::string;
+  // adds `component` to `e` with the fields component_to_json wrote and acquires the assets they name
+  auto json_to_component(this Scene& self, flecs::entity e, flecs::entity component, std::string_view json) -> bool;
   auto duplicate_entity(this Scene& self, flecs::entity entity) -> flecs::entity;
 
   auto to_json(this const Scene& self) -> JsonWriter;
@@ -451,6 +455,12 @@ private:
 
   bool running = false;
   bool deserializing_entity = false;
+
+  // JsonValue is simdjson::ondemand::value
+  template <typename JsonValue>
+  static auto deserialize_component(
+    Scene& self, flecs::entity e, flecs::entity component, JsonValue json, std::vector<UUID>& requested_assets
+  ) -> void;
 
   std::vector<std::function<void(Scene* scene)>> deferred_functions_ = {};
 

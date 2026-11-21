@@ -199,6 +199,11 @@ struct LightComponent {
   f32 clipmap_selection_bias = -0.5f;
 };
 
+// enables screen-space contact shadows for the light on this entity
+struct ContactShadowsComponent {
+  f32 strength = 1.0f;
+};
+
 struct ProbeVolumeComponent {
   glm::uvec3 probe_counts = {32, 32, 32};
   glm::vec3 probe_range = {64.0f, 64.0f, 64.0f};
