@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 #include <ranges>
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
@@ -3393,8 +3394,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         }
       });
 
+    ankerl::svector<f32, GPU::MAX_FOG_VOLUMES> fog_volume_distances = {};
     if (self.camera_data.fog.volumetric_distance > 0.0f) {
-      const auto frustum = Camera::get_frustum(cam, cam.position);
+      // the froxels end at volumetric_distance, a volume past it is never drawn
+      auto froxel_camera = cam;
+      froxel_camera.far_clip = std::min(cam.far_clip, self.camera_data.fog.volumetric_distance);
+      const auto frustum = Camera::get_frustum(froxel_camera, cam.position);
       self.scene.world
         .query_builder<const TransformComponent, const FogVolumeComponent>() //
         .build()
@@ -3410,15 +3415,6 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
           const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
           if (!bounds.is_on_frustum(frustum)) {
-            return;
-          }
-
-          if (self.fog_volumes.size() >= GPU::MAX_FOG_VOLUMES) {
-            if (!self.has_warned_fog_volume_limit) {
-              OX_LOG_WARN("more than {} fog volumes are visible, the rest are skipped", GPU::MAX_FOG_VOLUMES);
-              self.has_warned_fog_volume_limit = true;
-            }
-
             return;
           }
 
@@ -3441,7 +3437,30 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
             .noise_frequency = noise_frequency,
             .noise_strength = std::clamp(c.noise_strength, 0.0f, 1.0f),
           });
+          fog_volume_distances.push_back(glm::distance(glm::clamp(cam.position, bounds.min, bounds.max), cam.position));
         });
+    }
+
+    if (self.fog_volumes.size() > GPU::MAX_FOG_VOLUMES) {
+      if (!self.has_warned_fog_volume_limit) {
+        OX_LOG_WARN("more than {} fog volumes are visible, the farthest are skipped", GPU::MAX_FOG_VOLUMES);
+        self.has_warned_fog_volume_limit = true;
+      }
+
+      memory::ScopedStack stack;
+      auto order = stack.alloc<u32>(self.fog_volumes.size());
+      std::iota(order.begin(), order.end(), 0_u32);
+      const auto kept_end = order.begin() + GPU::MAX_FOG_VOLUMES;
+      std::nth_element(order.begin(), kept_end, order.end(), [&](const u32 a, const u32 b) {
+        return fog_volume_distances[a] < fog_volume_distances[b];
+      });
+      // ascending, so each kept volume moves down onto a slot that is already copied out or discarded
+      std::sort(order.begin(), kept_end);
+      for (auto i = 0_u32; i < GPU::MAX_FOG_VOLUMES; i++) {
+        self.fog_volumes[i] = self.fog_volumes[order[i]];
+      }
+
+      self.fog_volumes.resize(GPU::MAX_FOG_VOLUMES);
     }
 
     self.volumetric_fog_params.fog_volume_count = static_cast<u32>(self.fog_volumes.size());
