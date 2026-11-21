@@ -241,6 +241,10 @@ func cs_main(u32x3 id : SV_DispatchThreadID) -> void {
             vsm_pointspot_page_tables,
             vsm_physical_pages,
             nearest_clamp_sampler,
+            // contact shadows trace the screen from a surface, a point in the air has none, so the depth goes unread
+            tile_depth,
+            false,
+            false,
             camera,
             push.lighting,
             push.lights,

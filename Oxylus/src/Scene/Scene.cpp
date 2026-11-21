@@ -4113,6 +4113,23 @@ auto Scene::clear_rml_dpi_ratio_override(this const Scene& self) -> void {
   }
 }
 
+template <typename JsonValue>
+auto Scene::deserialize_component(
+  Scene& self, flecs::entity e, flecs::entity component, JsonValue json, std::vector<UUID>& requested_assets
+) -> void {
+  ZoneScoped;
+
+  // Observers must not fill in defaults for fields this is about to write.
+  const auto was_deserializing = std::exchange(self.deserializing_entity, true);
+  e.add(component);
+  auto* data = e.get_mut(component);
+  auto deserializer = JsonEntityDeserializer(self.world, std::move(json));
+  deserializer.serialize(component, data);
+  requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+  self.deserializing_entity = was_deserializing;
+  e.modified(component);
+}
+
 auto Scene::entity_to_json(JsonWriter& writer, flecs::entity e) -> void {
   ZoneScoped;
 
@@ -4248,15 +4265,7 @@ auto Scene::json_to_entity(
         continue;
       }
 
-      // Observers must not fill in defaults for fields this loop is about to write.
-      const auto was_deserializing = std::exchange(self.deserializing_entity, true);
-      e.add(component_id);
-      auto* component = e.get_mut(component_id);
-      auto deserializer = JsonEntityDeserializer(self.world, field_json.value());
-      deserializer.serialize(component_id, component);
-      requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
-      self.deserializing_entity = was_deserializing;
-      e.modified(component_id);
+      deserialize_component(self, e, component_id, field_json.value().value_unsafe(), requested_assets);
     }
   }
 
@@ -4280,6 +4289,58 @@ auto Scene::json_to_entity(
   }
 
   return e;
+}
+
+static auto is_data_component(flecs::entity component) -> bool {
+  const auto* info = component.try_get<flecs::Component>();
+  return info && info->size > 0;
+}
+
+auto Scene::component_to_json(flecs::entity e, flecs::entity component) -> std::string {
+  ZoneScoped;
+
+  auto world = e.world();
+  auto writer = JsonWriter{};
+  writer.begin_obj();
+  if (is_data_component(component)) {
+    if (auto* data = e.try_get_mut(component.id())) {
+      auto serializer = JsonEntitySerializer(world, writer);
+      serializer.serialize(component, data);
+    }
+  }
+
+  writer.end_obj();
+  return writer.stream.str();
+}
+
+auto Scene::json_to_component(this Scene& self, flecs::entity e, flecs::entity component, std::string_view json)
+  -> bool {
+  ZoneScoped;
+
+  if (!is_data_component(component)) {
+    e.add(component);
+    return true;
+  }
+
+  auto content = simdjson::padded_string(json);
+  auto parser = simdjson::ondemand::parser{};
+  auto doc = parser.iterate(content);
+  auto value = doc.get_value();
+  if (value.error()) {
+    OX_LOG_ERROR("Couldn't parse component '{}': {}", component.name().c_str(), simdjson::error_message(value.error()));
+    return false;
+  }
+
+  auto requested_assets = std::vector<UUID>{};
+  deserialize_component(self, e, component, value.value_unsafe(), requested_assets);
+
+  // pair observers such as (TransformComponent, MeshComponent) only fire on the transform, see json_to_entity
+  if (component.id() != self.world.id<TransformComponent>() && e.has<TransformComponent>()) {
+    e.modified<TransformComponent>();
+  }
+
+  self.load_requested_assets(requested_assets);
+  return true;
 }
 
 auto Scene::to_json(this const Scene& self) -> JsonWriter {

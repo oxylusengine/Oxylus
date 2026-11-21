@@ -1,12 +1,17 @@
 #include "InspectorPanel.hpp"
 
+#include <algorithm>
 #include <ankerl/svector.h>
+#include <array>
 #include <basisu/encoder/basisu_enc.h>
+#include <cfloat>
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <string_view>
+#include <utility>
 
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
@@ -34,6 +39,323 @@
 
 namespace ox {
 static UUID pending_save_material_uuid = {};
+
+enum class ComponentCategory : u8 {
+  General,
+  Rendering,
+  Lighting,
+  Environment,
+  PostProcessing,
+  Animation,
+  Physics,
+  Audio,
+  Scripting,
+  Other,
+};
+
+struct ComponentCategoryInfo {
+  const c8* name;
+  const c8* icon;
+};
+
+static constexpr auto COMPONENT_CATEGORIES = std::to_array<ComponentCategoryInfo>({
+  {"General", ICON_MDI_AXIS_ARROW},
+  {"Rendering", ICON_MDI_CUBE_OUTLINE},
+  {"Lighting", ICON_MDI_LIGHTBULB_OUTLINE},
+  {"Environment", ICON_MDI_TERRAIN},
+  {"Post Processing", ICON_MDI_TUNE_VARIANT},
+  {"Animation", ICON_MDI_ANIMATION_PLAY},
+  {"Physics", ICON_MDI_ATOM},
+  {"Audio", ICON_MDI_VOLUME_HIGH},
+  {"Scripting", ICON_MDI_SCRIPT_TEXT_OUTLINE},
+  {"Other", ICON_MDI_DOTS_HORIZONTAL},
+});
+
+struct ComponentCategoryEntry {
+  std::string_view component_name;
+  ComponentCategory category;
+};
+
+// engine components missing here still show up, under Other
+static constexpr auto COMPONENT_CATEGORY_ENTRIES = std::to_array<ComponentCategoryEntry>({
+  {"TransformComponent", ComponentCategory::General},
+  {"LayerComponent", ComponentCategory::General},
+  {"MeshComponent", ComponentCategory::Rendering},
+  {"SkinnedMeshComponent", ComponentCategory::Rendering},
+  {"SpriteComponent", ComponentCategory::Rendering},
+  {"CameraComponent", ComponentCategory::Rendering},
+  {"DecalComponent", ComponentCategory::Rendering},
+  {"ParticleSystemComponent", ComponentCategory::Rendering},
+  {"LightComponent", ComponentCategory::Lighting},
+  {"ContactShadows", ComponentCategory::Lighting},
+  {"ProbeVolumeComponent", ComponentCategory::Lighting},
+  {"SkyComponent", ComponentCategory::Environment},
+  {"AtmosphereComponent", ComponentCategory::Environment},
+  {"TerrainComponent", ComponentCategory::Environment},
+  {"AutoExposureComponent", ComponentCategory::PostProcessing},
+  {"TonemappingComponent", ComponentCategory::PostProcessing},
+  {"ColorGradingComponent", ComponentCategory::PostProcessing},
+  {"VignetteComponent", ComponentCategory::PostProcessing},
+  {"ChromaticAberrationComponent", ComponentCategory::PostProcessing},
+  {"FilmGrainComponent", ComponentCategory::PostProcessing},
+  {"LetterboxComponent", ComponentCategory::PostProcessing},
+  {"ScreenFadeComponent", ComponentCategory::PostProcessing},
+  {"AnimatorComponent", ComponentCategory::Animation},
+  {"SpriteAnimationComponent", ComponentCategory::Animation},
+  {"CinematicPlayerComponent", ComponentCategory::Animation},
+  {"RigidBodyComponent", ComponentCategory::Physics},
+  {"BoxColliderComponent", ComponentCategory::Physics},
+  {"SphereColliderComponent", ComponentCategory::Physics},
+  {"CapsuleColliderComponent", ComponentCategory::Physics},
+  {"TaperedCapsuleColliderComponent", ComponentCategory::Physics},
+  {"CylinderColliderComponent", ComponentCategory::Physics},
+  {"MeshColliderComponent", ComponentCategory::Physics},
+  {"CharacterControllerComponent", ComponentCategory::Physics},
+  {"VehicleComponent", ComponentCategory::Physics},
+  {"VehicleWheelComponent", ComponentCategory::Physics},
+  {"AudioSourceComponent", ComponentCategory::Audio},
+  {"AudioListenerComponent", ComponentCategory::Audio},
+  {"ScriptComponent", ComponentCategory::Scripting},
+});
+
+struct AddComponentEntry {
+  flecs::id component = {};
+  const c8* display_name = nullptr;
+  const c8* type_name = nullptr;
+  ComponentCategory category = ComponentCategory::Other;
+  bool is_present = false;
+};
+
+// module children also include enums and the namespace entities of scoped type names
+static auto is_addable_component(flecs::entity component) -> bool {
+  return component.has<flecs::Component>() && !component.has<flecs::Enum>() && !component.has<flecs::Bitmask>();
+}
+
+// a component a script defined lives outside every imported module
+static auto component_category(const ComponentDB& component_db, flecs::entity component) -> ComponentCategory {
+  const auto parent = component.parent();
+  const auto is_module_component = std::ranges::find(component_db.imported_modules, parent) !=
+                                   component_db.imported_modules.end();
+  if (!is_module_component) {
+    return ComponentCategory::Scripting;
+  }
+
+  const auto name = std::string_view(component.name().c_str());
+  const auto entry = std::ranges::find(COMPONENT_CATEGORY_ENTRIES, name, &ComponentCategoryEntry::component_name);
+  return entry != COMPONENT_CATEGORY_ENTRIES.end() ? entry->category : ComponentCategory::Other;
+}
+
+// "TaperedCapsuleColliderComponent" -> "Tapered Capsule Collider"
+static auto component_display_name(std::string_view name, memory::ScopedStack& stack) -> const c8* {
+  constexpr auto suffix = std::string_view("Component");
+  if (name.size() > suffix.size() && name.ends_with(suffix)) {
+    name.remove_suffix(suffix.size());
+  }
+
+  const auto is_upper = [](c8 c) {
+    return c >= 'A' && c <= 'Z';
+  };
+  const auto is_lower = [](c8 c) {
+    return c >= 'a' && c <= 'z';
+  };
+
+  auto buffer = stack.alloc<c8>(name.size() * 2 + 1);
+  usize length = 0;
+  for (usize i = 0; i < name.size(); i++) {
+    const auto c = name[i];
+    if (i > 0 && is_upper(c)) {
+      const auto previous = name[i - 1];
+      const auto is_acronym_end = is_upper(previous) && i + 1 < name.size() && is_lower(name[i + 1]);
+      if (is_lower(previous) || is_acronym_end) {
+        buffer[length++] = ' ';
+      }
+    }
+
+    buffer[length++] = c == '_' ? ' ' : c;
+  }
+
+  buffer[length] = '\0';
+  return buffer.data();
+}
+
+static auto add_component_filter_callback(ImGuiInputTextCallbackData* data) -> i32 {
+  if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+    *static_cast<i32*>(data->UserData) += data->EventKey == ImGuiKey_UpArrow ? -1 : 1;
+  }
+
+  return 0;
+}
+
+static auto draw_add_component_popup(ComponentDB& component_db, flecs::entity entity) -> void {
+  ZoneScoped;
+
+  static ImGuiTextFilter filter = {};
+  static i32 highlighted = 0;
+  static bool is_refocus_pending = false;
+
+  memory::ScopedStack stack;
+
+  if (ImGui::IsWindowAppearing()) {
+    filter.Clear();
+    highlighted = 0;
+    is_refocus_pending = true;
+  }
+
+  if (is_refocus_pending) {
+    ImGui::SetKeyboardFocusHere();
+    is_refocus_pending = false;
+  }
+
+  i32 highlight_step = 0;
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  const auto is_submitted = ImGui::InputTextWithHint(
+    "##add_component_filter",
+    ICON_MDI_MAGNIFY " Search components...",
+    filter.InputBuf,
+    IM_ARRAYSIZE(filter.InputBuf),
+    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory,
+    add_component_filter_callback,
+    &highlight_step
+  );
+  if (ImGui::IsItemEdited()) {
+    filter.Build();
+    highlighted = 0;
+  }
+
+  const auto components = component_db.get_components();
+  auto entries = stack.alloc<AddComponentEntry>(components.size());
+  usize entry_count = 0;
+  for (const auto component : components) {
+    const auto component_entity = component.entity();
+    const auto category = component_category(component_db, component_entity);
+    // a script component without fields is a plain tag
+    if (category != ComponentCategory::Scripting && !is_addable_component(component_entity)) {
+      continue;
+    }
+
+    const auto* type_name = component_entity.name().c_str();
+    entries[entry_count++] = {
+      .component = component,
+      .display_name = component_display_name(type_name, stack),
+      .type_name = type_name,
+      .category = category,
+      .is_present = entity.has(component),
+    };
+  }
+
+  auto sorted = entries.first(entry_count);
+  std::ranges::sort(sorted, [](const AddComponentEntry& a, const AddComponentEntry& b) {
+    if (a.category != b.category) {
+      return a.category < b.category;
+    }
+
+    return ImStricmp(a.display_name, b.display_name) < 0;
+  });
+
+  const auto add_component = [&entity](const AddComponentEntry& entry) {
+    App::mod<Editor>().undo_redo_system->execute_command<ComponentAddCommand>(
+      entity,
+      entry.component,
+      fmt::format("Add {}", entry.display_name)
+    );
+    ImGui::CloseCurrentPopup();
+  };
+
+  ImGui::Separator();
+
+  if (!filter.IsActive()) {
+    for (usize begin = 0; begin < sorted.size();) {
+      const auto category = sorted[begin].category;
+      auto end = begin;
+      while (end < sorted.size() && sorted[end].category == category) {
+        end++;
+      }
+
+      const auto& info = COMPONENT_CATEGORIES[std::to_underlying(category)];
+      if (ImGui::BeginMenu(stack.format_char("{} {}", info.icon, info.name))) {
+        for (const auto& entry : sorted.subspan(begin, end - begin)) {
+          ImGui::PushID(entry.type_name);
+          if (ImGui::MenuItem(entry.display_name, nullptr, entry.is_present, !entry.is_present)) {
+            add_component(entry);
+          }
+
+          ImGui::SetItemTooltip("%s", entry.type_name);
+          ImGui::PopID();
+        }
+
+        ImGui::EndMenu();
+      }
+
+      begin = end;
+    }
+
+    return;
+  }
+
+  auto matches = stack.alloc<const AddComponentEntry*>(sorted.size());
+  usize match_count = 0;
+  i32 addable_count = 0;
+  for (const auto& entry : sorted) {
+    const auto* category_name = COMPONENT_CATEGORIES[std::to_underlying(entry.category)].name;
+    if (
+      filter.PassFilter(entry.display_name) || filter.PassFilter(entry.type_name) || filter.PassFilter(category_name)
+    ) {
+      matches[match_count++] = &entry;
+      addable_count += entry.is_present ? 0 : 1;
+    }
+  }
+
+  if (addable_count > 0) {
+    highlighted = ((highlighted + highlight_step) % addable_count + addable_count) % addable_count;
+  }
+
+  ImGui::SetNextWindowSizeConstraints({0.0f, 0.0f}, {FLT_MAX, UI::scale(360.0f)});
+  if (ImGui::BeginChild("##add_component_results", {0.0f, 0.0f}, ImGuiChildFlags_AutoResizeY)) {
+    if (match_count == 0) {
+      ImGui::TextDisabled("No components match");
+    }
+
+    const AddComponentEntry* previous_entry = nullptr;
+    i32 addable_index = 0;
+    for (const auto* entry : matches.first(match_count)) {
+      if (!previous_entry || previous_entry->category != entry->category) {
+        const auto& info = COMPONENT_CATEGORIES[std::to_underlying(entry->category)];
+        ImGui::SeparatorText(stack.format_char("{} {}", info.icon, info.name));
+      }
+
+      previous_entry = entry;
+
+      ImGui::PushID(entry->type_name);
+      if (entry->is_present) {
+        ImGui::Selectable(
+          stack.format_char("{} " ICON_MDI_CHECK, entry->display_name),
+          false,
+          ImGuiSelectableFlags_Disabled
+        );
+      } else {
+        const auto is_highlighted = addable_index == highlighted;
+        if (ImGui::Selectable(entry->display_name, is_highlighted) || (is_highlighted && is_submitted)) {
+          add_component(*entry);
+        }
+
+        if (is_highlighted && highlight_step != 0) {
+          ImGui::SetScrollHereY();
+        }
+
+        addable_index++;
+      }
+
+      ImGui::SetItemTooltip("%s", entry->type_name);
+      ImGui::PopID();
+    }
+  }
+
+  ImGui::EndChild();
+
+  if (is_submitted && addable_count == 0) {
+    is_refocus_pending = true;
+  }
+}
 
 // two rows of eight, layer 0 first
 static auto draw_layer_mask(const c8* label, u16* mask) -> bool {
@@ -264,13 +586,40 @@ static auto draw_scene_script(const Scene& scene, const std::string& type_name) 
 struct EntityInspector : IEntitySerializer {
   UndoRedoSystem& undo_redo_system;
   InspectorPanel& inspector_panel;
+  flecs::entity inspected_entity;
+  flecs::id_t component_id;
+  const u8* component_base;
   bool modified;
 
-  EntityInspector(flecs::world& world_, UndoRedoSystem& undo_redo_system_, InspectorPanel& inspector_panel_)
+  EntityInspector(
+    flecs::world& world_,
+    UndoRedoSystem& undo_redo_system_,
+    InspectorPanel& inspector_panel_,
+    flecs::entity entity_,
+    flecs::id_t component_id_,
+    const void* component_base_
+  )
       : IEntitySerializer(world_),
         undo_redo_system(undo_redo_system_),
         inspector_panel(inspector_panel_),
+        inspected_entity(entity_),
+        component_id(component_id_),
+        component_base(static_cast<const u8*>(component_base_)),
         modified(false) {}
+
+  template <typename T>
+  auto record_change(this EntityInspector& self, std::string_view name, const T* field, const T& old_value) -> void {
+    const auto offset = static_cast<usize>(reinterpret_cast<const u8*>(field) - self.component_base);
+    self.undo_redo_system.execute_command<ComponentFieldChangeCommand<T>>(
+      self.inspected_entity,
+      self.component_id,
+      offset,
+      old_value,
+      *field,
+      std::string(name)
+    );
+    self.modified = true;
+  }
 
   auto on_primitive(std::string_view name, Primitive primitive) -> void override {
     std::visit(
@@ -279,39 +628,33 @@ struct EntityInspector : IEntitySerializer {
         [&](bool* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system //
-              .set_merge_enabled(false)
-              .execute_command<PropertyChangeCommand<bool>>(v, old_v, *v, std::string(name))
-              .set_merge_enabled(true);
-            modified = true;
+            undo_redo_system.set_merge_enabled(false);
+            record_change(name, v, old_v);
+            undo_redo_system.set_merge_enabled(true);
           }
         },
         [&](c8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<c8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u8* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u8>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i16* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i16>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u16* v) {
@@ -319,50 +662,43 @@ struct EntityInspector : IEntitySerializer {
           // DecalComponent::layer_mask and LayerComponent::layer, the two layer bitmasks
           const auto is_layer_mask = name == "layer_mask" || name == "layer";
           if (is_layer_mask ? draw_layer_mask(name.data(), v) : UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u16>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](i64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<i64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](u64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<u64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](f32* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<f32>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
         [&](f64* v) {
           auto old_v = *v;
           if (UI::property(name.data(), v)) {
-            undo_redo_system.execute_command<PropertyChangeCommand<f64>>(v, old_v, *v, std::string(name));
-            modified = true;
+            record_change(name, v, old_v);
           }
         },
       },
@@ -393,22 +729,19 @@ struct EntityInspector : IEntitySerializer {
         auto* v = static_cast<glm::vec2*>(base);
         auto old_v = *v;
         if (UI::draw_vec2_control(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec2>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::vec3>()) {
         auto* v = static_cast<glm::vec3*>(base);
         auto old_v = *v;
         if (UI::draw_vec3_control(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec3>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::vec4>()) {
         auto* v = static_cast<glm::vec4*>(base);
         auto old_v = *v;
         if (UI::property_vector(name.data(), *v)) {
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::vec4>>(v, old_v, *v, std::string(name));
-          modified = true;
+          record_change(name, v, old_v);
         }
       } else if (ops->type == world.entity<glm::quat>()) {
         auto* v = static_cast<glm::quat*>(base);
@@ -421,9 +754,7 @@ struct EntityInspector : IEntitySerializer {
         if (UI::draw_vec3_control(name.data(), *inspector_panel.euler_cache)) {
           auto old_v_cmd = *v;
           *v = glm::quat(glm::radians(inspector_panel.euler_cache.value()));
-          undo_redo_system.execute_command<PropertyChangeCommand<glm::quat>>(v, old_v_cmd, *v, std::string(name));
-
-          modified = true;
+          record_change(name, v, old_v_cmd);
         }
       } else {
         serialize_ops(ops + 1, op_count - 1, base);
@@ -770,6 +1101,13 @@ void InspectorPanel::draw_component_context_menu(bool& remove_component, flecs::
   auto copy_component_txt = stack.format("{} Copy Component", ICON_MDI_CONTENT_COPY);
   auto paste_component_txt = stack.format("{} Paste Component", ICON_MDI_CONTENT_PASTE);
 
+  if (fid.is_entity() && scene_ && scene_->component_db.is_component_known(fid)) {
+    if (ImGui::MenuItem("Find Entities With This Component")) {
+      App::mod<Editor>().editor_panel_registry.get<SceneHierarchyPanel>().find_component(fid.entity());
+    }
+    ImGui::Separator();
+  }
+
   if (ImGui::MenuItem(remove_component_txt.data())) {
     remove_component = true;
   }
@@ -803,7 +1141,11 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   auto& editor = App::mod<Editor>();
   auto& undo_redo_system = editor.undo_redo_system;
 
-  ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(ICON_MDI_PLUS).x + UI::scale(20.0f)));
+  const auto add_component_label = ICON_MDI_PLUS " Add";
+
+  ImGui::PushItemWidth(
+    ImGui::GetContentRegionAvail().x - (ImGui::CalcTextSize(add_component_label).x + UI::scale(20.0f))
+  );
   std::string new_name = entity.name().c_str();
   if (self.rename_entity_)
     ImGui::SetKeyboardFocusHere();
@@ -815,43 +1157,13 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   ImGui::PopItemWidth();
   ImGui::SameLine();
 
-  if (UI::button(ICON_MDI_PLUS)) {
+  if (UI::button(add_component_label)) {
     ImGui::OpenPopup("add_component");
   }
 
-  const auto components = self.scene_->component_db.get_components();
-
+  ImGui::SetNextWindowSizeConstraints({UI::scale(260.0f), 0.0f}, {FLT_MAX, FLT_MAX});
   if (ImGui::BeginPopup("add_component")) {
-    static ImGuiTextFilter add_component_filter = {};
-    float filter_cursor_pos_x = ImGui::GetCursorPosX();
-
-    if (ImGui::IsWindowAppearing()) {
-      ImGui::SetKeyboardFocusHere();
-    }
-    add_component_filter.Draw("##scripts_filter_", ImGui::GetContentRegionAvail().x);
-    if (!add_component_filter.IsActive()) {
-      ImGui::SameLine();
-      ImGui::SetCursorPosX(filter_cursor_pos_x + ImGui::GetFontSize() * 0.5f);
-      auto search_txt = fmt::format("  {} Search components...", ICON_MDI_MAGNIFY);
-      ImGui::TextUnformatted(search_txt.c_str());
-    }
-
-    for (auto& component : components) {
-      auto component_entity = component.entity();
-      auto component_name = component_entity.name();
-
-      if (add_component_filter.IsActive() && !add_component_filter.PassFilter(component_name.c_str())) {
-        continue;
-      }
-
-      if (ImGui::MenuItem(component_name)) {
-        if (entity.has(component))
-          OX_LOG_WARN("Entity already has same component!");
-        else
-          entity.add(component);
-        ImGui::CloseCurrentPopup();
-      }
-    }
+    draw_add_component_popup(self.scene_->component_db, entity);
     ImGui::EndPopup();
   }
 
@@ -904,8 +1216,8 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
       UI::begin_properties(properties_flags);
 
       auto world = entity.world();
-      auto inspector = EntityInspector(world, *undo_redo_system.get(), self);
       auto* component = entity.get_mut(fid);
+      auto inspector = EntityInspector(world, *undo_redo_system.get(), self, entity, fid, component);
       inspector.serialize(ty, component);
       if (inspector.modified) {
         entity.modified(fid);
@@ -969,6 +1281,13 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
     if (remove_component) {
       if (fid == entity.world().component<TransformComponent>().type_id()) {
         OX_LOG_ERROR("Can't remove TransformComponent!");
+      } else if (fid.is_entity()) {
+        undo_redo_system->execute_command<ComponentRemoveCommand>(
+          self.scene_,
+          entity,
+          fid.entity(),
+          fmt::format("Remove {}", component_name.c_str())
+        );
       } else {
         entity.remove(fid);
       }

@@ -175,7 +175,7 @@ auto RendererInstance::draw_transparency(
   }
 
   bindings.push_back({&context.refractor_depth_attachment, vir::Access::FragmentSampled});
-  bindings.push_back({&context.depth_attachment, vir::Access::DepthStencilRead});
+  bindings.push_back({&context.depth_attachment, vir::Access::DepthStencilRead | vir::Access::FragmentSampled});
 
   auto accesses = ankerl::svector<vir::ResourceAccess, 40>{};
   for (const auto& binding : bindings) {
@@ -212,7 +212,8 @@ auto RendererInstance::draw_transparency(
                  .bind_buffer(0, 16, values.transparent_meshlet_instances)
                  .bind_buffer(0, 17, values.transforms_world)
                  .bind_image(0, 20, context.refractor_depth_attachment)
-                 .bind_image(0, 23, context.froxel_attachment)
+                 .bind_image(0, 23, context.depth_attachment)
+                 .bind_image(0, 24, context.froxel_attachment)
                  .push_constant_address(push_base + 0, context.environment_buffer)
                  .push_constant_address(push_base + 8, context.lighting_buffer)
                  .push_constant_address(push_base + 16, values.lights)
@@ -413,11 +414,11 @@ auto RendererInstance::shade_refractors(
       .bind_buffer(0, 16, values.transparent_meshlet_instances)
       .bind_buffer(0, 17, values.transforms_world)
       .bind_image(0, 18, context.refractor_visbuffer_attachment)
-      .bind_image(0, 19, context.depth_attachment)
       .bind_image(0, 20, context.refractor_depth_attachment)
       .bind_image(0, 21, context.transmission_attachment)
       .bind_image(0, 22, context.refractor_reflection_attachment)
-      .bind_image(0, 23, context.froxel_attachment)
+      .bind_image(0, 23, context.depth_attachment)
+      .bind_image(0, 24, context.froxel_attachment)
       .push_constant_address(0, context.environment_buffer)
       .push_constant_address(8, context.lighting_buffer)
       .push_constant_address(16, values.lights)

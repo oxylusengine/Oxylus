@@ -187,7 +187,7 @@ auto App::render_scene(this App& self, Scene& scene, std::function<auto()->void>
     if (draw_ui) {
       draw_ui();
     }
-    imgui->end_frame();
+    imgui->end_frame(&scene.renderer_cvar.system);
   }
 
   if (!game.program) {

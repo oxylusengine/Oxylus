@@ -4,6 +4,7 @@ import pbr;
 import scene;
 import rmvsm;
 import fog;
+import contact_shadow;
 
 #include <rmvsm_pointspot.slang>
 #include <rmvsm_directional.slang>
@@ -13,6 +14,9 @@ public struct LightingResources {
     public Texture2DArray<u32> vsm_pointspot_page_tables;
     public Texture2D<f32> vsm_physical_pages;
     public SamplerState nearest_clamp_sampler;
+    public Texture2D<f32> opaque_depth;
+    public bool has_local_contact_shadows;
+    public bool opaque_receiver;
     public Camera camera;
     public PBRLighting *lighting;
     public Light *lights;
@@ -25,6 +29,9 @@ public struct LightingResources {
         Texture2DArray<u32> vsm_pointspot_page_tables,
         Texture2D<f32> vsm_physical_pages,
         SamplerState nearest_clamp_sampler,
+        Texture2D<f32> opaque_depth,
+        bool has_local_contact_shadows,
+        bool opaque_receiver,
         Camera camera,
         PBRLighting *lighting,
         Light *lights,
@@ -36,6 +43,9 @@ public struct LightingResources {
         this.vsm_pointspot_page_tables = vsm_pointspot_page_tables;
         this.vsm_physical_pages = vsm_physical_pages;
         this.nearest_clamp_sampler = nearest_clamp_sampler;
+        this.opaque_depth = opaque_depth;
+        this.has_local_contact_shadows = has_local_contact_shadows;
+        this.opaque_receiver = opaque_receiver;
         this.camera = camera;
         this.lighting = lighting;
         this.lights = lights;
@@ -44,6 +54,39 @@ public struct LightingResources {
         this.vsm_clipmaps = vsm_clipmaps;
     }
 };
+
+// all contributing lights share the same receiver depth gradient
+public struct ContactReceiver {
+    public f32x2 slope = 0.0;
+    public bool initialized = false;
+};
+
+public f32 lighting_contact_visibility(
+    in LightingResources res, f32x2 uv, f32 depth, f32x3 position, f32x3 normal,
+    f32x3 to_light, f32 length_ws, f32 strength, inout ContactReceiver receiver
+) {
+    let settings = res.lighting.contact_shadows;
+    let extent = int2(res.camera.resolution);
+    let pixel = int2(uv * res.camera.resolution);
+    let clip = res.camera.jitter_clip(mul(res.camera.projection_view, f32x4(to_light, 0.0)));
+    let ray = project_contact_ray(pixel, extent, depth, clip, length_ws, settings);
+    if (ray.steps == 0) return 1.0;
+
+    let source = ScreenContactDepth(res.opaque_depth);
+    if (!receiver.initialized) {
+        if (res.opaque_receiver) {
+            receiver.slope = f32x2(receiver_slope(source, pixel, int2(1, 0), extent, depth),
+                                   receiver_slope(source, pixel, int2(0, 1), extent, depth));
+        } else {
+            // transparent geometry has its own receiver plane in front of the opaque depth buffer
+            let plane = mul(f32x4(normal, -dot(normal, position)), res.camera.inv_projection_view);
+            receiver.slope = abs(plane.z) > 1e-8 ? -2.0 * plane.xy / (plane.z * res.camera.resolution) : f32x2(0.0);
+        }
+        receiver.initialized = true;
+    }
+    let line = ScreenContactLine(source, pixel, extent, ray.vertical, ray.major_sign);
+    return lerp(1.0, trace_contact_ray(line, ray, 0, depth, receiver.slope, settings), strength);
+}
 
 public func lighting_directional_visibility(
     in LightingResources res,
@@ -116,6 +159,7 @@ public func lighting_point_spot(
 
     let light_count = min(lighting.light_count, MAX_LIGHTS);
     let word_count = (light_count + 31u) / 32u;
+    ContactReceiver receiver = {};
     [loop]
     for (u32 word = 0; word < word_count; word++) {
         var lane_word = 0xFFFFFFFFu;
@@ -138,7 +182,7 @@ public func lighting_point_spot(
 
             let light_vector = light.position - world_position;
             let distance_sq = dot(light_vector, light_vector);
-            if (light.intensity <= 0.0 || (light.range > 0.0 && distance_sq >= light.range * light.range)) {
+            if (light.intensity <= 0.0 || distance_sq <= 0.0 || (light.range > 0.0 && distance_sq >= light.range * light.range)) {
                 continue;
             }
 
@@ -212,6 +256,12 @@ public func lighting_point_spot(
                         }
                     }
                 }
+            }
+
+            if (res.has_local_contact_shadows && light.contact_shadow_strength > 0.0 && shadow > 0.0) {
+                let reach = min(light_distance, lighting.contact_shadows.length_ws);
+                shadow = min(shadow, lighting_contact_visibility(res, uv, depth, world_position, smooth_normal,
+                                                                 L, reach, light.contact_shadow_strength, receiver));
             }
 
             let result = brdf_evaluate(brdf, V, N, L, albedo_color, metallic, dielectric_f0_scalar);

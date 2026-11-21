@@ -126,6 +126,8 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       &C::clipmap_selection_bias>();
   }
 
+  registry.bind<&ContactShadowsComponent::strength>("ContactShadows");
+
   {
     using C = ProbeVolumeComponent;
     registry.bind<&C::probe_counts, &C::probe_range, &C::cascade_count, &C::cascade_blend, &C::follow_camera>();

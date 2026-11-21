@@ -293,13 +293,14 @@ auto VertexSnap::update(this VertexSnap& self, const Context& context) -> bool {
     const auto parent = selected_entity.parent();
     const auto parent_world = parent != flecs::entity::null() ? Scene::get_world_transform(parent) : glm::mat4(1.0f);
 
-    auto moved_tc = *tc;
-    moved_tc.position += glm::vec3(glm::inverse(parent_world) * glm::vec4(delta_world, 0.0f));
+    // written here rather than left to the command, a drag merges into the last command and merged ones don't run
+    const auto old_tc = *tc;
+    tc->position += glm::vec3(glm::inverse(parent_world) * glm::vec4(delta_world, 0.0f));
+    selected_entity.modified<TransformComponent>();
     App::mod<Editor>().undo_redo_system->execute_command<ComponentChangeCommand<TransformComponent>>(
       selected_entity,
-      tc,
+      old_tc,
       *tc,
-      moved_tc,
       "vertex snap"
     );
   }

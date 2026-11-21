@@ -3,7 +3,6 @@
 #include <vir/Resource.hpp>
 
 #include "EditorPanelState.hpp"
-#include "UI/RuntimeConsole.hpp"
 #include "Utils/PendingPick.hpp"
 #include "Utils/SceneManager.hpp"
 #include "Utils/SceneTarget.hpp"
@@ -53,8 +52,6 @@ private:
   bool draw_scene_stats = false;
   // Play was pressed and is held until a debugger attaches
   bool is_waiting_for_debugger = false;
-
-  RuntimeConsole runtime_console = {};
 
   enum class AspectRatio : i32 {
     Auto = 0,

@@ -14,6 +14,8 @@
 namespace ox {
 class Renderer;
 class Input;
+class CVarSystem;
+class RuntimeConsole;
 
 struct ImGuiVariables {
   vir::ValueID vertices = vir::ValueID::Invalid;
@@ -48,6 +50,9 @@ public:
   constexpr static auto MODULE_NAME = "ImGuiRenderer";
   using module_dependencies = std::tuple<Input, Renderer>;
 
+  ImGuiRenderer();
+  ~ImGuiRenderer();
+
   Texture font_texture = {};
 
   bool keyboard_input_enabled = true;
@@ -64,7 +69,7 @@ public:
   void begin_frame(f64 delta_time, glm::vec2 logical_size, glm::vec2 real_size);
   auto set_base_style(this ImGuiRenderer& self, const ImGuiStyle& style) -> void;
   // finishes the frame's UI, before the program uploads and draws its geometry
-  auto end_frame(this ImGuiRenderer& self) -> void;
+  auto end_frame(this ImGuiRenderer& self, CVarSystem* scene_cvars = nullptr) -> void;
   // draws the current UI over `target`, recorded once with the geometry going through `variables`
   auto record(this ImGuiRenderer& self, vir::Module& module, vir::ValueID target, ImGuiVariables& variables)
     -> vir::ValueID;
@@ -81,12 +86,15 @@ public:
   void on_mouse_pos(glm::vec2 pos);
   void on_mouse_button(u8 button, bool down);
   void on_mouse_scroll(glm::vec2 offset);
-  void on_key(u32 key_code, u32 scan_code, u16 mods, bool down);
-  void on_text_input(const c8* text);
+  // return true when the runtime console consumes the event
+  auto on_key(this ImGuiRenderer& self, u32 key_code, u32 scan_code, u16 mods, bool down, bool repeat = false) -> bool;
+  auto on_text_input(this ImGuiRenderer& self, const c8* text) -> bool;
 
   auto build_window_shadows(this ImGuiRenderer& self, ImDrawData* draw_data) -> void;
 
 private:
+  std::unique_ptr<RuntimeConsole> console;
+  bool console_toggle_key_down = false;
   c8* clipboard_text = nullptr;
   ImGuiStyle base_style = {};
   // the draw data finalized by the last `end_frame`
