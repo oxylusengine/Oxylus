@@ -83,6 +83,24 @@ public func froxel_w(in HeightFog fog, f32 view_depth) -> f32 {
     return log(max(view_depth, 1e-4) / fog.volumetric_near) / log(fog.volumetric_distance / fog.volumetric_near);
 }
 
+// the farthest surface over a tile and its neighbours, the lookup blends adjacent tiles
+public func froxel_column_depth(Texture2D<f32> tile_depth, i32x2 tile, i32x2 grid) -> f32 {
+    var depth = 0.0;
+    for (i32 y = -1; y <= 1; y++) {
+        for (i32 x = -1; x <= 1; x++) {
+            let neighbour = clamp(tile + i32x2(x, y), i32x2(0), grid - 1);
+            depth = max(depth, tile_depth.Load(i32x3(neighbour, 0)));
+        }
+    }
+
+    return depth;
+}
+
+// a slice of margin keeps the lookup's depth interpolation from ever reaching a skipped froxel
+public func froxel_is_hidden(in HeightFog fog, f32 column_depth, u32 slice) -> bool {
+    return f32(slice) > froxel_w(fog, column_depth) * f32(FROXEL_DEPTH_SLICES) + 1.0;
+}
+
 // the grid rounds the screen up to whole tiles, so screen uv only reaches part of it
 public func froxel_uv_scale(f32x2 resolution) -> f32x2 {
     let tile_size = f32(FROXEL_TILE_SIZE);

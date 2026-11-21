@@ -66,6 +66,37 @@ auto RendererInstance::allocate_volumetric_fog_resources(this RendererInstance& 
   self.volumetric_fog_history_valid = false;
 }
 
+auto RendererInstance::record_volumetric_fog_tile_depth(
+  this RendererInstance& self, vir::Module& module, FrameRecording& recording, vir::ValueID& depth_attachment
+) -> vir::ValueID {
+  ZoneScoped;
+  auto& render_context = *self.renderer.render_context;
+  const auto tile_extent = froxel_texture_extent(recording.shape.render_size);
+
+  auto tile_depth = module.transient_image({
+    .extent = {tile_extent.width, tile_extent.height, 1},
+    .format = vir::Format::R32Sfloat,
+    .name = "volumetric fog tile depth",
+  });
+  std::tie(recording.values.camera, depth_attachment, tile_depth) = std::tuple_cat(
+    module
+      .begin_compute(
+        {{recording.values.camera, vir::Access::ComputeUniformRead},
+         {depth_attachment, vir::Access::ComputeSampled},
+         {tile_depth, vir::Access::ComputeWrite}}
+      )
+      .with_name("volumetric fog tile depth")
+      .bind_compute_pipeline(render_context.pipeline("volumetric_fog_tile_depth"))
+      .bind_buffer(0, 0, recording.values.camera)
+      .bind_image(0, 1, depth_attachment)
+      .bind_image(0, 2, tile_depth)
+      .dispatch(tile_extent.width, tile_extent.height, 1)
+      .end_compute()
+  );
+
+  return tile_depth;
+}
+
 auto RendererInstance::record_volumetric_fog(
   this RendererInstance& self, vir::Module& module, FrameRecording& recording, VolumetricFogContext& context
 ) -> void {
@@ -110,6 +141,7 @@ auto RendererInstance::record_volumetric_fog(
                      {context.irradiance_attachment, vir::Access::ComputeSampled},
                      {context.distance_attachment, vir::Access::ComputeSampled},
                      {context.sky_cubemap_attachment, vir::Access::ComputeSampled},
+                     {context.tile_depth_attachment, vir::Access::ComputeSampled},
                      {previous_history, vir::Access::ComputeSampled},
                      {history, vir::Access::ComputeWrite}}
                   )
@@ -130,6 +162,7 @@ auto RendererInstance::record_volumetric_fog(
                   .bind_image(0, 11, context.irradiance_attachment)
                   .bind_image(0, 12, context.distance_attachment)
                   .bind_image(0, 13, context.sky_cubemap_attachment)
+                  .bind_image(0, 14, context.tile_depth_attachment)
                   .push_constant_address(0, context.lighting_buffer)
                   .push_constant_address(8, values.lights)
                   .push_constant_address(16, context.light_grid_buffer)
@@ -156,6 +189,7 @@ auto RendererInstance::record_volumetric_fog(
     context.irradiance_attachment,
     context.distance_attachment,
     context.sky_cubemap_attachment,
+    context.tile_depth_attachment,
     previous_history,
     history
   ) = std::tuple_cat(inject.dispatch(group_count_x, group_count_y, GPU::FROXEL_DEPTH_SLICES).end_compute());

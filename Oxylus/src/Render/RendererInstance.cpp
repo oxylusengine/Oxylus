@@ -1935,6 +1935,7 @@ auto RendererInstance::record_frame(
   );
 
   depth_attachment = module.clear(depth_attachment, vir::ClearValue::depth(0.0f));
+  auto froxel_tile_depth_attachment = vir::ValueID::Invalid;
 
   const auto hiz_extent = vir::Extent3D{
     .width = std::bit_ceil((render_extent.width + 1) >> 1),
@@ -2291,10 +2292,15 @@ auto RendererInstance::record_frame(
     metallic_roughness_occlusion_attachment = main_geometry_context.metallic_roughness_occlusion_attachment;
     velocity_attachment = main_geometry_context.velocity_attachment;
 
+    if (shape.has_volumetric_fog) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
     if ((shape.has_directional_shadows || shape.has_pointspot_shadows) && shape.has_meshes) {
       auto rmvsm_context = RMVSMContext{
         .depth_extent = render_extent,
         .depth_attachment = depth_attachment,
+        .froxel_tile_depth_attachment = froxel_tile_depth_attachment,
         .normal_attachment = normal_attachment,
         .virtual_page_table_attachment = vsm_virtual_page_table_attachment,
         .physical_page_table_attachment = vsm_physical_pages_attachment,
@@ -2307,6 +2313,7 @@ auto RendererInstance::record_frame(
       refractor_visbuffer_attachment = rmvsm_context.refractor_visbuffer_attachment;
       refractor_depth_attachment = rmvsm_context.refractor_depth_attachment;
       depth_attachment = rmvsm_context.depth_attachment;
+      froxel_tile_depth_attachment = rmvsm_context.froxel_tile_depth_attachment;
       normal_attachment = rmvsm_context.normal_attachment;
       light_grid_buffer = rmvsm_context.light_grid_buffer;
       pointspot_views_buffer = rmvsm_context.pointspot_views_buffer;
@@ -2564,6 +2571,10 @@ auto RendererInstance::record_frame(
   // the fog passes, transparents and particles all sample the froxels, a frame without them gets a stand in
   auto froxel_attachment = vir::ValueID::Invalid;
   if (shape.has_volumetric_fog) {
+    if (froxel_tile_depth_attachment == vir::ValueID::Invalid) {
+      froxel_tile_depth_attachment = self.record_volumetric_fog_tile_depth(module, recording, depth_attachment);
+    }
+
     auto volumetric_fog_context = VolumetricFogContext{
       .lighting_buffer = pbr_context.lighting_buffer,
       .light_grid_buffer = light_grid_buffer,
@@ -2577,6 +2588,7 @@ auto RendererInstance::record_frame(
       .irradiance_attachment = ddgi_irradiance_attachment,
       .distance_attachment = ddgi_distance_attachment,
       .sky_cubemap_attachment = sky_cubemap_attachment,
+      .tile_depth_attachment = froxel_tile_depth_attachment,
     };
     self.record_volumetric_fog(module, recording, volumetric_fog_context);
     probe_volumes_buffer = volumetric_fog_context.probe_volumes_buffer;
@@ -2591,6 +2603,7 @@ auto RendererInstance::record_frame(
     vsm_virtual_page_table_attachment = volumetric_fog_context.vsm_page_table_attachment;
     vsm_pointspot_page_table_attachment = volumetric_fog_context.pointspot_page_table_attachment;
     vsm_physical_pages_attachment = volumetric_fog_context.vsm_physical_pages_attachment;
+    froxel_tile_depth_attachment = volumetric_fog_context.tile_depth_attachment;
     froxel_attachment = volumetric_fog_context.integrated_attachment;
   } else {
     froxel_attachment = module.transient_image({

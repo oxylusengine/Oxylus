@@ -338,6 +338,11 @@ path = "passes/volumetric_fog_inject.slang"
 entry_points = ["cs_main"]
 
 [[shader_sessions.programs]]
+name = "volumetric_fog_tile_depth"
+path = "passes/volumetric_fog_tile_depth.slang"
+entry_points = ["cs_main"]
+
+[[shader_sessions.programs]]
 name = "volumetric_fog_integrate"
 path = "passes/volumetric_fog_integrate.slang"
 entry_points = ["cs_main"]

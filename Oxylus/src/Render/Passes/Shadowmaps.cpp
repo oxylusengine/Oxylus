@@ -693,14 +693,16 @@ auto RendererInstance::draw_virtual_shadowmap(
         context.directional_clipmaps_buffer,
         context.virtual_page_table_attachment,
         page_occupancy,
-        page_allocator
+        page_allocator,
+        context.froxel_tile_depth_attachment
       ) = std::tuple_cat(module
                            .begin_compute(
                              {{values.camera, vir::Access::ComputeUniformRead},
                               {context.directional_clipmaps_buffer, vir::Access::ComputeRead},
                               {context.virtual_page_table_attachment, vir::Access::ComputeRW},
                               {page_occupancy, vir::Access::ComputeRW},
-                              {page_allocator, vir::Access::ComputeRW}}
+                              {page_allocator, vir::Access::ComputeRW},
+                              {context.froxel_tile_depth_attachment, vir::Access::ComputeSampled}}
                            )
                            .with_name("vsm mark froxel pages")
                            .bind_compute_pipeline(render_context.pipeline("rmvsm_mark_froxel_pages"))
@@ -709,6 +711,7 @@ auto RendererInstance::draw_virtual_shadowmap(
                            .bind_image(0, 2, context.virtual_page_table_attachment)
                            .bind_buffer(0, 3, page_occupancy)
                            .bind_buffer(0, 4, page_allocator)
+                           .bind_image(0, 5, context.froxel_tile_depth_attachment)
                            .push_constants_from(vsm_ctx)
                            .dispatch((froxel_count_x + 7) / 8, (froxel_count_y + 7) / 8, GPU::FROXEL_DEPTH_SLICES)
                            .end_compute());

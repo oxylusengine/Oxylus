@@ -9,6 +9,7 @@ import fog;
 [[vk::binding(2, 0)]] RWTexture2DArray<u32, ImageFormat::R32UI> page_tables;
 [[vk::binding(3, 0)]] RWStructuredBuffer<u32> page_occupancy;
 [[vk::binding(4, 0)]] RWStructuredBuffer<VSMPageAllocator> allocator;
+[[vk::binding(5, 0)]] Texture2D<f32> tile_depth;
 
 // volumetric fog samples the sun's shadow in the air, where no visible pixel asked for a page. Marks the page under
 // the spot each froxel samples this frame, at the level volumetric fog samples. Its center would leave the jittered
@@ -19,6 +20,10 @@ func cs_main(u32x3 id : SV_DispatchThreadID, uniform VSMContext ctx) -> void {
     let fog = camera.fog;
     let grid = u32x3(u32x2(ceil(camera.resolution / f32(FROXEL_TILE_SIZE))), FROXEL_DEPTH_SLICES);
     if (any(id >= grid) || fog.volumetric_distance <= 0.0) {
+        return;
+    }
+
+    if (froxel_is_hidden(fog, froxel_column_depth(tile_depth, i32x2(id.xy), i32x2(grid.xy)), id.z)) {
         return;
     }
 

@@ -492,6 +492,7 @@ struct VolumetricFogContext {
   vir::ValueID distance_attachment = vir::ValueID::Invalid;
   vir::ValueID sky_cubemap_attachment = vir::ValueID::Invalid;
 
+  vir::ValueID tile_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID integrated_attachment = vir::ValueID::Invalid;
 };
 
@@ -573,6 +574,7 @@ struct RMVSMContext {
   vir::ValueID directional_clipmaps_buffer = vir::ValueID::Invalid;
 
   vir::ValueID depth_attachment = vir::ValueID::Invalid;
+  vir::ValueID froxel_tile_depth_attachment = vir::ValueID::Invalid;
   vir::ValueID normal_attachment = vir::ValueID::Invalid;
   vir::ValueID virtual_page_table_attachment = vir::ValueID::Invalid;
   vir::ValueID physical_page_table_attachment = vir::ValueID::Invalid;
@@ -1310,6 +1312,9 @@ public:
   auto record_volumetric_fog(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, VolumetricFogContext& context
   ) -> void;
+  auto record_volumetric_fog_tile_depth(
+    this RendererInstance& self, vir::Module& module, FrameRecording& recording, vir::ValueID& depth_attachment
+  ) -> vir::ValueID;
   auto allocate_volumetric_fog_resources(this RendererInstance& self, glm::uvec2 render_size) -> void;
   auto draw_virtual_shadowmap(
     this RendererInstance& self, vir::Module& module, FrameRecording& recording, RMVSMContext& context

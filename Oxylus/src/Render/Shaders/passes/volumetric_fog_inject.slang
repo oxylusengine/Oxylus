@@ -22,6 +22,10 @@ import ddgi;
 [[vk::binding(11, 0)]] Texture2D<f32x4> irradiance_atlas;
 [[vk::binding(12, 0)]] Texture2D<f32x2> distance_atlas;
 [[vk::binding(13, 0)]] TextureCube<f32x4> sky_cubemap;
+[[vk::binding(14, 0)]] Texture2D<f32> tile_depth;
+
+// a negative extinction marks a froxel behind every visible surface, which is skipped
+static const f32 FROXEL_HIDDEN_EXTINCTION = -1.0;
 
 struct InjectPush {
     PBRLighting *lighting;
@@ -90,6 +94,41 @@ func fog_volume_noise(f32x3 p) -> f32 {
     return saturate(sum / 0.875 * 0.5 + 0.5);
 }
 
+// trilinear by hand so skipped froxels drop out of the blend. A linear fetch would average their marker in, and the
+// rounding error of an exact texel center lookup alone is enough weight to tip a neighbour into rejecting its history
+func load_previous_froxel(f32x3 previous_uvw, out f32x4 previous) -> bool {
+    let texel_extent = i32x3(i32x2(params.grid_size.xy), i32(FROXEL_DEPTH_TEXELS));
+    let position = previous_uvw * f32x3(texel_extent) - 0.5;
+    let base = i32x3(floor(position));
+    let fraction = position - f32x3(base);
+    let last_texel = i32x3(texel_extent.xy - 1, i32(FROXEL_DEPTH_SLICES) - 1);
+
+    var sum = f32x4(0.0);
+    var weight_sum = 0.0;
+    [ForceUnroll]
+    for (u32 corner = 0; corner < 8; corner++) {
+        let offset = i32x3(i32(corner & 1u), i32((corner >> 1) & 1u), i32((corner >> 2) & 1u));
+        let weights = select(offset != 0, fraction, 1.0 - fraction);
+        let weight = weights.x * weights.y * weights.z;
+        let texel = previous_history.Load(i32x4(clamp(base + offset, i32x3(0), last_texel), 0));
+        if (weight <= 0.0 || texel.a < 0.0) {
+            continue;
+        }
+
+        sum += texel * weight;
+        weight_sum += weight;
+    }
+
+    // mostly skipped last frame, its neighbours' history would stand in for a froxel that has none
+    if (weight_sum < 0.5) {
+        previous = f32x4(0.0);
+        return false;
+    }
+
+    previous = sum / weight_sum;
+    return true;
+}
+
 // the light arriving from every direction, which an isotropic medium scatters toward the eye. Probes record
 // irradiance about a normal, so the two opposite hemispheres together stand in for the whole sphere
 func fog_ambient(f32x3 world_position, f32x3 ray, f32 view_distance) -> f32x3 {
@@ -142,6 +181,28 @@ func cs_main(u32x3 id : SV_DispatchThreadID) -> void {
     let camera_position = camera.position.xyz;
     let world_position = froxel_world_position(camera, f32x3(id) + fog.volumetric_jitter, params.grid_size);
     let ray = normalize(world_position - camera_position);
+
+    // the analytic fog past the froxels takes its ambient from here, so nothing steps where the froxels end. Blended
+    // in place, the column's far end barely moves as the camera does
+    if (id.z == params.grid_size.z - 1u) {
+        let far_depth = fog.volumetric_distance;
+        let far_position = camera_position + ray * (far_depth / max(dot(ray, camera.forward), 1e-4));
+        var far_ambient = fog_ambient(far_position, ray, length(far_position - camera_position)) * params.ambient_intensity *
+                          params.height_albedo;
+        let far_texel = u32x3(id.xy, FROXEL_DEPTH_SLICES);
+        if (params.is_history_valid != 0) {
+            far_ambient = lerp(far_ambient, previous_history.Load(i32x4(i32x3(far_texel), 0)).rgb, params.history_weight);
+        }
+
+        history.Store(far_texel, f32x4(far_ambient, 1.0));
+    }
+
+    let is_hidden = froxel_is_hidden(
+        fog, froxel_column_depth(tile_depth, i32x2(id.xy), i32x2(params.grid_size.xy)), id.z);
+    if (is_hidden) {
+        history.Store(id, f32x4(0.0, 0.0, 0.0, FROXEL_HIDDEN_EXTINCTION));
+        return;
+    }
 
     var extinction = 0.0;
     var scattering = f32x3(0.0);
@@ -219,26 +280,13 @@ func cs_main(u32x3 id : SV_DispatchThreadID) -> void {
             let max_depth_coordinate = (f32(FROXEL_DEPTH_SLICES) - 0.5) / f32(FROXEL_DEPTH_TEXELS);
             if (all(previous_uvw.xy >= 0.0) && all(previous_uvw.xy <= 1.0) && previous_uvw.z >= 0.0 &&
                 previous_uvw.z <= max_depth_coordinate) {
-                let previous = previous_history.SampleLevel(linear_clamp_sampler, previous_uvw, 0.0);
-                current = lerp(current, previous, params.history_weight);
+                var previous = f32x4(0.0);
+                if (load_previous_froxel(previous_uvw, previous)) {
+                    current = lerp(current, previous, params.history_weight);
+                }
             }
         }
     }
 
     history.Store(id, current);
-
-    // the analytic fog past the froxels takes its ambient from here, so nothing steps where the froxels end. Blended
-    // in place, the column's far end barely moves as the camera does
-    if (id.z == params.grid_size.z - 1u) {
-        let far_depth = fog.volumetric_distance;
-        let far_position = camera_position + ray * (far_depth / max(dot(ray, camera.forward), 1e-4));
-        var far_ambient = fog_ambient(far_position, ray, length(far_position - camera_position)) * params.ambient_intensity *
-                          params.height_albedo;
-        let far_texel = u32x3(id.xy, FROXEL_DEPTH_SLICES);
-        if (params.is_history_valid != 0) {
-            far_ambient = lerp(far_ambient, previous_history.Load(i32x4(i32x3(far_texel), 0)).rgb, params.history_weight);
-        }
-
-        history.Store(far_texel, f32x4(far_ambient, 1.0));
-    }
 }
