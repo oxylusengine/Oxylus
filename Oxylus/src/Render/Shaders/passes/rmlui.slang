@@ -20,15 +20,17 @@ struct VertexOutput {
 struct PushConstants {
     // projection * element transform, in RmlUi pixels
     f32x4x4 transform;
-    // the draw's first vertex, indices are relative to it
+    // the compiled geometry, drawn without an index buffer by reading its indices here
     RmlVertex* vertices;
+    u32* indices;
     // null unless the draw is a gradient, whose tex coords are then in pixels
     RmlGradient* gradient;
     f32x2 translate;
     u32 image_index;
     u32 sampler_index;
     u32 is_texture_srgb;
-    u32 padding;
+    // generated textures and saved layers, an image file is straight
+    u32 is_texture_premultiplied;
 };
 [[vk::push_constant]] PushConstants c;
 
@@ -78,7 +80,7 @@ func gradient_color(in RmlGradient gradient, f32x2 position) -> f32x4 {
 
 [[shader("vertex")]]
 func vs_main(u32 vertex_id : SV_VertexID) -> VertexOutput {
-    let input = c.vertices[vertex_id];
+    let input = c.vertices[c.indices[vertex_id]];
     let color = f32x4(
         f32(input.color & 0xFF),
         f32((input.color >> 8) & 0xFF),
@@ -103,6 +105,10 @@ f32x4 fs_main(VertexOutput input) : SV_TARGET {
 
     f32x4 tex_color = global_images[NonUniformResourceIndex(c.image_index)]
         .Sample(global_samplers[NonUniformResourceIndex(c.sampler_index)], input.tex_coord);
+    if (c.is_texture_premultiplied != 0) {
+        return tex_color * input.color;
+    }
+
     if (c.is_texture_srgb != 0) {
         tex_color.rgb = com::linear_to_srgb(tex_color.rgb);
     }

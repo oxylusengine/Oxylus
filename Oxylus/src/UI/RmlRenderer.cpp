@@ -35,12 +35,13 @@ struct RmlProgram {
 struct RmlDrawPush {
   f32 transform[16] = {};
   u64 vertices = 0;
+  u64 indices = 0;
   u64 gradient = 0;
   f32 translation[2] = {};
   u32 image_index = 0;
   u32 sampler_index = 0;
   u32 is_texture_srgb = 0;
-  u32 padding = 0;
+  u32 is_texture_premultiplied = 0;
 };
 
 struct RmlPassthroughPush {
@@ -180,14 +181,18 @@ RmlRenderer::RmlRenderer() {
   this->begin_frame({1, 1});
 }
 
-RmlRenderer::~RmlRenderer() = default;
+RmlRenderer::~RmlRenderer() {
+  // RmlUi releases everything it compiled through `Rml::ReleaseRenderManagers`, this is only what it didn't
+  auto& context = App::get_rendercontext();
+  this->compiled_geometries.for_each_active_id([&context](RmlGeometryID, RmlCompiledGeometry& geometry) {
+    context.destroy_buffer(geometry.buffer);
+  });
+}
 
 auto RmlRenderer::begin_frame(this RmlRenderer& self, glm::ivec2 extent) -> void {
   ZoneScoped;
 
   self.builder.begin(extent);
-  self.frame_vertices.clear();
-  self.frame_indices.clear();
   self.frame_gradients.clear();
   self.current_transform = Rml::Matrix4f::Identity();
 
@@ -219,24 +224,6 @@ auto RmlRenderer::render(this RmlRenderer& self, RenderContext& context) -> void
     return;
   }
 
-  if (!self.frame_vertices.empty()) {
-    auto vertices = context.upload_frame_buffer(
-      std::span(reinterpret_cast<const u8*>(self.frame_vertices.data()), ox::size_bytes(self.frame_vertices)),
-      "rmlui vertices"
-    );
-    auto indices = context.upload_frame_buffer(
-      std::span(reinterpret_cast<const u8*>(self.frame_indices.data()), ox::size_bytes(self.frame_indices)),
-      "rmlui indices"
-    );
-    if (!vertices || !indices) {
-      OX_LOG_ERROR("failed to stage the rmlui geometry");
-      return;
-    }
-
-    self.vertex_buffer = *vertices;
-    self.index_buffer = *indices;
-  }
-
   if (!self.frame_gradients.empty()) {
     auto gradients = context.upload_frame_buffer(
       std::span(reinterpret_cast<const u8*>(self.frame_gradients.data()), ox::size_bytes(self.frame_gradients)),
@@ -263,7 +250,7 @@ auto RmlRenderer::render(this RmlRenderer& self, RenderContext& context) -> void
       return;
     }
 
-    program->program.set(program->saved_textures[i], texture->attachment_info());
+    program->program.set(program->saved_textures[i], texture->texture.attachment_info());
   }
 
   const auto ticket = context.execute(program->program);
@@ -312,23 +299,25 @@ auto RmlRenderer::draw_callback(this RmlRenderer& self, const u32 pass_index, co
     const auto& pass = plan.passes[pass_index];
     const auto projection = rml_projection(static_cast<f32>(plan.extent.x), static_cast<f32>(plan.extent.y));
 
-    recorder.bind_index_buffer(self.index_buffer, VK_INDEX_TYPE_UINT32);
     for (const auto& cmd : std::span(plan.draws).subspan(pass.first_draw, pass.draw_count)) {
       recorder.set_scissor_absolute(to_rect(cmd.scissor));
 
       const auto* texture = cmd.texture ? self.loaded_textures.slot(static_cast<RmlTextureID>(cmd.texture)) : nullptr;
       auto push = RmlDrawPush{
-        .vertices = self.vertex_buffer.device_address + cmd.vertex_offset * sizeof(Rml::Vertex),
+        .vertices = cmd.vertices,
+        .indices = cmd.indices,
         .gradient = cmd.gradient ? self.gradient_buffer.device_address + *cmd.gradient * sizeof(GPU::RmlGradient)
                                  : 0_u64,
         .translation = {cmd.translation.x, cmd.translation.y},
-        .image_index = (texture ? *texture : self.white_texture).get_view_index(),
+        .image_index = (texture ? texture->texture : self.white_texture).get_view_index(),
         .sampler_index = sampler_index,
-        .is_texture_srgb = texture && texture->is_srgb() ? 1_u32 : 0_u32,
+        .is_texture_srgb = texture && texture->texture.is_srgb() ? 1_u32 : 0_u32,
+        .is_texture_premultiplied = texture && texture->is_premultiplied ? 1_u32 : 0_u32,
       };
       const auto transform = projection * cmd.transform;
       std::memcpy(push.transform, transform.data(), sizeof(push.transform));
-      recorder.push_constants(push).draw_indexed(cmd.index_count, 1, cmd.index_offset, 0, 0);
+      // the vertex shader reads the indices itself, so a draw needs no index buffer of its own bound
+      recorder.push_constants(push).draw(cmd.index_count, 1);
     }
   };
 }
@@ -803,29 +792,57 @@ auto RmlRenderer::stage_geometry(
     return nullopt;
   }
 
-  const auto cmd = RmlDrawCmd{
-    .index_count = static_cast<u32>(compiled->indices.size()),
-    .index_offset = static_cast<u32>(self.frame_indices.size()),
-    .vertex_offset = static_cast<u32>(self.frame_vertices.size()),
+  return RmlDrawCmd{
+    .vertices = compiled->vertices,
+    .indices = compiled->indices,
+    .index_count = compiled->index_count,
     .texture = texture,
     .translation = translation,
     .transform = self.current_transform,
   };
-  self.frame_vertices.insert(self.frame_vertices.end(), compiled->vertices.begin(), compiled->vertices.end());
-  self.frame_indices.insert(self.frame_indices.end(), compiled->indices.begin(), compiled->indices.end());
-
-  return cmd;
 }
 
 auto RmlRenderer::CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices)
   -> Rml::CompiledGeometryHandle {
   ZoneScoped;
 
-  RmlCompiledGeometry geo = {};
-  geo.vertices.assign(vertices.begin(), vertices.end());
-  geo.indices.assign(indices.begin(), indices.end());
+  if (vertices.empty() || indices.empty()) {
+    return 0;
+  }
 
-  auto id = this->compiled_geometries.create_slot(std::move(geo));
+  // RmlUi compiles a geometry once and draws it every frame until it changes, so it is written here and only here
+  auto& context = App::get_rendercontext();
+  const auto vertex_bytes = vertices.size() * sizeof(Rml::Vertex);
+  const auto index_bytes = indices.size() * sizeof(i32);
+  const auto buffer_id = context.allocate_buffer({
+    .size = vertex_bytes + index_bytes,
+    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    .location = vir::MemoryLocation::CpuToGpu,
+    .alignment = 16,
+    .name = "rmlui geometry",
+  });
+  if (!buffer_id) {
+    OX_LOG_ERROR("failed to allocate rmlui geometry ({})", std::to_underlying(buffer_id.error()));
+    return 0;
+  }
+
+  const auto buffer = context.buffer(*buffer_id);
+  const auto is_written =
+    buffer.write_bytes(0, std::span(reinterpret_cast<const u8*>(vertices.data()), vertex_bytes)) &&
+    buffer.write_bytes(vertex_bytes, std::span(reinterpret_cast<const u8*>(indices.data()), index_bytes)) &&
+    context.persistent->flush_buffer(buffer);
+  if (!is_written) {
+    OX_LOG_ERROR("failed to write rmlui geometry");
+    context.destroy_buffer(*buffer_id);
+    return 0;
+  }
+
+  const auto id = this->compiled_geometries.create_slot({
+    .buffer = *buffer_id,
+    .vertices = buffer.device_address,
+    .indices = buffer.device_address + vertex_bytes,
+    .index_count = static_cast<u32>(indices.size()),
+  });
   return static_cast<Rml::CompiledGeometryHandle>(id);
 }
 
@@ -842,8 +859,12 @@ auto RmlRenderer::RenderGeometry(
 auto RmlRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) -> void {
   ZoneScoped;
 
-  auto id = static_cast<RmlGeometryID>(geometry);
-  this->compiled_geometries.destroy_slot(id);
+  const auto id = static_cast<RmlGeometryID>(geometry);
+  if (const auto* compiled = this->compiled_geometries.slot(id)) {
+    // retired, so a draw still in flight keeps reading it
+    App::get_rendercontext().destroy_buffer(compiled->buffer);
+    this->compiled_geometries.destroy_slot(id);
+  }
 }
 
 auto RmlRenderer::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source) -> Rml::TextureHandle {
@@ -876,7 +897,7 @@ auto RmlRenderer::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::Stri
   texture_dimensions.x = texture.get_extent().width;
   texture_dimensions.y = texture.get_extent().height;
 
-  auto id = this->loaded_textures.create_slot(std::move(texture));
+  auto id = this->loaded_textures.create_slot({.texture = std::move(texture)});
   return static_cast<Rml::TextureHandle>(id);
 }
 
@@ -884,27 +905,15 @@ auto RmlRenderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector
   -> Rml::TextureHandle {
   ZoneScoped;
 
-  std::vector<uint8_t> straight_alpha_data(source.begin(), source.end());
-
-  // Undo RmlUi's native premultiplication so the shader can universally handle straight alpha
-  for (size_t i = 0; i < straight_alpha_data.size(); i += 4) {
-    uint8_t alpha = straight_alpha_data[i + 3];
-    // Only divide if the pixel is semi-transparent
-    if (alpha > 0 && alpha < 255) {
-      straight_alpha_data[i + 0] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 0] * 255) / alpha));
-      straight_alpha_data[i + 1] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 1] * 255) / alpha));
-      straight_alpha_data[i + 2] = static_cast<uint8_t>(std::min(255, (straight_alpha_data[i + 2] * 255) / alpha));
-    }
-  }
-
+  // already premultiplied, uploaded as it is rather than divided back out and multiplied again in the shader
   auto texture = Texture::create({
     .format = vir::Format::RGBA8Unorm,
     .extent = {static_cast<u32>(source_dimensions.x), static_cast<u32>(source_dimensions.y), 1_u32},
     .usage = vir::ImageUsageFlags::Sampled,
   });
-  texture.upload(straight_alpha_data, vir::Access::FragmentSampled);
+  texture.upload(std::span(source.data(), source.size()), vir::Access::FragmentSampled);
 
-  auto id = this->loaded_textures.create_slot(std::move(texture));
+  auto id = this->loaded_textures.create_slot({.texture = std::move(texture), .is_premultiplied = true});
   return static_cast<Rml::TextureHandle>(id);
 }
 
@@ -985,7 +994,9 @@ auto RmlRenderer::SaveLayerAsTexture() -> Rml::TextureHandle {
     return 0;
   }
 
-  const auto handle = static_cast<Rml::TextureHandle>(this->loaded_textures.create_slot(std::move(texture)));
+  const auto handle = static_cast<Rml::TextureHandle>(
+    this->loaded_textures.create_slot({.texture = std::move(texture), .is_premultiplied = true})
+  );
   this->builder.save_texture(handle);
 
   return handle;

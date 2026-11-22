@@ -21,9 +21,10 @@ enum class RmlClipWrite : u8 { Replace, Increment };
 enum class RmlFilterKind : u8 { Opacity, Blur, DropShadow, ColorMatrix, MaskImage };
 
 struct RmlDrawCmd {
+  // device addresses of the compiled geometry, which stays on the GPU until RmlUi releases it
+  u64 vertices = 0;
+  u64 indices = 0;
   u32 index_count = 0;
-  u32 index_offset = 0;
-  u32 vertex_offset = 0;
   Rml::TextureHandle texture = 0;
   // into the frame's gradients
   option<u32> gradient = nullopt;

@@ -452,6 +452,18 @@ TEST_F(RmlRenderGPU, KeepsABoxShadowAcrossFrames) {
   }
 }
 
+// the saved layer holds premultiplied colour, drawing it as straight would square a translucent shadow's alpha
+TEST_F(RmlRenderGPU, KeepsATranslucentBoxShadowPremultiplied) {
+  load(
+    R"(<div style="left: 24px; top: 24px; width: 16px; height: 16px; background-color: #ff0000; box-shadow: #00ff0080 0px 0px 0px 4px;"></div>)"
+  );
+
+  const auto pixels = render_settled();
+  ASSERT_FALSE(pixels.empty());
+  EXPECT_NEAR(at(pixels, 22, 32).g, 128, 3);
+  EXPECT_EQ(at(pixels, 32, 32).r, 255);
+}
+
 TEST_F(RmlRenderGPU, MasksWithAnImage) {
   load(
     R"(<div style="left: 0px; top: 0px; width: 64px; height: 16px; background-color: #ff0000; mask-image: linear-gradient(to right, #ffffffff, #ffffff00);"></div>)"

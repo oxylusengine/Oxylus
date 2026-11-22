@@ -19,9 +19,18 @@ namespace ox {
 // RmlUi's pixel space to Vulkan clip space, applied after the element's own transform so a perspective one divides
 auto rml_projection(f32 width, f32 height) -> Rml::Matrix4f;
 
+// the vertices, then the indices, in one host visible buffer written once
 struct RmlCompiledGeometry {
-  std::vector<Rml::Vertex> vertices;
-  std::vector<int> indices;
+  BufferID buffer = BufferID::Invalid;
+  u64 vertices = 0;
+  u64 indices = 0;
+  u32 index_count = 0;
+};
+
+struct RmlTexture {
+  Texture texture = {};
+  // what RmlUi generates and what a saved layer holds, an image file is straight
+  bool is_premultiplied = false;
 };
 
 struct RmlCompositeVariables {
@@ -104,7 +113,6 @@ private:
   enum class RmlFilterID : u64 { Invalid = ~0_u64 };
   enum class RmlShaderID : u64 { Invalid = ~0_u64 };
 
-  // stages the geometry into this frame's arrays
   auto stage_geometry(
     this RmlRenderer& self, Rml::CompiledGeometryHandle geometry, Rml::Vector2f translation, Rml::TextureHandle texture
   ) -> option<RmlDrawCmd>;
@@ -115,15 +123,11 @@ private:
   RmlPlanBuilder builder = {};
   // what the last `render` ran, read by the program's callbacks while it executes
   RmlRenderPlan uploaded = {};
-  std::vector<Rml::Vertex> frame_vertices = {};
-  std::vector<i32> frame_indices = {};
   std::vector<GPU::RmlGradient> frame_gradients = {};
-  vir::Buffer vertex_buffer = {};
-  vir::Buffer index_buffer = {};
   vir::Buffer gradient_buffer = {};
 
   SlotMap<RmlCompiledGeometry, RmlGeometryID> compiled_geometries = {};
-  SlotMap<Texture, RmlTextureID> loaded_textures = {};
+  SlotMap<RmlTexture, RmlTextureID> loaded_textures = {};
   SlotMap<RmlFilter, RmlFilterID> compiled_filters = {};
   SlotMap<GPU::RmlGradient, RmlShaderID> compiled_shaders = {};
   Texture white_texture = {};
