@@ -13,6 +13,18 @@
 #include "Utils/Log.hpp"
 
 namespace ox {
+auto rml_projection(const f32 width, const f32 height) -> Rml::Matrix4f {
+  // RmlUi's ortho is GL's, Vulkan's clip space has y pointing down and depth in 0..1
+  const auto correction = Rml::Matrix4f::FromColumns(
+    {1.0f, 0.0f, 0.0f, 0.0f},
+    {0.0f, -1.0f, 0.0f, 0.0f},
+    {0.0f, 0.0f, 0.5f, 0.0f},
+    {0.0f, 0.0f, 0.5f, 1.0f}
+  );
+
+  return correction * Rml::Matrix4f::ProjectOrtho(0.0f, width, height, 0.0f, -10000.0f, 10000.0f);
+}
+
 RmlRenderer::RmlRenderer() {
   ZoneScoped;
 
@@ -97,6 +109,7 @@ auto RmlRenderer::record(
     }
 
     const auto area = recorder.render_area();
+    const auto projection = rml_projection(static_cast<f32>(area.extent.width), static_cast<f32>(area.extent.height));
     recorder.bind_index_buffer(self.index_buffer, VK_INDEX_TYPE_UINT32);
     for (const auto& cmd : self.uploaded_commands) {
       if (cmd.scissor_enabled) {
@@ -113,7 +126,6 @@ auto RmlRenderer::record(
         f32 transform[16] = {};
         u64 vertices = 0;
         f32 translation[2] = {};
-        f32 screen_size[2] = {};
         u32 image_index = 0;
         u32 sampler_index = 0;
         u32 is_texture_srgb = 0;
@@ -121,12 +133,12 @@ auto RmlRenderer::record(
       } push = {
         .vertices = self.vertex_buffer.device_address + cmd.vertex_offset * sizeof(Rml::Vertex),
         .translation = {cmd.translation.x, cmd.translation.y},
-        .screen_size = {static_cast<f32>(area.extent.width), static_cast<f32>(area.extent.height)},
         .image_index = (texture ? *texture : self.white_texture).get_view_index(),
         .sampler_index = sampler_index,
         .is_texture_srgb = texture && texture->is_srgb() ? 1_u32 : 0_u32,
       };
-      std::memcpy(push.transform, cmd.transform.data(), sizeof(push.transform));
+      const auto transform = projection * cmd.transform;
+      std::memcpy(push.transform, transform.data(), sizeof(push.transform));
       recorder.push_constants(push).draw_indexed(cmd.index_count, 1, cmd.index_offset, 0, 0);
     }
   });

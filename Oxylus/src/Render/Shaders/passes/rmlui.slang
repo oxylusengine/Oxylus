@@ -18,11 +18,11 @@ struct VertexOutput {
 };
 
 struct PushConstants {
+    // projection * element transform, in RmlUi pixels
     f32x4x4 transform;
     // the draw's first vertex, indices are relative to it
     RmlVertex* vertices;
     f32x2 translate;
-    f32x2 screen_size;
     u32 image_index;
     u32 sampler_index;
     u32 is_texture_srgb;
@@ -41,11 +41,8 @@ func vs_main(u32 vertex_id : SV_VertexID) -> VertexOutput {
     ) / 255.0;
 
     VertexOutput output;
-    f32x2 pixel_pos = input.position + c.translate;
-    f32x4 transformed_pos = mul(c.transform, f32x4(pixel_pos, 0.0, 1.0));
-    f32x2 normalized = transformed_pos.xy / c.screen_size;
-    f32x2 clip_space = (normalized * 2.0) - 1.0;
-    output.position = f32x4(clip_space, 0.0, 1.0);
+    // w is left for the rasterizer, a perspective transform depends on the divide
+    output.position = mul(c.transform, f32x4(input.position + c.translate, 0.0, 1.0));
     output.tex_coord = input.tex_coord;
     output.color = color;
 

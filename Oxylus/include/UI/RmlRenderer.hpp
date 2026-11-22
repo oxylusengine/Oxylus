@@ -22,6 +22,9 @@ struct RmlDrawCmd {
   glm::ivec4 scissor; // x, y, w, h
 };
 
+// RmlUi's pixel space to Vulkan clip space, applied after the element's own transform so a perspective one divides
+auto rml_projection(f32 width, f32 height) -> Rml::Matrix4f;
+
 struct RmlCompiledGeometry {
   std::vector<Rml::Vertex> vertices;
   std::vector<int> indices;
