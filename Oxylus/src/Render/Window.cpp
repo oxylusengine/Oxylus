@@ -274,8 +274,12 @@ auto Window::update(const Timestep& timestep) const -> void {
       return;
     }
 
-    if (App::has_mod<RmlUI>()) {
-      App::mod<RmlUI>().process_key(key_code, mods, down);
+    if (
+      App::has_mod<RmlUI>() && App::mod<RmlUI>().process_key(key_code, mods, down) &&
+      (down || !input_system.get_key_held(ox_scan_code))
+    ) {
+      // same as the console: a key the game saw go down still comes back up
+      return;
     }
 
     if (down) {
@@ -321,8 +325,8 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_mouse_button(button, down);
     }
 
-    if (App::has_mod<RmlUI>()) {
-      App::mod<RmlUI>().process_mouse_button(button, down);
+    if (App::has_mod<RmlUI>() && App::mod<RmlUI>().process_mouse_button(button, down)) {
+      return;
     }
 
     auto& input_system = App::mod<Input>();
@@ -342,8 +346,8 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_mouse_scroll(offset);
     }
 
-    if (App::has_mod<RmlUI>()) {
-      App::mod<RmlUI>().process_mouse_scroll(offset.y);
+    if (App::has_mod<RmlUI>() && App::mod<RmlUI>().process_mouse_scroll(offset.y)) {
+      return;
     }
 
     auto& input_system = App::mod<Input>();

@@ -16,6 +16,9 @@ class Renderer;
 class Input;
 class RmlView;
 
+// a focused text field takes every key, including the letters it lets propagate
+auto rml_wants_keyboard(Rml::Context* context) -> bool;
+
 // Owns everything RmlUi keeps process wide: the library lifecycle, the system interface, the
 // debugger, and the routing of window input to whichever view is under the cursor. Per context state
 // lives in RmlView.
@@ -31,12 +34,13 @@ public:
   auto register_view(this RmlUI& self, RmlView* view) -> void;
   auto unregister_view(this RmlUI& self, RmlView* view) -> void;
 
-  // Mouse follows the cursor, keyboard follows the focused view.
-  auto process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> void;
+  // Mouse follows the cursor, keyboard follows the focused view. The bool ones return whether the UI
+  // took the event, in which case the game shouldn't see it
+  auto process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> bool;
   auto process_text(this RmlUI& self, std::string_view text) -> void;
   auto process_mouse_move(this RmlUI& self, glm::vec2 position) -> void;
-  auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> void;
-  auto process_mouse_scroll(this RmlUI& self, f32 offset) -> void;
+  auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool;
+  auto process_mouse_scroll(this RmlUI& self, f32 offset) -> bool;
 
 private:
   auto keyboard_view(this RmlUI& self) -> RmlView*;
@@ -53,6 +57,8 @@ private:
   RmlView* capture_view = nullptr;
   glm::vec2 last_mouse_position = {};
   u8 held_buttons = 0;
+  // pressed on an element, so the release is the UI's too
+  u8 ui_buttons = 0;
 
   Rml::Context* debugger_host_context = nullptr;
 };

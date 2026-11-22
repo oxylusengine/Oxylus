@@ -36,6 +36,26 @@ static auto to_surface_coords(const RmlView& view, glm::vec2 position) -> glm::i
   };
 }
 
+auto rml_wants_keyboard(Rml::Context* context) -> bool {
+  auto* focus = context ? context->GetFocusElement() : nullptr;
+  if (!focus) {
+    return false;
+  }
+
+  const auto& tag = focus->GetTagName();
+  if (tag == "textarea") {
+    return true;
+  }
+
+  if (tag != "input") {
+    return false;
+  }
+
+  // RmlUi makes a text field of every input type it doesn't know
+  const auto type = focus->GetAttribute<Rml::String>("type", "text");
+  return type != "radio" && type != "checkbox" && type != "range" && type != "submit" && type != "button";
+}
+
 auto RmlUI::init(this RmlUI& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
@@ -120,19 +140,20 @@ auto RmlUI::update_hover(this RmlUI& self, glm::vec2 position) -> RmlView* {
   return target;
 }
 
-auto RmlUI::process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> void {
+auto RmlUI::process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> bool {
   ZoneScoped;
 
   auto* view = self.keyboard_view();
   if (!view) {
-    return;
+    return false;
   }
 
-  if (down) {
-    view->context()->ProcessKeyDown(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
-  } else {
-    view->context()->ProcessKeyUp(RmlSystem::convert_key(key_code), RmlSystem::convert_mod(mods));
-  }
+  auto* context = view->context();
+  const auto key = RmlSystem::convert_key(key_code);
+  const auto modifiers = RmlSystem::convert_mod(mods);
+  const auto is_propagated = down ? context->ProcessKeyDown(key, modifiers) : context->ProcessKeyUp(key, modifiers);
+
+  return !is_propagated || rml_wants_keyboard(context);
 }
 
 auto RmlUI::process_text(this RmlUI& self, std::string_view text) -> void {
@@ -150,7 +171,7 @@ auto RmlUI::process_mouse_move(this RmlUI& self, glm::vec2 position) -> void {
   self.update_hover(position);
 }
 
-auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> void {
+auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool {
   ZoneScoped;
 
   i32 rml_button = 0;
@@ -158,7 +179,7 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> void
     case MouseCode::Left  : rml_button = 0; break;
     case MouseCode::Middle: rml_button = 2; break;
     case MouseCode::Right : rml_button = 1; break;
-    default               : return;
+    default               : return false;
   }
 
   const auto button_bit = static_cast<u8>(1u << rml_button);
@@ -169,18 +190,30 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> void
 
   if (down) {
     if (!target) {
-      return;
+      return false;
     }
 
     self.capture_view = target;
     self.held_buttons |= button_bit;
-    target->context()->ProcessMouseButtonDown(rml_button, 0);
 
-    return;
+    auto* context = target->context();
+    context->ProcessMouseButtonDown(rml_button, 0);
+    const auto is_ui_press = context->IsMouseInteracting();
+    if (is_ui_press) {
+      self.ui_buttons |= button_bit;
+    } else if (rml_wants_keyboard(context)) {
+      // clicking into the game hands the keyboard back, RmlUi only moves focus to what was clicked
+      context->GetFocusElement()->Blur();
+    }
+
+    return is_ui_press;
   }
 
+  const auto is_ui_release = (self.ui_buttons & button_bit) != 0;
+  self.ui_buttons &= static_cast<u8>(~button_bit);
+
   if (!target) {
-    return;
+    return is_ui_release;
   }
 
   target->context()->ProcessMouseButtonUp(rml_button, 0);
@@ -189,13 +222,19 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> void
   if (self.held_buttons == 0) {
     self.capture_view = nullptr;
   }
+
+  return is_ui_release;
 }
 
-auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> void {
+auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> bool {
   ZoneScoped;
 
-  if (auto* target = self.update_hover(self.last_mouse_position)) {
-    target->context()->ProcessMouseWheel(-offset, 0);
+  auto* target = self.update_hover(self.last_mouse_position);
+  if (!target) {
+    return false;
   }
+
+  const auto is_propagated = target->context()->ProcessMouseWheel(-offset, 0);
+  return !is_propagated || target->context()->IsMouseInteracting();
 }
 } // namespace ox
