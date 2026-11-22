@@ -25,8 +25,8 @@ public:
   RmlView(const RmlView&) = delete;
   auto operator=(const RmlView&) -> RmlView& = delete;
 
-  // Collects this frame's geometry. Must run before RenderContext::new_frame, because RmlUi
-  // generates font atlases lazily in here and those uploads block on a fence.
+  // the context's one Update per frame, and the frame's geometry once there is a surface. must run before
+  // RenderContext::new_frame, because RmlUi generates font atlases lazily in here and those uploads block on a fence
   auto update(this RmlView& self, glm::ivec2 surface_size_) -> void;
   // draws this frame's UI with a program of its own, after RenderContext::new_frame and before the owner's program
   // composites it

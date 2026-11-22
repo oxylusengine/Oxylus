@@ -47,17 +47,23 @@ RmlView::~RmlView() {
 auto RmlView::update(this RmlView& self, glm::ivec2 surface_size_) -> void {
   ZoneScoped;
 
-  if (!self.rml_context || surface_size_.x <= 0 || surface_size_.y <= 0) {
+  if (!self.rml_context) {
     return;
   }
 
-  self.surface_size = surface_size_;
-  self.sync_dpi_ratio();
+  // a scene that ticks without rendering has no surface yet, its documents still update
+  const auto is_drawn = surface_size_.x > 0 && surface_size_.y > 0;
+  if (is_drawn) {
+    self.surface_size = surface_size_;
+    self.sync_dpi_ratio();
+    self.renderer->begin_frame(surface_size_);
+    self.rml_context->SetDimensions(Rml::Vector2i(surface_size_.x, surface_size_.y));
+  }
 
-  self.renderer->begin_frame(surface_size_);
-  self.rml_context->SetDimensions(Rml::Vector2i(surface_size_.x, surface_size_.y));
   self.rml_context->Update();
-  self.rml_context->Render();
+  if (is_drawn) {
+    self.rml_context->Render();
+  }
 }
 
 auto RmlView::render(this RmlView& self, RenderContext& context) -> void {

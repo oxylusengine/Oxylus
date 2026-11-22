@@ -1583,10 +1583,6 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   self.run_deferred_functions();
   self.update_pending_model_spawns();
 
-  if (auto* rml_context = self.get_rml_context()) {
-    rml_context->Update();
-  }
-
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
   const auto gameplay_enabled = pre_update_phase_enabled && on_update_phase_enabled;
