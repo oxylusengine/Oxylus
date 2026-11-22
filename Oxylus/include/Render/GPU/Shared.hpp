@@ -1099,4 +1099,31 @@ struct ParticleCounters {
   u32 pad = 0;
 };
 
+// --- RmlUi ---
+
+OX_CONST u32 RML_GRADIENT_MAX_STOPS = 16;
+
+enum class RmlGradientFunction : u32 {
+  Linear = 0,
+  Radial,
+  Conic,
+  RepeatingLinear,
+  RepeatingRadial,
+  RepeatingConic,
+};
+
+struct RmlGradient {
+  RmlGradientFunction function = RmlGradientFunction::Linear;
+  u32 stop_count = 0;
+  // linear: start point, radial and conic: center
+  f32x2 p = {};
+  // linear: start to end, radial: inverse radius, conic: unit vector at the start angle
+  f32x2 v = {};
+  f32x2 pad = {};
+  // premultiplied
+  f32x4 stop_colors[RML_GRADIENT_MAX_STOPS] = {};
+  // 0 at the start point, 1 at the end
+  f32 stop_positions[RML_GRADIENT_MAX_STOPS] = {};
+};
+
 OX_GPU_END
