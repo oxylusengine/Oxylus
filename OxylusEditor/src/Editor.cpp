@@ -202,6 +202,7 @@ auto Editor::deinit(this Editor& self) -> std::expected<void, std::string> {
   self.editor_context.reset();
   self.scene_manager.reset();
 
+  self.rml_live_reload.close();
 #ifdef OX_DOTNET
   self.csharp_scripts.close();
 #endif
@@ -239,6 +240,9 @@ auto Editor::update(this Editor& self, const Timestep& timestep) -> void {
   }
 
   self.editor_panel_registry.update_all();
+
+  // before the scenes tick, which lays the reloaded documents out this frame
+  self.rml_live_reload.update();
 
   auto& shp = self.editor_panel_registry.get<SceneHierarchyPanel>();
   self.main_viewport_panel.update(timestep, &shp);

@@ -4,12 +4,16 @@
 #include <RmlUi/Debugger.h>
 #include <SDL3/SDL_keyboard.h>
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
 #include <ranges>
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
 #include "Core/Keycodes.hpp"
+#include "Memory/Stack.hpp"
 #include "UI/RmlView.hpp"
+#include "Utils/Log.hpp"
 
 namespace ox {
 // mouse events carry no modifiers, so they are read when the event arrives: shift-click extends a text selection
@@ -58,6 +62,81 @@ auto rml_wants_keyboard(Rml::Context* context) -> bool {
   // RmlUi makes a text field of every input type it doesn't know
   const auto type = focus->GetAttribute<Rml::String>("type", "text");
   return type != "radio" && type != "checkbox" && type != "range" && type != "submit" && type != "button";
+}
+
+static auto normalized_path(std::string_view path) -> std::string {
+  auto normalized = std::filesystem::path(path).lexically_normal().generic_string();
+  // a document keeps a drive letter the way old urls spelled it, `C:/a` comes back as `C|/a`
+  if (normalized.size() >= 2 && normalized[1] == '|' && std::isalpha(static_cast<unsigned char>(normalized[0]))) {
+    normalized[1] = ':';
+  }
+
+  return normalized;
+}
+
+auto reload_rml_documents(Rml::Context* context, std::span<const std::string> paths) -> void {
+  ZoneScoped;
+
+  if (!context || paths.empty()) {
+    return;
+  }
+
+  const auto is_style_changed = std::ranges::any_of(paths, [](std::string_view path) {
+    return path.ends_with(".rcss");
+  });
+  const auto is_markup_changed = std::ranges::any_of(paths, [](std::string_view path) {
+    return path.ends_with(".rml");
+  });
+  if (is_style_changed) {
+    Rml::Factory::ClearStyleSheetCache();
+  }
+
+  // a template reaches a document only when the document is loaded again
+  if (is_markup_changed) {
+    Rml::Factory::ClearTemplateCache();
+  }
+
+  memory::ScopedStack stack;
+  // loading and closing reorders the context's documents
+  auto documents = stack.alloc<Rml::ElementDocument*>(static_cast<usize>(context->GetNumDocuments()));
+  for (usize i = 0; i < documents.size(); i++) {
+    documents[i] = context->GetDocument(static_cast<i32>(i));
+  }
+
+  for (auto* document : documents) {
+    const auto url = document->GetSourceURL();
+    // the debugger's documents are built in memory
+    if (url.empty()) {
+      continue;
+    }
+
+    const auto document_path = normalized_path(url);
+    const auto is_edited = std::ranges::any_of(paths, [&document_path](std::string_view path) {
+      return normalized_path(path) == document_path;
+    });
+    if (!is_edited) {
+      if (is_style_changed) {
+        document->ReloadStyleSheet();
+      }
+
+      continue;
+    }
+
+    const auto is_visible = document->IsVisible();
+    const auto is_modal = document->IsModal();
+    auto* replacement = context->LoadDocument(url);
+    if (!replacement) {
+      OX_LOG_ERROR("Couldn't reload {}, the document on screen stays as it was", url);
+      continue;
+    }
+
+    document->Close();
+    if (is_visible) {
+      replacement->Show(is_modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None);
+    }
+
+    OX_LOG_INFO("Reloaded {}", url);
+  }
 }
 
 auto RmlUI::init(this RmlUI& self) -> std::expected<void, std::string> {
@@ -240,5 +319,13 @@ auto RmlUI::process_mouse_scroll(this RmlUI& self, glm::vec2 offset) -> bool {
 
   const auto is_propagated = target->context()->ProcessMouseWheel(Rml::Vector2f(offset.x, -offset.y), key_modifiers());
   return !is_propagated || target->context()->IsMouseInteracting();
+}
+
+auto RmlUI::reload_ui_files(this RmlUI& self, std::span<const std::string> paths) -> void {
+  ZoneScoped;
+
+  for (auto* view : self.views) {
+    reload_rml_documents(view->context(), paths);
+  }
 }
 } // namespace ox

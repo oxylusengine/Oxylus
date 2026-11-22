@@ -4,6 +4,7 @@
 #include <ankerl/svector.h>
 #include <expected>
 #include <glm/vec2.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -18,6 +19,10 @@ class RmlView;
 
 // a focused text field takes every key, including the letters it lets propagate
 auto rml_wants_keyboard(Rml::Context* context) -> bool;
+
+// edits to these files, named as the documents were loaded: a document loaded from one is loaded again in its place,
+// and an edited style sheet restyles every other document in place, keeping its elements and what scripts hold of them
+auto reload_rml_documents(Rml::Context* context, std::span<const std::string> paths) -> void;
 
 // Owns everything RmlUi keeps process wide: the library lifecycle, the system interface, the
 // debugger, and the routing of window input to whichever view is under the cursor. Per context state
@@ -42,6 +47,9 @@ public:
   auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool;
   // SDL's wheel, x to the right and y away from the user
   auto process_mouse_scroll(this RmlUI& self, glm::vec2 offset) -> bool;
+
+  // `reload_rml_documents` for every view, `paths` are virtual
+  auto reload_ui_files(this RmlUI& self, std::span<const std::string> paths) -> void;
 
 private:
   auto keyboard_view(this RmlUI& self) -> RmlView*;
