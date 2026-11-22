@@ -328,20 +328,29 @@ struct TerrainComponent {
   f32 collision_restitution = 0.0f;
 };
 
+struct DensityProfileLayer {
+  f32 width = 0.0f;
+  f32 exp_term = 0.0f;
+  f32 exp_scale = 0.0f;
+  f32 linear_term = 0.0f;
+  f32 constant_term = 0.0f;
+};
+
 struct AtmosphereComponent {
-  glm::vec3 rayleigh_scattering = {5.802f, 13.558f, 33.100f};
-  f32 rayleigh_density = 8.0;
+  glm::vec3 rayleigh_scattering = {6.604931f, 12.344918f, 39.412623f};
   glm::vec3 mie_scattering = {3.996f, 3.996f, 3.996f};
-  f32 mie_density = 1.2f;
   f32 mie_extinction = 4.44f;
   f32 mie_asymmetry = 3.6f;
-  f32 mie_haze_amount = 0.7f;
-  f32 mie_haze_scale_height = 11.0f;
-  glm::vec3 ozone_absorption = {0.650f, 1.881f, 0.085f};
-  f32 ozone_height = 25.0f;
-  f32 ozone_thickness = 15.0f;
+  glm::vec3 ozone_absorption = {1.29072f, 2.54036f, 0.0f};
+  f32 base_altitude_km = 6.0f;
   f32 aerial_perspective_start_km = 8.0f;
   f32 aerial_perspective_exposure = 1.0f;
+  DensityProfileLayer rayleigh_layer_0 = {23.1f, 2.0f, -0.325f, 0.0f, 0.166f};
+  DensityProfileLayer rayleigh_layer_1 = {100.0f, 0.0f, -0.085f, 0.0f, 0.021f};
+  DensityProfileLayer mie_layer_0 = {11.0f, 1.19f, -0.530f, 0.0f, 0.266f};
+  DensityProfileLayer mie_layer_1 = {74.7f, 0.730f, -0.090f, 0.0f, 0.0f};
+  DensityProfileLayer ozone_layer_0 = {52.9f, 0.00182376393f, 0.122f, 0.0f, 0.0f};
+  DensityProfileLayer ozone_layer_1 = {52.2f, 20.6245170027f, -0.06666666666f, 0.0f, 0.0f};
 };
 
 struct AutoExposureComponent {

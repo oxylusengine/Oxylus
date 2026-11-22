@@ -313,7 +313,7 @@ public extension Atmosphere {
 
     public func get_eye_pos(f32x3 position) -> f32x3 {
         let min_altitude = this.planet_radius + PLANET_RADIUS_OFFSET;
-        let altitude = max(position.y * CAMERA_SCALE_UNIT + min_altitude, min_altitude);
+        let altitude = max(this.planet_radius + this.base_altitude_km + position.y * CAMERA_SCALE_UNIT, min_altitude);
         return f32x3(0.0, altitude, 0.0);
     }
 };

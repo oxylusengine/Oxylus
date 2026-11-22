@@ -757,7 +757,10 @@ struct EntityInspector : IEntitySerializer {
           record_change(name, v, old_v_cmd);
         }
       } else {
+        UI::text(name, "");
+        ImGui::PushID(name.data());
         serialize_ops(ops + 1, op_count - 1, base);
+        ImGui::PopID();
       }
     } else {
       // root level serialization
