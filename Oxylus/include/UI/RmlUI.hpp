@@ -40,7 +40,8 @@ public:
   auto process_text(this RmlUI& self, std::string_view text) -> void;
   auto process_mouse_move(this RmlUI& self, glm::vec2 position) -> void;
   auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool;
-  auto process_mouse_scroll(this RmlUI& self, f32 offset) -> bool;
+  // SDL's wheel, x to the right and y away from the user
+  auto process_mouse_scroll(this RmlUI& self, glm::vec2 offset) -> bool;
 
 private:
   auto keyboard_view(this RmlUI& self) -> RmlView*;

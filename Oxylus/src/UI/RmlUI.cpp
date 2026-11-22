@@ -2,6 +2,7 @@
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Debugger.h>
+#include <SDL3/SDL_keyboard.h>
 #include <algorithm>
 #include <ranges>
 
@@ -11,6 +12,9 @@
 #include "UI/RmlView.hpp"
 
 namespace ox {
+// mouse events carry no modifiers, so they are read when the event arrives: shift-click extends a text selection
+static auto key_modifiers() -> i32 { return RmlSystem::convert_mod(static_cast<i16>(SDL_GetModState())); }
+
 // Reverse order so the view registered last wins where two overlap.
 static auto hit_test(std::span<RmlView* const> views, glm::vec2 position) -> RmlView* {
   for (auto* view : std::ranges::reverse_view(views)) {
@@ -134,7 +138,7 @@ auto RmlUI::update_hover(this RmlUI& self, glm::vec2 position) -> RmlView* {
 
   if (target) {
     const auto coords = to_surface_coords(*target, position);
-    target->context()->ProcessMouseMove(coords.x, coords.y, 0);
+    target->context()->ProcessMouseMove(coords.x, coords.y, key_modifiers());
   }
 
   return target;
@@ -197,7 +201,7 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool
     self.held_buttons |= button_bit;
 
     auto* context = target->context();
-    context->ProcessMouseButtonDown(rml_button, 0);
+    context->ProcessMouseButtonDown(rml_button, key_modifiers());
     const auto is_ui_press = context->IsMouseInteracting();
     if (is_ui_press) {
       self.ui_buttons |= button_bit;
@@ -216,7 +220,7 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool
     return is_ui_release;
   }
 
-  target->context()->ProcessMouseButtonUp(rml_button, 0);
+  target->context()->ProcessMouseButtonUp(rml_button, key_modifiers());
 
   self.held_buttons &= static_cast<u8>(~button_bit);
   if (self.held_buttons == 0) {
@@ -226,7 +230,7 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool
   return is_ui_release;
 }
 
-auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> bool {
+auto RmlUI::process_mouse_scroll(this RmlUI& self, glm::vec2 offset) -> bool {
   ZoneScoped;
 
   auto* target = self.update_hover(self.last_mouse_position);
@@ -234,7 +238,7 @@ auto RmlUI::process_mouse_scroll(this RmlUI& self, f32 offset) -> bool {
     return false;
   }
 
-  const auto is_propagated = target->context()->ProcessMouseWheel(-offset, 0);
+  const auto is_propagated = target->context()->ProcessMouseWheel(Rml::Vector2f(offset.x, -offset.y), key_modifiers());
   return !is_propagated || target->context()->IsMouseInteracting();
 }
 } // namespace ox

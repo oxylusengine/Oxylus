@@ -346,7 +346,7 @@ auto Window::update(const Timestep& timestep) const -> void {
       imgui_renderer.on_mouse_scroll(offset);
     }
 
-    if (App::has_mod<RmlUI>() && App::mod<RmlUI>().process_mouse_scroll(offset.y)) {
+    if (App::has_mod<RmlUI>() && App::mod<RmlUI>().process_mouse_scroll(offset)) {
       return;
     }
 
