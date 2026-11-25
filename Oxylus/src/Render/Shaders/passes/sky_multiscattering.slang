@@ -23,6 +23,7 @@ func cs_main(
     uniform ParameterBlock<ShaderParameters> params
 ) -> void {
     f32x2 uv = f32x2(f32x2(thread_id.xy) + 0.5) / f32x2(params.atmosphere.multiscattering_lut_size.xy);
+    uv = from_sub_uvs_to_unit(uv, f32x2(params.atmosphere.multiscattering_lut_size.xy));
 
     const f32 atmosphere_thickness = params.atmosphere.atmos_radius - params.atmosphere.planet_radius;
     const f32 altitude = params.atmosphere.planet_radius + uv.y * atmosphere_thickness + PLANET_RADIUS_OFFSET;

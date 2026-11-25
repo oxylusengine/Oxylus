@@ -61,8 +61,7 @@ public func sky_view_params_to_lut_uv(
         uv.y = coord * 0.5 + 0.5;
     }
 
-    f32 theta = atan2(-light_on_plane.y, -light_on_plane.x);
-    uv.x = (theta + PI) / (2.0 * PI);
+    uv.x = sqrt(acos(clamp(light_on_plane.x, -1.0, 1.0)) / PI);
     return from_unit_to_sub_uvs(uv, f32x2(atmosphere.sky_view_lut_size.xy));
 }
 
@@ -89,15 +88,11 @@ public func uv_to_sky_view_lut_params(
         view_zenith_angle = zenith_horizon_angle + beta * coord;
     }
 
-    const f32 longitude_view_cos_angle = uv.x * TAU;
-    const f32 view_zenith_cos_angle = cos(view_zenith_angle);
-    const f32 view_zenith_sin_angle = com::safe_sqrt(1.0 - view_zenith_cos_angle * view_zenith_cos_angle) * (view_zenith_angle > 0.0 ? 1.0 : -1.0);
-    const f32 cos_longitude_view_cos_angle = cos(longitude_view_cos_angle);
-    const f32 sin_longitude_view_cos_angle = com::safe_sqrt(1.0 - cos_longitude_view_cos_angle * cos_longitude_view_cos_angle) * (longitude_view_cos_angle <= PI ? 1.0 : -1.0);
+    const f32 azimuth = uv.x * uv.x * PI;
     return f32x3(
-        view_zenith_sin_angle * cos_longitude_view_cos_angle,
-        view_zenith_cos_angle,
-        view_zenith_sin_angle * sin_longitude_view_cos_angle
+        sin(view_zenith_angle) * cos(azimuth),
+        cos(view_zenith_angle),
+        sin(view_zenith_angle) * sin(azimuth)
     );
 }
 
@@ -116,6 +111,45 @@ public func move_to_top_atmosphere(inout f32x3 pos, f32x3 dir, f32 atmos_radius)
     return true;
 }
 
+public func sample_density_profile(in DensityProfileLayer layer_0, in DensityProfileLayer layer_1, f32 height) -> f32 {
+    let is_first_layer = height < layer_0.width;
+    let layer_width_sum = layer_0.width + layer_1.width;
+    let exp_term = select(is_first_layer, layer_0.exp_term, layer_1.exp_term);
+    let exp_scale = select(is_first_layer, layer_0.exp_scale, layer_1.exp_scale);
+    let linear_term = select(is_first_layer, layer_0.linear_term, layer_1.linear_term);
+    let constant_term = select(is_first_layer, layer_0.constant_term, layer_1.constant_term);
+    let density = max(exp_term * exp(exp_scale * height) + linear_term * height + constant_term, 0.0);
+    return select(height < layer_width_sum, density, 0.0);
+}
+
+func integrate_density_layer(in DensityProfileLayer layer, f32 start, f32 end) -> f32 {
+    let is_exponential = abs(layer.exp_scale) > 1e-6;
+    let exp_integral = select(
+        is_exponential,
+        layer.exp_term * (exp(layer.exp_scale * end) - exp(layer.exp_scale * start)) / select(is_exponential, layer.exp_scale, 1.0),
+        layer.exp_term * (end - start));
+    return exp_integral + 0.5 * layer.linear_term * (end * end - start * start) + layer.constant_term * (end - start);
+}
+
+// mean density over the altitudes a march step spans, a point sample jumps whenever a layer edge
+// crosses it and that shows up as bands in the sky
+public func average_density_profile(
+    in DensityProfileLayer layer_0,
+    in DensityProfileLayer layer_1,
+    f32 altitude_a,
+    f32 altitude_b
+) -> f32 {
+    let low = min(altitude_a, altitude_b);
+    let high = max(altitude_a, altitude_b);
+    let layer_0_end = layer_0.width;
+    let layer_1_end = layer_0.width + layer_1.width;
+    let integral = integrate_density_layer(layer_0, min(low, layer_0_end), min(high, layer_0_end)) +
+        integrate_density_layer(layer_1, clamp(low, layer_0_end, layer_1_end), clamp(high, layer_0_end, layer_1_end));
+    let span = high - low;
+    let average = max(integral / max(span, 1e-4), 0.0);
+    return select(span > 1e-4, average, sample_density_profile(layer_0, layer_1, 0.5 * (low + high)));
+}
+
 public struct MediumScattering {
     public f32x3 rayleigh_scattering;
     public f32x3 rayleigh_extinction;
@@ -130,25 +164,13 @@ public struct MediumScattering {
     public f32x3 extinction_sum;
 
     [ForceInline]
-    public __init(in Atmosphere atmosphere, f32 altitude) {
-        const f32 min_scale_height = 1e-3;
-        const f32 height = max(0.0, altitude);
+    public __init(in Atmosphere atmosphere, f32 step_start_altitude, f32 step_end_altitude) {
+        const f32 start = max(0.0, step_start_altitude);
+        const f32 end = max(0.0, step_end_altitude);
 
-        const f32 rayleigh_density = exp(-height / max(atmosphere.rayleigh_density, min_scale_height));
-
-        // blend the dense boundary layer into a longer-lived aerosol distribution.
-        // both curves equal one at sea level, so changing the haze amount reshapes the column
-        // without introducing a density jump at the ground or at an arbitrary layer edge
-        const f32 mie_boundary_density = exp(-height / max(atmosphere.mie_density, min_scale_height));
-        const f32 mie_haze_density = exp(-height / max(atmosphere.mie_haze_scale_height, min_scale_height));
-        const f32 mie_density = lerp(
-            mie_boundary_density,
-            mie_haze_density,
-            saturate(atmosphere.mie_haze_amount));
-
-        const f32 ozone_half_width = max(atmosphere.ozone_thickness, min_scale_height);
-        const f32 ozone_distance = abs(height - atmosphere.ozone_height);
-        const f32 ozone_density = 1.0 - smoothstep(0.0, ozone_half_width, ozone_distance);
+        const f32 rayleigh_density = average_density_profile(atmosphere.rayleigh_layer_0, atmosphere.rayleigh_layer_1, start, end);
+        const f32 mie_density = average_density_profile(atmosphere.mie_layer_0, atmosphere.mie_layer_1, start, end);
+        const f32 ozone_density = average_density_profile(atmosphere.ozone_layer_0, atmosphere.ozone_layer_1, start, end);
 
         this.rayleigh_scattering = atmosphere.rayleigh_scatter * rayleigh_density;
         this.rayleigh_extinction = this.rayleigh_scattering;  // Rayleigh scattering doesn't have absorption behavior
@@ -217,6 +239,7 @@ public func integrate_single_scattered_luminance(
 
     var step_length = integration_length / info.step_count;
     var old_ray_shift = 0.0;
+    var old_altitude = length(info.eye_pos) - atmosphere.planet_radius;
     for (f32 step = 0.0; step < info.step_count; step += 1.0) {
         var new_ray_shift = integration_length * (step + 0.3) / info.step_count;
         step_length = new_ray_shift - old_ray_shift;
@@ -225,7 +248,8 @@ public func integrate_single_scattered_luminance(
         let step_pos = info.eye_pos + new_ray_shift * info.eye_dir;
         f32 h = length(step_pos);
         f32 altitude = h - atmosphere.planet_radius;
-        let medium_info = MediumScattering(atmosphere, altitude);
+        let medium_info = MediumScattering(atmosphere, old_altitude, altitude);
+        old_altitude = altitude;
 
         f32x3 up_vec = normalize(step_pos);
         f32x3 up_vec_scaled = PLANET_RADIUS_OFFSET * up_vec;

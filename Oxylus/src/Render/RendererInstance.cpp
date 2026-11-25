@@ -65,28 +65,83 @@ static auto to_lut_size(const vir::Extent3D& extent) -> glm::ivec3 {
   return {static_cast<i32>(extent.width), static_cast<i32>(extent.height), static_cast<i32>(extent.depth)};
 }
 
+static auto density_profile_layers_equal(const GPU::DensityProfileLayer& a, const GPU::DensityProfileLayer& b) -> bool {
+  return a.width == b.width && a.exp_term == b.exp_term && a.exp_scale == b.exp_scale &&
+         a.linear_term == b.linear_term && a.constant_term == b.constant_term;
+}
+
 static auto atmosphere_lut_inputs_equal(const GPU::Atmosphere& a, const GPU::Atmosphere& b) -> bool {
-  return a.rayleigh_scatter == b.rayleigh_scatter &&           //
-         a.rayleigh_density == b.rayleigh_density &&           //
-         a.mie_scatter == b.mie_scatter &&                     //
-         a.mie_density == b.mie_density &&                     //
-         a.mie_extinction == b.mie_extinction &&               //
-         a.mie_asymmetry == b.mie_asymmetry &&                 //
-         a.mie_haze_amount == b.mie_haze_amount &&             //
-         a.mie_haze_scale_height == b.mie_haze_scale_height && //
-         a.ozone_absorption == b.ozone_absorption &&           //
-         a.ozone_height == b.ozone_height &&                   //
-         a.ozone_thickness == b.ozone_thickness &&             //
-         a.terrain_albedo == b.terrain_albedo &&               //
-         a.planet_radius == b.planet_radius &&                 //
-         a.atmos_radius == b.atmos_radius;
+  return a.rayleigh_scatter == b.rayleigh_scatter &&                             //
+         a.mie_scatter == b.mie_scatter &&                                       //
+         a.mie_extinction == b.mie_extinction &&                                 //
+         a.mie_asymmetry == b.mie_asymmetry &&                                   //
+         a.ozone_absorption == b.ozone_absorption &&                             //
+         a.terrain_albedo == b.terrain_albedo &&                                 //
+         a.planet_radius == b.planet_radius &&                                   //
+         a.atmos_radius == b.atmos_radius &&                                     //
+         density_profile_layers_equal(a.rayleigh_layer_0, b.rayleigh_layer_0) && //
+         density_profile_layers_equal(a.rayleigh_layer_1, b.rayleigh_layer_1) && //
+         density_profile_layers_equal(a.mie_layer_0, b.mie_layer_0) &&           //
+         density_profile_layers_equal(a.mie_layer_1, b.mie_layer_1) &&           //
+         density_profile_layers_equal(a.ozone_layer_0, b.ozone_layer_0) &&       //
+         density_profile_layers_equal(a.ozone_layer_1, b.ozone_layer_1);
+}
+
+static auto to_gpu_layer(const DensityProfileLayer& layer) -> GPU::DensityProfileLayer {
+  return {
+    .width = layer.width,
+    .exp_term = layer.exp_term,
+    .exp_scale = layer.exp_scale,
+    .linear_term = layer.linear_term,
+    .constant_term = layer.constant_term,
+  };
+}
+
+static auto sample_density_profile(
+  const GPU::DensityProfileLayer& layer_0, const GPU::DensityProfileLayer& layer_1, f32 height
+) -> f32 {
+  const auto& layer = height < layer_0.width ? layer_0 : layer_1;
+  const auto density = layer.exp_term * std::exp(layer.exp_scale * height) + layer.linear_term * height +
+                       layer.constant_term;
+  const auto is_inside = height < layer_0.width + layer_1.width;
+  return is_inside ? std::max(density, 0.0f) : 0.0f;
+}
+
+static auto integrate_density_layer(const GPU::DensityProfileLayer& layer, f32 start, f32 end) -> f32 {
+  const auto is_exponential = std::abs(layer.exp_scale) > 1e-6f;
+  const auto exp_integral = is_exponential
+                              ? layer.exp_term * (std::exp(layer.exp_scale * end) - std::exp(layer.exp_scale * start)) /
+                                  layer.exp_scale
+                              : layer.exp_term * (end - start);
+  return exp_integral + 0.5f * layer.linear_term * (end * end - start * start) + layer.constant_term * (end - start);
+}
+
+// same as average_density_profile in sky.slang
+static auto average_density_profile(
+  const GPU::DensityProfileLayer& layer_0, const GPU::DensityProfileLayer& layer_1, f32 altitude_a, f32 altitude_b
+) -> f32 {
+  const auto low = std::min(altitude_a, altitude_b);
+  const auto high = std::max(altitude_a, altitude_b);
+  const auto span = high - low;
+  if (span <= 1e-4f) {
+    return sample_density_profile(layer_0, layer_1, 0.5f * (low + high));
+  }
+
+  const auto layer_0_end = layer_0.width;
+  const auto layer_1_end = layer_0.width + layer_1.width;
+  const auto integral = integrate_density_layer(layer_0, std::min(low, layer_0_end), std::min(high, layer_0_end)) +
+                        integrate_density_layer(
+                          layer_1,
+                          std::clamp(low, layer_0_end, layer_1_end),
+                          std::clamp(high, layer_0_end, layer_1_end)
+                        );
+  return std::max(integral / span, 0.0f);
 }
 
 // the same integral the sky_transmittance pass bakes, over MediumScattering in sky.slang, so the fog's sun
 // matches what surfaces get from the LUT. One ray a frame, so it runs on the host where every shader can share it
 static auto sun_transmittance(const GPU::Atmosphere& atmosphere, f32 eye_radius, f32 sun_cos_theta) -> glm::vec3 {
   constexpr auto STEP_COUNT = 64;
-  constexpr auto MIN_SCALE_HEIGHT = 1e-3f;
 
   const auto origin = glm::vec3(0.0f, eye_radius, 0.0f);
   const auto direction = glm::vec3(
@@ -100,16 +155,20 @@ static auto sun_transmittance(const GPU::Atmosphere& atmosphere, f32 eye_radius,
   const auto step = (-b + std::sqrt(std::max(b * b - c, 0.0f))) / static_cast<f32>(STEP_COUNT);
 
   auto optical_depth = glm::vec3(0.0f);
+  auto start_height = std::max(eye_radius - atmosphere.planet_radius, 0.0f);
   for (auto i = 0; i < STEP_COUNT; i++) {
-    const auto position = origin + direction * ((static_cast<f32>(i) + 0.5f) * step);
-    const auto height = std::max(glm::length(position) - atmosphere.planet_radius, 0.0f);
-    const auto rayleigh = std::exp(-height / std::max(atmosphere.rayleigh_density, MIN_SCALE_HEIGHT));
-    const auto mie_boundary = std::exp(-height / std::max(atmosphere.mie_density, MIN_SCALE_HEIGHT));
-    const auto mie_haze = std::exp(-height / std::max(atmosphere.mie_haze_scale_height, MIN_SCALE_HEIGHT));
-    const auto mie = glm::mix(mie_boundary, mie_haze, glm::clamp(atmosphere.mie_haze_amount, 0.0f, 1.0f));
-    const auto ozone_distance = std::abs(height - atmosphere.ozone_height);
-    const auto ozone = 1.0f -
-                       glm::smoothstep(0.0f, std::max(atmosphere.ozone_thickness, MIN_SCALE_HEIGHT), ozone_distance);
+    const auto position = origin + direction * (static_cast<f32>(i + 1) * step);
+    const auto end_height = std::max(glm::length(position) - atmosphere.planet_radius, 0.0f);
+    const auto rayleigh = average_density_profile(
+      atmosphere.rayleigh_layer_0,
+      atmosphere.rayleigh_layer_1,
+      start_height,
+      end_height
+    );
+    const auto mie = average_density_profile(atmosphere.mie_layer_0, atmosphere.mie_layer_1, start_height, end_height);
+    const auto
+      ozone = average_density_profile(atmosphere.ozone_layer_0, atmosphere.ozone_layer_1, start_height, end_height);
+    start_height = end_height;
     optical_depth += (atmosphere.rayleigh_scatter * rayleigh + glm::vec3(atmosphere.mie_extinction * mie) +
                       atmosphere.ozone_absorption * ozone) *
                      step;
@@ -3306,16 +3365,17 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
       self.atmosphere.rayleigh_scatter = atmos_info.rayleigh_scattering * 1e-3f;
-      self.atmosphere.rayleigh_density = atmos_info.rayleigh_density;
       self.atmosphere.mie_scatter = atmos_info.mie_scattering * 1e-3f;
-      self.atmosphere.mie_density = atmos_info.mie_density;
       self.atmosphere.mie_extinction = atmos_info.mie_extinction * 1e-3f;
       self.atmosphere.mie_asymmetry = atmos_info.mie_asymmetry;
-      self.atmosphere.mie_haze_amount = atmos_info.mie_haze_amount;
-      self.atmosphere.mie_haze_scale_height = atmos_info.mie_haze_scale_height;
       self.atmosphere.ozone_absorption = atmos_info.ozone_absorption * 1e-3f;
-      self.atmosphere.ozone_height = atmos_info.ozone_height;
-      self.atmosphere.ozone_thickness = atmos_info.ozone_thickness;
+      self.atmosphere.base_altitude_km = atmos_info.base_altitude_km;
+      self.atmosphere.rayleigh_layer_0 = to_gpu_layer(atmos_info.rayleigh_layer_0);
+      self.atmosphere.rayleigh_layer_1 = to_gpu_layer(atmos_info.rayleigh_layer_1);
+      self.atmosphere.mie_layer_0 = to_gpu_layer(atmos_info.mie_layer_0);
+      self.atmosphere.mie_layer_1 = to_gpu_layer(atmos_info.mie_layer_1);
+      self.atmosphere.ozone_layer_0 = to_gpu_layer(atmos_info.ozone_layer_0);
+      self.atmosphere.ozone_layer_1 = to_gpu_layer(atmos_info.ozone_layer_1);
       self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
       self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
       self.atmosphere.sky_view_lut_size = to_lut_size(self.sky_view_lut_extent);
@@ -3362,7 +3422,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
             const auto sun_cos_theta = glm::clamp(self.directional_light.direction.y, -1.0f, 1.0f);
             const auto min_radius = self.atmosphere.planet_radius + GPU::PLANET_RADIUS_OFFSET;
             const auto eye_radius = std::max(
-              self.camera_data.position.y * GPU::CAMERA_SCALE_UNIT + min_radius,
+              self.atmosphere.planet_radius + self.atmosphere.base_altitude_km +
+                self.camera_data.position.y * GPU::CAMERA_SCALE_UNIT,
               min_radius
             );
             sun_illuminance *= sun_transmittance(self.atmosphere, eye_radius, sun_cos_theta) *

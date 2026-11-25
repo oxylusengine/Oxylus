@@ -13,18 +13,10 @@ import scene;
 [[vk::binding(15)]] TextureCube<f32x4> sky_cubemap;
 [[vk::binding(16)]] Texture2D<f32x4> sky_view_lut;
 
-func draw_sun(f32x3 world_dir, f32x3 sun_dir, f32 radius) -> f32x3 {
-    let min_cos_theta = cos(radius * PI / 180.0);
+static const f32 SUN_ANGULAR_RADIUS = 0.004651;
 
-    let cosTheta = dot(world_dir, sun_dir);
-    if (cosTheta >= min_cos_theta) {
-        return 1.0;
-    }
-
-    let offset = min_cos_theta - cosTheta;
-    let gaussianBloom = exp(-offset * 50000.0) * 0.5;
-    let invBloom = 1.0/(0.02 + offset * 300.0) * 0.01;
-    return f32x3(gaussianBloom + invBloom);
+func draw_sun(f32x3 world_dir, f32x3 sun_dir) -> f32 {
+    return select(dot(world_dir, sun_dir) >= cos(SUN_ANGULAR_RADIUS), 1.0, 0.0);
 }
 
 [[shader("fragment")]]
@@ -64,7 +56,7 @@ func fs_main(
         let sky_view = sample_sky_view(atmosphere, linear_clamp_sampler, sky_view_lut, L, eye_pos, -V);
         var sky_rgb = sky_view.value.rgb;
         if (!sky_view.is_planet_hit) {
-            sky_rgb += draw_sun(-V, L, 1.0) * Li * sun_transmittance;
+            sky_rgb += draw_sun(-V, L) * Li * sun_transmittance;
         }
 
         return f32x4(sky_rgb * sky_view.value.a, 1.0);

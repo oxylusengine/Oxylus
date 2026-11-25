@@ -19,6 +19,12 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   registry.bind_matrix<glm::mat3, glm::vec3, 3>("glm::mat3");
   registry.bind_matrix<glm::mat4, glm::vec4, 4>("glm::mat4");
   registry.bind_value<&glm::quat::x, &glm::quat::y, &glm::quat::z, &glm::quat::w>("glm::quat");
+  registry.bind_value<
+    &DensityProfileLayer::width,
+    &DensityProfileLayer::exp_term,
+    &DensityProfileLayer::exp_scale,
+    &DensityProfileLayer::linear_term,
+    &DensityProfileLayer::constant_term>("DensityProfileLayer");
 
   world.component<std::string>("std::string")
     .opaque(flecs::String)
@@ -222,18 +228,19 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
     using C = AtmosphereComponent;
     registry.bind<
       &C::rayleigh_scattering,
-      &C::rayleigh_density,
       &C::mie_scattering,
-      &C::mie_density,
       &C::mie_extinction,
       &C::mie_asymmetry,
-      &C::mie_haze_amount,
-      &C::mie_haze_scale_height,
       &C::ozone_absorption,
-      &C::ozone_height,
-      &C::ozone_thickness,
+      &C::base_altitude_km,
       &C::aerial_perspective_start_km,
-      &C::aerial_perspective_exposure>();
+      &C::aerial_perspective_exposure,
+      &C::rayleigh_layer_0,
+      &C::rayleigh_layer_1,
+      &C::mie_layer_0,
+      &C::mie_layer_1,
+      &C::ozone_layer_0,
+      &C::ozone_layer_1>();
   }
 
   {
