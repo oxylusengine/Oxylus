@@ -267,16 +267,17 @@ private:
   std::mutex model_load_mutex = {};
   std::condition_variable model_load_cv = {};
 
-  SlotMap<Model, ModelID> model_map = {};
-  SlotMap<Texture, TextureID> texture_map = {};
-  SlotMap<Material, MaterialID> material_map = {};
-  SlotMap<std::unique_ptr<Scene>, SceneID> scene_map = {};
-  SlotMap<AudioSource, AudioID> audio_map = {};
-  SlotMap<TerrainEdits, TerrainEditsID> terrain_edits_map = {};
-  SlotMap<ParticleSystem, ParticleSystemID> particle_system_map = {};
-  SlotMap<Skeleton, SkeletonID> skeleton_map = {};
-  SlotMap<AnimationClip, AnimationID> animation_map = {};
-  SlotMap<Cinematic, CinematicID> cinematic_map = {};
+  // each one is only touched under its matching `*_mutex` above, so they skip a lock of their own
+  SlotMap<Model, ModelID, SlotMapSync::External> model_map = {};
+  SlotMap<Texture, TextureID, SlotMapSync::External> texture_map = {};
+  SlotMap<Material, MaterialID, SlotMapSync::External> material_map = {};
+  SlotMap<std::unique_ptr<Scene>, SceneID, SlotMapSync::External> scene_map = {};
+  SlotMap<AudioSource, AudioID, SlotMapSync::External> audio_map = {};
+  SlotMap<TerrainEdits, TerrainEditsID, SlotMapSync::External> terrain_edits_map = {};
+  SlotMap<ParticleSystem, ParticleSystemID, SlotMapSync::External> particle_system_map = {};
+  SlotMap<Skeleton, SkeletonID, SlotMapSync::External> skeleton_map = {};
+  SlotMap<AnimationClip, AnimationID, SlotMapSync::External> animation_map = {};
+  SlotMap<Cinematic, CinematicID, SlotMapSync::External> cinematic_map = {};
 
   UUID null_material = {};
 };
