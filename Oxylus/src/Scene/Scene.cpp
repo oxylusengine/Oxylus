@@ -831,21 +831,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
-  // the general TransformComponent observer above owns world-transform propagation, so this one
-  // only refreshes mesh-local derived data, with MeshComponent a filter so mesh edits do not run it
-  self.world.observer<TransformComponent, MeshComponent>()
-    .term_at<MeshComponent>()
-    .filter()
-    .event(flecs::OnSet)
-    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
-      auto entity = it.entity(i);
-      if (auto id = self.get_entity_transform_id(entity)) {
-        if (auto* transform = self.get_entity_transform(*id)) {
-          mc.world_aabb = mc.baked_aabb.get_transformed(transform->world);
-        }
-      }
-    });
-
   self.world.observer<TransformComponent, MeshComponent>()
     .event(flecs::OnRemove)
     .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
@@ -879,12 +864,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  // `resolve_transforms` refreshes the rect when the transform moves, so only sprite edits land here
   self.world.observer<TransformComponent, SpriteComponent>()
+    .term_at<TransformComponent>()
+    .filter()
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([&self](flecs::iter& it, usize i, TransformComponent&, SpriteComponent& sprite) {
       auto entity = it.entity(i);
-      // Set sprite rect
       if (auto id = self.get_entity_transform_id(entity)) {
         if (auto* transform = self.get_entity_transform(*id)) {
           sprite.rect = AABB(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(0.5, 0.5, 0.5));
@@ -1645,6 +1632,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // clips only play when the scene runs, which `update_animations` decides for itself
   self.update_animations(delta_time.get_seconds());
 
+  // before the terrain bake below, which reads its entity's world matrix
+  self.resolve_transforms();
+
   if (physics_debug_draw_enabled(self)) {
     App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);
   } else {
@@ -1678,6 +1668,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
 auto Scene::prepare_render(this Scene& self) -> void {
   ZoneScoped;
+
+  // anything edited since the update, like the editor's inspector and gizmo, is still only queued
+  self.resolve_transforms();
 
   if (self.renderer_instance) {
     auto& asset_man = App::mod<AssetManager>();
@@ -2429,55 +2422,102 @@ auto Scene::get_local_transform(flecs::entity entity) -> glm::mat4 {
 }
 
 auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
+  OX_ASSERT(entity.has<TransformComponent>());
+  self.pending_transform_entities.push_back(entity.id());
+}
+
+auto Scene::resolve_transforms(this Scene& self) -> void {
   ZoneScoped;
 
-  auto visit_parent = [](this auto& visitor, Scene& s, flecs::entity e) -> glm::mat4 {
-    auto local_mat = glm::mat4(1.0f);
-    if (e.has<TransformComponent>()) {
-      local_mat = s.get_local_transform(e);
-    }
-
-    auto parent = e.parent();
-    if (parent) {
-      return visitor(s, parent) * local_mat;
-    } else {
-      return local_mat;
-    }
-  };
-
-  OX_ASSERT(entity.has<TransformComponent>());
-  auto it = self.entity_transforms_map.find(entity);
-  if (it == self.entity_transforms_map.end()) {
+  auto& pending = self.pending_transform_entities;
+  if (pending.empty()) {
     return;
   }
 
-  auto transform_id = it->second;
-  auto* gpu_transform = self.transforms.slot(transform_id);
-  gpu_transform->world = visit_parent(self, entity);
-  self.dirty_transforms.push_back(transform_id);
+  std::ranges::sort(pending);
+  pending.erase(std::ranges::unique(pending).begin(), pending.end());
 
-  // Mark the entity's mesh instance (if any) as dirty so the VSM invalidate-pages
-  // pass can clear pages the mesh used to cover. Child entities are notified below,
-  // which re-enters `set_dirty` for each child that has a transform.
-  if (
-    const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
-    mesh_it != self.entity_to_mesh_instance_map.end()
-  ) {
-    // a non-caster is in no shadow page, moving it has nothing to invalidate
-    if (
-      const auto* mesh_instance = self.mesh_instances.slot(mesh_it->second);
-      mesh_instance && mesh_instance->cast_shadows
-    ) {
-      self.dirty_mesh_instances.push_back(mesh_it->second);
+  // top-down, so every matrix is one multiply off its parent's instead of a walk to the root. An
+  // entity without a transform passes its parent's matrix through, as if it had an identity one
+  auto resolve_subtree = [&self](this auto& resolve, flecs::entity entity, const glm::mat4& parent_world) -> void {
+    auto entity_world = parent_world;
+    if (const auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+      entity_world = parent_world * Scene::get_local_transform(entity);
+      if (auto* gpu_transform = self.transforms.slot(it->second)) {
+        gpu_transform->world = entity_world;
+        self.dirty_transforms.push_back(it->second);
+      }
+
+      // a non-caster is in no shadow page, moving it has nothing to invalidate
+      if (
+        const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
+        mesh_it != self.entity_to_mesh_instance_map.end()
+      ) {
+        if (
+          const auto* mesh_instance = self.mesh_instances.slot(mesh_it->second);
+          mesh_instance && mesh_instance->cast_shadows
+        ) {
+          self.dirty_mesh_instances.push_back(mesh_it->second);
+        }
+      }
+
+      if (auto* mc = entity.try_get_mut<MeshComponent>()) {
+        mc->world_aabb = mc->baked_aabb.get_transformed(entity_world);
+      }
+
+      if (auto* sprite = entity.try_get_mut<SpriteComponent>()) {
+        sprite->rect = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(entity_world);
+      }
+    }
+
+    entity.children([&resolve, &entity_world](flecs::entity child) { resolve(child, entity_world); });
+  };
+
+  for (const auto id : pending) {
+    const auto entity = flecs::entity(self.world, id);
+    if (!entity.is_alive()) {
+      continue;
+    }
+
+    // a pending ancestor's subtree already covers this one, otherwise the nearest ancestor with a
+    // transform is up to date, since a change to it would have queued it
+    auto is_covered = false;
+    auto is_parent_found = false;
+    auto parent_world = glm::mat4(1.0f);
+    for (auto ancestor = entity.parent(); ancestor; ancestor = ancestor.parent()) {
+      if (std::ranges::binary_search(pending, ancestor.id())) {
+        is_covered = true;
+        break;
+      }
+
+      if (is_parent_found) {
+        continue;
+      }
+
+      if (const auto it = self.entity_transforms_map.find(ancestor); it != self.entity_transforms_map.end()) {
+        if (const auto* gpu_transform = self.transforms.slotc(it->second)) {
+          parent_world = gpu_transform->world;
+          is_parent_found = true;
+        }
+      }
+    }
+
+    if (!is_covered) {
+      resolve_subtree(entity, parent_world);
     }
   }
 
-  // notify children
-  entity.children([](flecs::entity e) {
-    if (e.has<TransformComponent>()) {
-      e.modified<TransformComponent>();
+  pending.clear();
+}
+
+auto Scene::get_resolved_world_transform(this const Scene& self, flecs::entity entity) -> glm::mat4 {
+  if (const auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+    if (const auto* gpu_transform = self.transforms.slotc(it->second)) {
+      return gpu_transform->world;
     }
-  });
+  }
+
+  return Scene::get_world_transform(entity);
 }
 
 auto Scene::get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID> {

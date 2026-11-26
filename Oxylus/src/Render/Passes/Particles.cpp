@@ -265,7 +265,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         }
       }
 
-      const auto world = Scene::get_world_transform(entity);
+      const auto world = self.scene.get_resolved_world_transform(entity);
 
       // spawn direction has to follow the *world* orientation. an exhaust emitter parented to a car
       // inherits the car's rotation, which the entity's local rotation knows nothing about

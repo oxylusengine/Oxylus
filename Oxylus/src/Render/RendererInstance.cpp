@@ -3321,7 +3321,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       return;
     }
 
-    const auto world_transform = self.scene.get_world_transform(e);
+    const auto world_transform = self.scene.get_resolved_world_transform(e);
     const auto world_position = world_transform[3];
     const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
@@ -3442,7 +3442,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           .sun_radiance = c.albedo * sun_illuminance * std::max(c.sun_scattering, 0.0f),
           .height_falloff = std::max(c.height_falloff, 0.0f),
           .sun_direction = self.directional_light.direction,
-          .base_height = self.scene.get_world_transform(e)[3].y,
+          .base_height = self.scene.get_resolved_world_transform(e)[3].y,
           .start_distance = std::max(c.start_distance, 0.0f),
           .max_opacity = std::clamp(c.max_opacity, 0.0f, 1.0f),
           .anisotropy = std::clamp(c.anisotropy, -0.95f, 0.95f),
@@ -3485,7 +3485,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           return;
         }
 
-        const auto world = self.scene.get_world_transform(e);
+        const auto world = self.scene.get_resolved_world_transform(e);
         if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
           return;
         }
@@ -3602,7 +3602,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
         const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
         const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
-        const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+        const glm::vec3 anchor = self.scene.get_resolved_world_transform(e)[3];
         const auto center = c.follow_camera ? camera_position : anchor;
         const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
         const auto probe_count = counts.x * counts.y * counts.z;
@@ -3686,7 +3686,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         material_index = SlotMap_decode_id(asset->material_id).index;
       }
 
-      const auto world = self.scene.get_world_transform(e);
+      const auto world = self.scene.get_resolved_world_transform(e);
       if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
         return;
       }

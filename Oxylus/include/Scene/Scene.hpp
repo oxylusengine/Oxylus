@@ -187,6 +187,7 @@ public:
   // value has to be re-uploaded the frame after a transform goes dirty. Without this a transform
   // that is created and never touched again keeps a zero `previous_world` on the GPU forever.
   std::vector<GPU::TransformID> previously_dirty_transforms = {};
+  std::vector<flecs::entity_t> pending_transform_entities = {};
   std::vector<MeshInstanceID> dirty_mesh_instances = {};
   // last world boxes of shadow casters removed since the previous render, their shadow pages have to
   // be invalidated since no instance buffer holds them anymore
@@ -338,7 +339,11 @@ public:
   auto get_mesh_transform_id(this const Scene& self, flecs::entity entity) -> option<GPU::TransformID>;
   auto get_entity_transform(GPU::TransformID transform_id) const -> const GPU::Transforms*;
 
+  // only queues the entity, `resolve_transforms` computes the world matrices of it and its subtree
   auto set_dirty(this Scene& self, flecs::entity entity) -> void;
+  auto resolve_transforms(this Scene& self) -> void;
+  // the matrix `resolve_transforms` last computed, which `prepare_render` brings up to date
+  auto get_resolved_world_transform(this const Scene& self, flecs::entity entity) -> glm::mat4;
 
   auto safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent = {}) -> std::string;
 
