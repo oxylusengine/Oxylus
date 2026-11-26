@@ -1360,20 +1360,29 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         Camera::update(cc, tc, ri->get_viewport_size());
     });
 
-  self.world.system<SpriteComponent>("sprite_aabb")
+  // the cvar is checked once per frame rather than per entity, and an iterator left unfinished has to
+  // be finalized or its tables stay locked
+  const auto draw_bounding_boxes = [&self](flecs::iter& it) {
+    if (!self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+      it.fini();
+      return;
+    }
+
+    while (it.next()) {
+      it.each();
+    }
+  };
+
+  self.world.system<const SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
-    .each([&self](const flecs::entity entity, SpriteComponent& sprite) {
-      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
-        self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
-      }
+    .run(draw_bounding_boxes, [&self](const SpriteComponent& sprite) {
+      self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
     });
 
-  self.world.system<MeshComponent>("mesh_aabb")
+  self.world.system<const MeshComponent>("mesh_aabb")
     .kind(flecs::PostUpdate)
-    .each([&self](const flecs::entity entity, MeshComponent& mc) {
-      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
-        self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
-      }
+    .run(draw_bounding_boxes, [&self](const MeshComponent& mc) {
+      self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
     });
 
   self.world.system<SpriteComponent, SpriteAnimationComponent>("sprite_animation_update")
