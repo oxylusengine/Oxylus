@@ -215,6 +215,8 @@ public:
   // parallel to `gpu_meshes`, and unlike the rest of these it is refreshed every frame
   std::vector<u64> gpu_mesh_blas_addresses = {};
   std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
+  // `mesh_instances` slot index to its entry in `gpu_mesh_instances`, ~0 for a free slot
+  std::vector<u32> gpu_mesh_instance_index_by_slot = {};
   std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};

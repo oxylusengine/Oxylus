@@ -1681,7 +1681,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
     auto& blas_addresses = self.gpu_mesh_blas_addresses;
     auto& mesh_sources = self.gpu_mesh_sources;
     auto& gpu_mesh_instances = self.gpu_mesh_instances;
-    auto mesh_slot_to_gpu_index = ankerl::unordered_dense::map<u32, u32>();
+    auto& gpu_index_by_slot = self.gpu_mesh_instance_index_by_slot;
     const auto meshes_were_dirty = self.meshes_dirty;
 
     if (self.meshes_dirty) {
@@ -1691,7 +1691,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       gpu_mesh_instances.clear();
       self.skinned_mesh_instances.clear();
       self.skinned_vertex_total = 0;
-      auto mesh_instances = self.mesh_instances.slots_unsafe();
+      gpu_index_by_slot.assign(self.mesh_instances.capacity(), ~0_u32);
       auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
 
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
@@ -1738,7 +1738,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
         gpu_mesh_instance.layer_mask = mesh_instance.layer_mask;
 
         const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
-        mesh_slot_to_gpu_index[static_cast<u32>(index)] = gpu_index;
+        gpu_index_by_slot[index] = gpu_index;
 
         const auto animator = self.world.entity(mesh_instance.animator_entity);
         const auto animation_it = mesh_instance.animator_entity != 0
@@ -1767,19 +1767,14 @@ auto Scene::prepare_render(this Scene& self) -> void {
 
       self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
       self.max_meshlet_instance_count = max_meshlet_instance_count;
-    } else if (!self.dirty_mesh_instances.empty()) {
-      u32 gpu_idx = 0;
-      self.mesh_instances.for_each_active([&](usize slot_index, const MeshInstance&) {
-        mesh_slot_to_gpu_index[static_cast<u32>(slot_index)] = gpu_idx++;
-      });
     }
 
     auto dirty_mesh_instance_gpu_indices = std::vector<u32>();
     dirty_mesh_instance_gpu_indices.reserve(self.dirty_mesh_instances.size() + self.skinned_mesh_instances.size());
     for (const auto mesh_instance_id : self.dirty_mesh_instances) {
       const auto slot_index = SlotMap_decode_id(mesh_instance_id).index;
-      if (const auto it = mesh_slot_to_gpu_index.find(slot_index); it != mesh_slot_to_gpu_index.end()) {
-        dirty_mesh_instance_gpu_indices.push_back(it->second);
+      if (slot_index < gpu_index_by_slot.size() && gpu_index_by_slot[slot_index] != ~0_u32) {
+        dirty_mesh_instance_gpu_indices.push_back(gpu_index_by_slot[slot_index]);
       }
     }
 
