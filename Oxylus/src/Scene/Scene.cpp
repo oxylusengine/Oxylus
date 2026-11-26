@@ -509,6 +509,36 @@ auto world_pose_to_local(flecs::entity entity, glm::vec3& position, glm::quat& r
   glm::decompose(local, scale, rotation, position, skew, perspective);
 }
 
+// a body at rest blends between two equal poses, and mix/slerp of equal endpoints still drifts by an
+// ulp as alpha changes, so it is taken as is or the transform is re-dirtied every frame
+static auto blend_physics_pose(
+  const glm::vec3& previous_position,
+  const glm::quat& previous_rotation,
+  const glm::vec3& position,
+  const glm::quat& rotation,
+  const f32 alpha
+) -> std::pair<glm::vec3, glm::quat> {
+  if (previous_position == position && previous_rotation == rotation) {
+    return {position, rotation};
+  }
+
+  return {glm::mix(previous_position, position, alpha), glm::slerp(previous_rotation, rotation, alpha)};
+}
+
+// only an actual change is written, `modified` re-uploads the transform, re-dirties every child and
+// invalidates the cached shadow pages of a caster
+static auto write_physics_pose(flecs::entity entity, TransformComponent& tc, glm::vec3 position, glm::quat rotation)
+  -> void {
+  world_pose_to_local(entity, position, rotation);
+  if (position == tc.position && rotation == tc.rotation) {
+    return;
+  }
+
+  tc.position = position;
+  tc.rotation = rotation;
+  entity.modified<TransformComponent>();
+}
+
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent) -> std::string {
   ZoneScoped;
 
@@ -651,6 +681,10 @@ Scene::~Scene() {
   }
 
   rml_view.reset();
+
+  if (renderer_instance) {
+    renderer_instance->release_queries();
+  }
 
   // ecs_fini removes every entity still alive, and the observers that runs reach transforms, mesh_instances and the
   // rest, which are declared after the world and so would already be destroyed by the time its own destructor ran
@@ -1236,8 +1270,13 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
       const auto& body_interface = self.physics_system->GetBodyInterface();
 
-      if (!body_interface.IsActive(body->GetID()))
+      // a sleeping body holds its last pose, so the interpolation settles on it instead of blending
+      // between the last two active ticks forever
+      if (!body_interface.IsActive(body->GetID())) {
+        rb.previous_translation = rb.translation;
+        rb.previous_rotation = rb.rotation;
         return;
+      }
 
       const JPH::Vec3 position = body->GetPosition();
       const JPH::Quat rotation = body->GetRotation();
@@ -1260,16 +1299,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (!rb.runtime_body)
         return;
 
-      const f32 alpha = physics_alpha();
-
-      auto position = glm::mix(rb.previous_translation, rb.translation, alpha);
-      auto rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
-      world_pose_to_local(e, position, rotation);
-
-      tc.position = position;
-      tc.rotation = rotation;
-
-      e.modified<TransformComponent>();
+      const auto [position, rotation] = blend_physics_pose(
+        rb.previous_translation,
+        rb.previous_rotation,
+        rb.translation,
+        rb.rotation,
+        physics_alpha()
+      );
+      write_physics_pose(e, tc, position, rotation);
     });
 
   self.world.system<TransformComponent, CharacterControllerComponent>("character_controller_update")
@@ -1292,13 +1329,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      auto local_position = ch.translation;
-      auto local_rotation = ch.rotation;
-      world_pose_to_local(e, local_position, local_rotation);
-      tc.position = local_position;
-      tc.rotation = local_rotation;
-
-      e.modified<TransformComponent>();
+      write_physics_pose(e, tc, ch.translation, ch.rotation);
     });
 
   // declared after character_controller_update so a tick frame blends from the freshly recorded pair
@@ -1309,15 +1340,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      const f32 alpha = physics_alpha();
-      auto position = glm::mix(ch.previous_translation, ch.translation, alpha);
-      auto rotation = glm::slerp(ch.previous_rotation, ch.rotation, alpha);
-      world_pose_to_local(e, position, rotation);
-
-      tc.position = position;
-      tc.rotation = rotation;
-
-      e.modified<TransformComponent>();
+      const auto [position, rotation] = blend_physics_pose(
+        ch.previous_translation,
+        ch.previous_rotation,
+        ch.translation,
+        ch.rotation,
+        physics_alpha()
+      );
+      write_physics_pose(e, tc, position, rotation);
     });
 
   // -- Renderer Systems ---
@@ -1843,7 +1873,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .meshes_dirty = meshes_were_dirty,
-      .mesh_instances_dirty = meshes_were_dirty || any_skinned_advanced,
+      .skinned_mesh_instances_dirty = any_skinned_advanced,
       .dirty_transform_ids = transform_upload_ids,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .gpu_meshes = gpu_meshes,

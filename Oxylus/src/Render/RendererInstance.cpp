@@ -24,6 +24,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/Utils/PushConstants.hpp"
 #include "Render/Utils/Samplers.hpp"
+#include "RendererInstanceQueries.hpp"
 #include "Scene/Components.hpp"
 #include "Scene/Scene.hpp"
 #include "Scene/SceneGPU.hpp"
@@ -349,6 +350,7 @@ static auto reset_frame_data(FrameData& data) -> void {
   auto transforms_world = std::move(data.transforms_world);
   auto transforms_previous = std::move(data.transforms_previous);
   auto transform_runs = std::move(data.transform_runs);
+  auto mesh_instance_runs = std::move(data.mesh_instance_runs);
   auto meshes = std::move(data.meshes);
   auto mesh_instances = std::move(data.mesh_instances);
   auto blas_addresses = std::move(data.blas_addresses);
@@ -370,6 +372,7 @@ static auto reset_frame_data(FrameData& data) -> void {
   restore(data.transforms_world, transforms_world);
   restore(data.transforms_previous, transforms_previous);
   restore(data.transform_runs, transform_runs);
+  restore(data.mesh_instance_runs, mesh_instance_runs);
   restore(data.meshes, meshes);
   restore(data.mesh_instances, mesh_instances);
   restore(data.blas_addresses, blas_addresses);
@@ -492,20 +495,21 @@ static auto host_bytes(const T& value) -> std::span<const u8> {
   }
 }
 
-// `update` packs the dirty transforms into runs, which change length every frame, so the copies are
+// `update` packs dirty elements into runs, which change length every frame, so the copies are
 // recorded when the program runs
 template <typename T>
-static auto record_transform_upload(vir::Module& module, const FrameData& data, std::string_view name, vir::ValueID dst)
-  -> std::pair<vir::ValueID, vir::ValueID> {
+static auto record_run_upload(
+  vir::Module& module, const std::vector<UploadRun>& runs, std::string_view name, vir::ValueID dst
+) -> std::pair<vir::ValueID, vir::ValueID> {
   const auto staging = module.declare_buffer_var(name, vir::Access::HostWrite);
-  const auto body = module.declare_callback_var(name, [&data, src = staging, dst](vir::Recorder& recorder) -> void {
-    if (data.transform_runs.empty()) {
+  const auto body = module.declare_callback_var(name, [&runs, src = staging, dst](vir::Recorder& recorder) -> void {
+    if (runs.empty()) {
       return;
     }
 
     const auto target = recorder.buffer(dst);
     const auto source = recorder.buffer(src);
-    for (const auto& run : data.transform_runs) {
+    for (const auto& run : runs) {
       recorder.copy_buffer(
         source,
         target,
@@ -776,6 +780,8 @@ RendererInstance::RendererInstance(Scene& owner_scene, Renderer& parent_renderer
 
   rebuild_execution_order();
 }
+
+auto RendererInstance::release_queries(this RendererInstance& self) -> void { self.queries.reset(); }
 
 RendererInstance::~RendererInstance() {
   auto& render_context = *renderer.render_context;
@@ -1464,6 +1470,13 @@ auto RendererInstance::bind_frame(
     }
     program.set(prepared.transforms_previous_staging, staging.value_or(vir::Buffer{}));
   }
+  if (program.has_variable(prepared.mesh_instances_staging)) {
+    auto staging = render_context.upload_frame_buffer(host_bytes(data.mesh_instances), "mesh instances upload");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "mesh instances upload");
+    }
+    program.set(prepared.mesh_instances_staging, staging.value_or(vir::Buffer{}));
+  }
   self.bind_upload(program, prepared.meshes_upload, host_bytes(data.meshes), "meshes upload");
   self.bind_upload(program, prepared.blas_addresses_upload, host_bytes(data.blas_addresses), "blas addresses upload");
   self.bind_upload(
@@ -1472,7 +1485,6 @@ auto RendererInstance::bind_frame(
     host_bytes(data.skinned_blas_addresses),
     "skinned blas addresses upload"
   );
-  self.bind_upload(program, prepared.mesh_instances_upload, host_bytes(data.mesh_instances), "mesh instances upload");
   self.bind_upload(
     program,
     prepared.skinning_transforms_upload,
@@ -1893,12 +1905,14 @@ auto RendererInstance::record_frame(
   auto& values = recording.values;
   prepared.transforms_world = module.declare_buffer_var("transforms world", SCENE_BUFFER_REST);
   prepared.transforms_previous = module.declare_buffer_var("transforms previous", SCENE_BUFFER_REST);
-  std::tie(
-    values.transforms_world,
-    prepared.transforms_world_staging
-  ) = record_transform_upload<GPU::TransformWorld>(module, data, "transforms world upload", prepared.transforms_world);
-  std::tie(values.transforms_previous, prepared.transforms_previous_staging) = record_transform_upload<
-    GPU::TransformPrevious>(module, data, "transforms previous upload", prepared.transforms_previous);
+  std::tie(values.transforms_world, prepared.transforms_world_staging) = record_run_upload<GPU::TransformWorld>(
+    module,
+    data.transform_runs,
+    "transforms world upload",
+    prepared.transforms_world
+  );
+  std::tie(values.transforms_previous, prepared.transforms_previous_staging) = record_run_upload<
+    GPU::TransformPrevious>(module, data.transform_runs, "transforms previous upload", prepared.transforms_previous);
 
   prepared.meshes = module.declare_buffer_var("meshes", SCENE_BUFFER_REST);
   prepared.blas_addresses = module.declare_buffer_var("blas addresses", SCENE_BUFFER_REST);
@@ -1920,11 +1934,11 @@ auto RendererInstance::record_frame(
     prepared.skinned_blas_addresses,
     prepared.skinned_blas_addresses_upload
   );
-  values.mesh_instances = record_upload(
+  std::tie(values.mesh_instances, prepared.mesh_instances_staging) = record_run_upload<GPU::MeshInstance>(
     module,
+    data.mesh_instance_runs,
     "mesh instances upload",
-    prepared.mesh_instances,
-    prepared.mesh_instances_upload
+    prepared.mesh_instances
   );
   values.skinning_transforms = record_upload(
     module,
@@ -3217,6 +3231,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   self.gpu_scene_flags = {};
   reset_frame_data(self.frame_data);
 
+  if (!self.queries) {
+    self.queries = RendererInstanceQueries::create(self.scene.world);
+  }
+
   CameraComponent current_camera = {};
   CameraComponent frozen_camera = {};
   const auto freeze_culling = static_cast<bool>(cvar.cvar_freeze_culling_frustum.get());
@@ -3225,32 +3243,29 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   auto found_active_camera = false;
   flecs::entity_t camera_entity = 0;
 
-  self.scene.world
-    .query_builder<const TransformComponent, const CameraComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const CameraComponent& c) {
-      if (freeze_culling && !self.saved_camera) {
-        self.saved_camera = true;
-        frozen_camera = current_camera;
-      } else if (!freeze_culling && self.saved_camera) {
-        self.saved_camera = false;
-      }
+  self.queries->cameras.each([&](flecs::entity e, const TransformComponent& tc, const CameraComponent& c) {
+    if (freeze_culling && !self.saved_camera) {
+      self.saved_camera = true;
+      frozen_camera = current_camera;
+    } else if (!freeze_culling && self.saved_camera) {
+      self.saved_camera = false;
+    }
 
-      if (
-        static_cast<bool>(cvar.cvar_freeze_culling_frustum.get()) &&
-        static_cast<bool>(cvar.cvar_draw_camera_frustum.get())
-      ) {
-        const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
-        self.scene.debug_renderer
-          .draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
-      }
+    if (
+      static_cast<bool>(cvar.cvar_freeze_culling_frustum.get()) &&
+      static_cast<bool>(cvar.cvar_draw_camera_frustum.get())
+    ) {
+      const auto proj = frozen_camera.get_projection_matrix() * frozen_camera.get_view_matrix();
+      self.scene.debug_renderer
+        .draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
+    }
 
-      if (c.active || !found_active_camera) {
-        current_camera = c;
-        camera_entity = e.id();
-        found_active_camera = c.active;
-      }
-    });
+    if (c.active || !found_active_camera) {
+      current_camera = c;
+      camera_entity = e.id();
+      found_active_camera = c.active;
+    }
+  });
 
   CameraComponent cam = freeze_culling ? frozen_camera : current_camera;
 
@@ -3300,114 +3315,104 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // rank lights before assigning the limited shadow slots
   ankerl::svector<PendingLight, 32> pending_lights = {};
 
-  self.scene.world
-    .query_builder<const TransformComponent, const LightComponent>() //
-    .build()
-    .each([&self, &pending_lights](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
-      if (!e.enabled()) {
-        return;
-      }
+  self.queries->lights.each([&self,
+                             &pending_lights](flecs::entity e, const TransformComponent& tc, const LightComponent& lc) {
+    if (!e.enabled()) {
+      return;
+    }
 
-      const auto world_transform = self.scene.get_world_transform(e);
-      const auto world_position = world_transform[3];
-      const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
+    const auto world_transform = self.scene.get_world_transform(e);
+    const auto world_position = world_transform[3];
+    const auto world_forward = glm::normalize(glm::mat3(world_transform) * glm::vec3(0.0f, 0.0f, -1.0f));
 
-      const auto* contact = e.try_get<ContactShadowsComponent>();
-      const auto strength = lc.cast_shadows && contact ? std::clamp(contact->strength, 0.0f, 1.0f) : 0.0f;
-      if (lc.type == LightComponent::LightType::Directional) {
-        self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
-        self.directional_light.color = lc.color;
-        self.directional_light.intensity = lc.intensity;
-        self.sun_direction_changed = world_forward != self.previous_sun_direction;
-        self.previous_sun_direction = world_forward;
-        self.directional_light.direction = world_forward;
-        self.first_clipmap_width = lc.first_clipmap_width;
-        self.clipmap_selection_bias = lc.clipmap_selection_bias;
+    const auto* contact = e.try_get<ContactShadowsComponent>();
+    const auto strength = lc.cast_shadows && contact ? std::clamp(contact->strength, 0.0f, 1.0f) : 0.0f;
+    if (lc.type == LightComponent::LightType::Directional) {
+      self.gpu_scene_flags |= GPU::SceneFlags::HasDirectionalLight;
+      self.directional_light.color = lc.color;
+      self.directional_light.intensity = lc.intensity;
+      self.sun_direction_changed = world_forward != self.previous_sun_direction;
+      self.previous_sun_direction = world_forward;
+      self.directional_light.direction = world_forward;
+      self.first_clipmap_width = lc.first_clipmap_width;
+      self.clipmap_selection_bias = lc.clipmap_selection_bias;
 
-        self.directional_light_cast_shadows = lc.cast_shadows;
-        self.directional_contact_shadow_strength = strength;
-      } else {
-        const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
-        const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
+      self.directional_light_cast_shadows = lc.cast_shadows;
+      self.directional_contact_shadow_strength = strength;
+    } else {
+      const auto kind = lc.type == LightComponent::LightType::Spot ? GPU::LightKind::Spot : GPU::LightKind::Point;
+      const auto direction = lc.type == LightComponent::LightType::Spot ? world_forward : glm::vec3(0.0f);
 
-        pending_lights.emplace_back(
-          PendingLight{
-            .light =
-              GPU::Light{
-                .position = world_position,
-                .intensity = lc.intensity,
-                .color = lc.color,
-                .range = lc.radius,
-                .direction = direction,
-                .inner_cone_angle = lc.inner_cone_angle,
-                .outer_cone_angle = lc.outer_cone_angle,
-                .kind = kind,
-                .shadow_map_index = -1,
-                .contact_shadow_strength = strength,
-              },
-            .entity_id = static_cast<u64>(e.id()),
-            .cast_shadows = lc.cast_shadows,
-          }
-        );
-      }
-    });
+      pending_lights.emplace_back(
+        PendingLight{
+          .light =
+            GPU::Light{
+              .position = world_position,
+              .intensity = lc.intensity,
+              .color = lc.color,
+              .range = lc.radius,
+              .direction = direction,
+              .inner_cone_angle = lc.inner_cone_angle,
+              .outer_cone_angle = lc.outer_cone_angle,
+              .kind = kind,
+              .shadow_map_index = -1,
+              .contact_shadow_strength = strength,
+            },
+          .entity_id = static_cast<u64>(e.id()),
+          .cast_shadows = lc.cast_shadows,
+        }
+      );
+    }
+  });
 
   // queried apart from the lights: an environment does not need a light on the same entity, and
   // riding along with one meant a scene that lit itself any other way silently lost its sky
-  self.scene.world
-    .query_builder<const AtmosphereComponent>() //
-    .build()
-    .each([&self](flecs::entity e, const AtmosphereComponent& atmos_info) {
-      if (!e.enabled()) {
-        return;
-      }
+  self.queries->atmospheres.each([&self](flecs::entity e, const AtmosphereComponent& atmos_info) {
+    if (!e.enabled()) {
+      return;
+    }
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
+    self.gpu_scene_flags |= GPU::SceneFlags::HasAtmosphere;
 
-      self.atmosphere.rayleigh_scatter = atmos_info.rayleigh_scattering * 1e-3f;
-      self.atmosphere.mie_scatter = atmos_info.mie_scattering * 1e-3f;
-      self.atmosphere.mie_extinction = atmos_info.mie_extinction * 1e-3f;
-      self.atmosphere.mie_asymmetry = atmos_info.mie_asymmetry;
-      self.atmosphere.ozone_absorption = atmos_info.ozone_absorption * 1e-3f;
-      self.atmosphere.base_altitude_km = atmos_info.base_altitude_km;
-      self.atmosphere.rayleigh_layer_0 = to_gpu_layer(atmos_info.rayleigh_layer_0);
-      self.atmosphere.rayleigh_layer_1 = to_gpu_layer(atmos_info.rayleigh_layer_1);
-      self.atmosphere.mie_layer_0 = to_gpu_layer(atmos_info.mie_layer_0);
-      self.atmosphere.mie_layer_1 = to_gpu_layer(atmos_info.mie_layer_1);
-      self.atmosphere.ozone_layer_0 = to_gpu_layer(atmos_info.ozone_layer_0);
-      self.atmosphere.ozone_layer_1 = to_gpu_layer(atmos_info.ozone_layer_1);
-      self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
-      self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
-      self.atmosphere.sky_view_lut_size = to_lut_size(self.sky_view_lut_extent);
-      self.atmosphere.aerial_perspective_lut_size = to_lut_size(self.sky_aerial_perspective_lut_extent);
-      self.atmosphere.transmittance_lut_size = to_lut_size(self.sky_transmittance_lut.get_extent());
-      self.atmosphere.multiscattering_lut_size = to_lut_size(self.sky_multiscatter_lut.get_extent());
-    });
+    self.atmosphere.rayleigh_scatter = atmos_info.rayleigh_scattering * 1e-3f;
+    self.atmosphere.mie_scatter = atmos_info.mie_scattering * 1e-3f;
+    self.atmosphere.mie_extinction = atmos_info.mie_extinction * 1e-3f;
+    self.atmosphere.mie_asymmetry = atmos_info.mie_asymmetry;
+    self.atmosphere.ozone_absorption = atmos_info.ozone_absorption * 1e-3f;
+    self.atmosphere.base_altitude_km = atmos_info.base_altitude_km;
+    self.atmosphere.rayleigh_layer_0 = to_gpu_layer(atmos_info.rayleigh_layer_0);
+    self.atmosphere.rayleigh_layer_1 = to_gpu_layer(atmos_info.rayleigh_layer_1);
+    self.atmosphere.mie_layer_0 = to_gpu_layer(atmos_info.mie_layer_0);
+    self.atmosphere.mie_layer_1 = to_gpu_layer(atmos_info.mie_layer_1);
+    self.atmosphere.ozone_layer_0 = to_gpu_layer(atmos_info.ozone_layer_0);
+    self.atmosphere.ozone_layer_1 = to_gpu_layer(atmos_info.ozone_layer_1);
+    self.atmosphere.aerial_perspective_start_km = atmos_info.aerial_perspective_start_km;
+    self.atmosphere.aerial_perspective_exposure = atmos_info.aerial_perspective_exposure;
+    self.atmosphere.sky_view_lut_size = to_lut_size(self.sky_view_lut_extent);
+    self.atmosphere.aerial_perspective_lut_size = to_lut_size(self.sky_aerial_perspective_lut_extent);
+    self.atmosphere.transmittance_lut_size = to_lut_size(self.sky_transmittance_lut.get_extent());
+    self.atmosphere.multiscattering_lut_size = to_lut_size(self.sky_multiscatter_lut.get_extent());
+  });
 
-  self.scene.world
-    .query_builder<const SkyComponent>() //
-    .build()
-    .each([&self](flecs::entity e, const SkyComponent& sky_info) {
-      if (!e.enabled()) {
-        return;
-      }
+  self.queries->skies.each([&self](flecs::entity e, const SkyComponent& sky_info) {
+    if (!e.enabled()) {
+      return;
+    }
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
+    self.gpu_scene_flags |= GPU::SceneFlags::HasSky;
 
-      self.sky_data.solid_color = sky_info.solid_color;
-      self.sky_data.ambient_color = sky_info.ambient_color;
-      self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
-    });
+    self.sky_data.solid_color = sky_info.solid_color;
+    self.sky_data.ambient_color = sky_info.ambient_color;
+    self.sky_data.has_texture = static_cast<bool>(sky_info.texture);
+  });
 
   self.camera_data.fog = {};
   self.volumetric_fog_params = {};
   self.fog_volumes.clear();
   {
     auto is_fog_found = false;
-    self.scene.world
-      .query_builder<const TransformComponent, const HeightFogComponent>() //
-      .build()
-      .each([&self, &is_fog_found](flecs::entity e, const TransformComponent&, const HeightFogComponent& c) {
+    self.queries->height_fogs.each(
+      [&self, &is_fog_found](flecs::entity e, const TransformComponent&, const HeightFogComponent& c) {
         // volumetric fog with no height fog of its own still draws its fog volumes
         if (is_fog_found || !e.enabled() || (c.density <= 0.0f && !c.volumetric)) {
           return;
@@ -3466,7 +3471,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
             .horizon_darkening = glm::smoothstep(-0.1f, 0.3f, self.directional_light.direction.y),
           };
         }
-      });
+      }
+    );
 
     ankerl::svector<f32, GPU::MAX_FOG_VOLUMES> fog_volume_distances = {};
     if (self.camera_data.fog.volumetric_distance > 0.0f) {
@@ -3474,45 +3480,42 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       auto froxel_camera = cam;
       froxel_camera.far_clip = std::min(cam.far_clip, self.camera_data.fog.volumetric_distance);
       const auto frustum = Camera::get_frustum(froxel_camera, cam.position);
-      self.scene.world
-        .query_builder<const TransformComponent, const FogVolumeComponent>() //
-        .build()
-        .each([&](flecs::entity e, const TransformComponent&, const FogVolumeComponent& c) {
-          if (!e.enabled() || c.density <= 0.0f) {
-            return;
-          }
+      self.queries->fog_volumes.each([&](flecs::entity e, const TransformComponent&, const FogVolumeComponent& c) {
+        if (!e.enabled() || c.density <= 0.0f) {
+          return;
+        }
 
-          const auto world = self.scene.get_world_transform(e);
-          if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
-            return;
-          }
+        const auto world = self.scene.get_world_transform(e);
+        if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+          return;
+        }
 
-          const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
-          if (!bounds.is_on_frustum(frustum)) {
-            return;
-          }
+        const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+        if (!bounds.is_on_frustum(frustum)) {
+          return;
+        }
 
-          const auto noise_frequency = c.noise_scale > 0.0f ? 1.0f / c.noise_scale : 0.0f;
-          const auto period = static_cast<f64>(GPU::FOG_NOISE_PERIOD);
-          auto noise_offset = glm::vec3(0.0f);
-          for (auto axis = 0; axis < 3; axis++) {
-            const auto cells = static_cast<f64>(c.wind[axis]) * static_cast<f64>(noise_frequency) * self.fog_noise_time;
-            // the noise drifts with the wind, so its lattice moves against it
-            noise_offset[axis] = static_cast<f32>(period - std::fmod(cells, period));
-          }
+        const auto noise_frequency = c.noise_scale > 0.0f ? 1.0f / c.noise_scale : 0.0f;
+        const auto period = static_cast<f64>(GPU::FOG_NOISE_PERIOD);
+        auto noise_offset = glm::vec3(0.0f);
+        for (auto axis = 0; axis < 3; axis++) {
+          const auto cells = static_cast<f64>(c.wind[axis]) * static_cast<f64>(noise_frequency) * self.fog_noise_time;
+          // the noise drifts with the wind, so its lattice moves against it
+          noise_offset[axis] = static_cast<f32>(period - std::fmod(cells, period));
+        }
 
-          self.fog_volumes.push_back({
-            .world_to_volume = glm::inverse(world),
-            .albedo = c.albedo,
-            .density = c.density,
-            .emissive = c.emissive,
-            .edge_fade = std::clamp(c.edge_fade, 0.0f, 1.0f) * 0.5f,
-            .noise_offset = noise_offset,
-            .noise_frequency = noise_frequency,
-            .noise_strength = std::clamp(c.noise_strength, 0.0f, 1.0f),
-          });
-          fog_volume_distances.push_back(glm::distance(glm::clamp(cam.position, bounds.min, bounds.max), cam.position));
+        self.fog_volumes.push_back({
+          .world_to_volume = glm::inverse(world),
+          .albedo = c.albedo,
+          .density = c.density,
+          .emissive = c.emissive,
+          .edge_fade = std::clamp(c.edge_fade, 0.0f, 1.0f) * 0.5f,
+          .noise_offset = noise_offset,
+          .noise_frequency = noise_frequency,
+          .noise_strength = std::clamp(c.noise_strength, 0.0f, 1.0f),
         });
+        fog_volume_distances.push_back(glm::distance(glm::clamp(cam.position, bounds.min, bounds.max), cam.position));
+      });
     }
 
     if (self.fog_volumes.size() > GPU::MAX_FOG_VOLUMES) {
@@ -3590,65 +3593,62 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     // Cascades of one set are emitted contiguously, finest first, because the shader walks the array
     // set by set and indexes a set's members by cascade index off its first entry.
-    self.scene.world
-      .query_builder<const TransformComponent, const ProbeVolumeComponent>() //
-      .build()
-      .each(
-        [&self,
-         camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
-          if (!e.enabled()) {
-            return;
-          }
-
-          const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
-          const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
-          const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
-          const auto center = c.follow_camera ? camera_position : anchor;
-          const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
-          const auto probe_count = counts.x * counts.y * counts.z;
-
-          auto set = ankerl::svector<GPU::ProbeVolume, GPU::DDGI_MAX_CASCADE_COUNT>{};
-          for (u32 cascade = 0; cascade < cascades; cascade++) {
-            const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
-            const auto scroll = glm::ivec3(glm::floor((center - anchor) / spacing + 0.5f));
-
-            set.emplace_back(
-              GPU::ProbeVolume{
-                .origin = anchor + glm::vec3(scroll) * spacing,
-                .spacing = spacing,
-                .probe_count = probe_count,
-                .spacing_rcp = 1.0f / spacing,
-                .cascade_index = cascade,
-                .counts = counts,
-                .cascade_count = cascades,
-                .scroll = scroll,
-                .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
-                .center = center,
-                .max_probe_distance = glm::length(spacing) * 1.5f,
-              }
-            );
-          }
-
-          const auto probe_offset = self.probe_volumes.empty()
-                                      ? 0u
-                                      : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
-
-          if (probe_offset + probe_count * cascades > GPU::DDGI_MAX_PROBE_COUNT) {
-            OX_LOG_WARN(
-              "Dropped a {} cascade probe volume, the scene is over the {} probe limit.",
-              cascades,
-              GPU::DDGI_MAX_PROBE_COUNT
-            );
-            return;
-          }
-
-          for (u32 cascade = 0; cascade < cascades; cascade++) {
-            set[cascade].probe_offset = probe_offset + cascade * probe_count;
-            self.probe_volumes.emplace_back(set[cascade]);
-            self.probe_volume_keys.emplace_back(ProbeVolumeKey{.entity = e.id(), .cascade_index = cascade});
-          }
+    self.queries->probe_volumes.each(
+      [&self,
+       camera_position = cam.position](flecs::entity e, const TransformComponent&, const ProbeVolumeComponent& c) {
+        if (!e.enabled()) {
+          return;
         }
-      );
+
+        const auto counts = glm::max(c.probe_counts, glm::uvec3(2));
+        const auto base_spacing = glm::max(c.probe_range, glm::vec3(0.01f)) / glm::vec3(counts - 1u);
+        const glm::vec3 anchor = self.scene.get_world_transform(e)[3];
+        const auto center = c.follow_camera ? camera_position : anchor;
+        const auto cascades = std::clamp(c.cascade_count, 1u, GPU::DDGI_MAX_CASCADE_COUNT);
+        const auto probe_count = counts.x * counts.y * counts.z;
+
+        auto set = ankerl::svector<GPU::ProbeVolume, GPU::DDGI_MAX_CASCADE_COUNT>{};
+        for (u32 cascade = 0; cascade < cascades; cascade++) {
+          const auto spacing = base_spacing * static_cast<f32>(1u << cascade);
+          const auto scroll = glm::ivec3(glm::floor((center - anchor) / spacing + 0.5f));
+
+          set.emplace_back(
+            GPU::ProbeVolume{
+              .origin = anchor + glm::vec3(scroll) * spacing,
+              .spacing = spacing,
+              .probe_count = probe_count,
+              .spacing_rcp = 1.0f / spacing,
+              .cascade_index = cascade,
+              .counts = counts,
+              .cascade_count = cascades,
+              .scroll = scroll,
+              .cascade_blend = std::clamp(c.cascade_blend, 0.0f, 1.0f),
+              .center = center,
+              .max_probe_distance = glm::length(spacing) * 1.5f,
+            }
+          );
+        }
+
+        const auto probe_offset = self.probe_volumes.empty()
+                                    ? 0u
+                                    : self.probe_volumes.back().probe_offset + self.probe_volumes.back().probe_count;
+
+        if (probe_offset + probe_count * cascades > GPU::DDGI_MAX_PROBE_COUNT) {
+          OX_LOG_WARN(
+            "Dropped a {} cascade probe volume, the scene is over the {} probe limit.",
+            cascades,
+            GPU::DDGI_MAX_PROBE_COUNT
+          );
+          return;
+        }
+
+        for (u32 cascade = 0; cascade < cascades; cascade++) {
+          set[cascade].probe_offset = probe_offset + cascade * probe_count;
+          self.probe_volumes.emplace_back(set[cascade]);
+          self.probe_volume_keys.emplace_back(ProbeVolumeKey{.entity = e.id(), .cascade_index = cascade});
+        }
+      }
+    );
 
     if (draw_volume_bounds) {
       for (const auto& volume : self.probe_volumes) {
@@ -3671,72 +3671,66 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     ankerl::svector<PendingDecal, 16> pending_decals = {};
     const auto frustum = Camera::get_frustum(cam, cam.position);
-    self.scene.world
-      .query_builder<const TransformComponent, const DecalComponent>() //
-      .build()
-      .each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
-        if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
+    self.queries->decals.each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
+      if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
+        return;
+      }
+
+      auto material_index = 0_u32;
+      {
+        const auto asset = asset_man.get_asset(c.material);
+        if (!asset || asset->type != AssetType::Material) {
           return;
         }
 
-        auto material_index = 0_u32;
-        {
-          const auto asset = asset_man.get_asset(c.material);
-          if (!asset || asset->type != AssetType::Material) {
-            return;
-          }
+        material_index = SlotMap_decode_id(asset->material_id).index;
+      }
 
-          material_index = SlotMap_decode_id(asset->material_id).index;
-        }
+      const auto world = self.scene.get_world_transform(e);
+      if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
+        return;
+      }
 
-        const auto world = self.scene.get_world_transform(e);
-        if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
-          return;
-        }
+      const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
+      if (!bounds.is_on_frustum(frustum)) {
+        return;
+      }
 
-        const auto bounds = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(world);
-        if (!bounds.is_on_frustum(frustum)) {
-          return;
-        }
+      const auto angle_fade_start = glm::radians(std::clamp(c.angle_fade_start, 0.0f, 180.0f));
+      const auto angle_fade_end = std::max(glm::radians(std::clamp(c.angle_fade_end, 0.0f, 180.0f)), angle_fade_start);
+      auto flags = GPU::DecalFlag::None;
+      if (c.affect_albedo) {
+        flags |= GPU::DecalFlag::AffectAlbedo;
+      }
 
-        const auto angle_fade_start = glm::radians(std::clamp(c.angle_fade_start, 0.0f, 180.0f));
-        const auto angle_fade_end = std::max(
-          glm::radians(std::clamp(c.angle_fade_end, 0.0f, 180.0f)),
-          angle_fade_start
-        );
-        auto flags = GPU::DecalFlag::None;
-        if (c.affect_albedo) {
-          flags |= GPU::DecalFlag::AffectAlbedo;
-        }
+      if (c.affect_normal) {
+        flags |= GPU::DecalFlag::AffectNormal;
+      }
 
-        if (c.affect_normal) {
-          flags |= GPU::DecalFlag::AffectNormal;
-        }
+      if (c.affect_metallic_roughness) {
+        flags |= GPU::DecalFlag::AffectMetallicRoughness;
+      }
 
-        if (c.affect_metallic_roughness) {
-          flags |= GPU::DecalFlag::AffectMetallicRoughness;
-        }
+      if (c.affect_emissive) {
+        flags |= GPU::DecalFlag::AffectEmissive;
+      }
 
-        if (c.affect_emissive) {
-          flags |= GPU::DecalFlag::AffectEmissive;
-        }
-
-        pending_decals.push_back({
-          .sort_order = c.sort_order,
-          .entity_id = static_cast<u64>(e.id()),
-          .decal = GPU::Decal{
-            .world_to_decal = glm::inverse(world),
-            .world_axis_z = glm::normalize(glm::vec3(world[2])),
-            .material_index = material_index,
-            .opacity = std::min(c.opacity, 1.0f),
-            .angle_fade_start_cos = std::cos(angle_fade_start),
-            .angle_fade_end_cos = std::cos(angle_fade_end),
-            .depth_fade = std::clamp(c.depth_fade, 0.0f, 0.5f),
-            .flags = flags,
-            .layer_mask = c.layer_mask,
-          },
-        });
+      pending_decals.push_back({
+        .sort_order = c.sort_order,
+        .entity_id = static_cast<u64>(e.id()),
+        .decal = GPU::Decal{
+          .world_to_decal = glm::inverse(world),
+          .world_axis_z = glm::normalize(glm::vec3(world[2])),
+          .material_index = material_index,
+          .opacity = std::min(c.opacity, 1.0f),
+          .angle_fade_start_cos = std::cos(angle_fade_start),
+          .angle_fade_end_cos = std::cos(angle_fade_end),
+          .depth_fade = std::clamp(c.depth_fade, 0.0f, 0.5f),
+          .flags = flags,
+          .layer_mask = c.layer_mask,
+        },
       });
+    });
 
     std::ranges::sort(pending_decals, [](const PendingDecal& a, const PendingDecal& b) {
       return a.sort_order != b.sort_order ? a.sort_order < b.sort_order : a.entity_id < b.entity_id;
@@ -3757,142 +3751,118 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.render_queue_2d.init();
 
-  self.scene.world
-    .query_builder<const TransformComponent, const SpriteComponent>() //
-    .build()
-    .each([&asset_man,
-           &s = self.scene,
-           &cam,
-           &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
-      const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
-      if (auto material = asset_man.get_asset(comp.material)) {
-        u16 flags = 0;
-        if (comp.sort_y)
-          flags |= GPU::RENDER_FLAGS_2D_SORT_Y;
-        if (comp.flip_x)
-          flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
+  self.queries->sprites.each([&asset_man, &s = self.scene, &cam, &rq2d = self.render_queue_2d](
+                               flecs::entity e,
+                               const TransformComponent& tc,
+                               const SpriteComponent& comp
+                             ) {
+    const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
+    if (auto material = asset_man.get_asset(comp.material)) {
+      u16 flags = 0;
+      if (comp.sort_y)
+        flags |= GPU::RENDER_FLAGS_2D_SORT_Y;
+      if (comp.flip_x)
+        flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
 
-        if (auto transform_id = s.get_entity_transform_id(e)) {
-          rq2d.add(
-            flags,
-            tc.position.y,
-            SlotMap_decode_id(*transform_id).index,
-            SlotMap_decode_id(material->material_id).index,
-            distance
-          );
-        } else {
-          OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
-        }
+      if (auto transform_id = s.get_entity_transform_id(e)) {
+        rq2d.add(
+          flags,
+          tc.position.y,
+          SlotMap_decode_id(*transform_id).index,
+          SlotMap_decode_id(material->material_id).index,
+          distance
+        );
+      } else {
+        OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
       }
-    });
+    }
+  });
 
-  self.scene.world
-    .query_builder<const AutoExposureComponent>() //
-    .build()
-    .each([&self](flecs::entity e, const AutoExposureComponent& c) {
-      self.gpu_scene_flags |= GPU::SceneFlags::HasEyeAdaptation;
-      self.eye_adaptation.max_exposure = c.max_exposure;
-      self.eye_adaptation.min_exposure = c.min_exposure;
-      self.eye_adaptation.adaptation_speed = c.adaptation_speed;
-      self.eye_adaptation.ev100_bias = c.ev100_bias;
-    });
+  self.queries->auto_exposures.each([&self](flecs::entity e, const AutoExposureComponent& c) {
+    self.gpu_scene_flags |= GPU::SceneFlags::HasEyeAdaptation;
+    self.eye_adaptation.max_exposure = c.max_exposure;
+    self.eye_adaptation.min_exposure = c.min_exposure;
+    self.eye_adaptation.adaptation_speed = c.adaptation_speed;
+    self.eye_adaptation.ev100_bias = c.ev100_bias;
+  });
 
-  self.scene.world
-    .query_builder<const TransformComponent, const VignetteComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const VignetteComponent& c) {
-      self.post_proces_settings.vignette_amount = c.amount;
+  self.queries->vignettes.each([&](flecs::entity e, const TransformComponent& tc, const VignetteComponent& c) {
+    self.post_proces_settings.vignette_amount = c.amount;
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasVignette;
-    });
+    self.gpu_scene_flags |= GPU::SceneFlags::HasVignette;
+  });
 
-  self.scene.world
-    .query_builder<const TransformComponent, const ChromaticAberrationComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const ChromaticAberrationComponent& c) {
+  self.queries->chromatic_aberrations.each(
+    [&](flecs::entity e, const TransformComponent& tc, const ChromaticAberrationComponent& c) {
       self.post_proces_settings.chromatic_aberration_amount = c.amount;
 
       self.gpu_scene_flags |= GPU::SceneFlags::HasChromaticAberration;
-    });
+    }
+  );
 
-  self.scene.world
-    .query_builder<const TransformComponent, const FilmGrainComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const FilmGrainComponent& c) {
-      self.post_proces_settings.film_grain_amount = c.amount;
-      self.post_proces_settings.film_grain_scale = c.scale;
-      self.post_proces_settings.film_grain_seed = render_context.num_frames % 16;
+  self.queries->film_grains.each([&](flecs::entity e, const TransformComponent& tc, const FilmGrainComponent& c) {
+    self.post_proces_settings.film_grain_amount = c.amount;
+    self.post_proces_settings.film_grain_scale = c.scale;
+    self.post_proces_settings.film_grain_seed = render_context.num_frames % 16;
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasFilmGrain;
-    });
+    self.gpu_scene_flags |= GPU::SceneFlags::HasFilmGrain;
+  });
 
-  self.scene.world
-    .query_builder<const TransformComponent, const LetterboxComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const LetterboxComponent& c) {
-      self.post_proces_settings.letterbox_amount = c.amount;
-      self.post_proces_settings.letterbox_aspect = c.target_aspect;
-      self.post_proces_settings.letterbox_color = c.color;
+  self.queries->letterboxes.each([&](flecs::entity e, const TransformComponent& tc, const LetterboxComponent& c) {
+    self.post_proces_settings.letterbox_amount = c.amount;
+    self.post_proces_settings.letterbox_aspect = c.target_aspect;
+    self.post_proces_settings.letterbox_color = c.color;
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasLetterbox;
-    });
+    self.gpu_scene_flags |= GPU::SceneFlags::HasLetterbox;
+  });
 
-  self.scene.world
-    .query_builder<const TransformComponent, const ScreenFadeComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TransformComponent& tc, const ScreenFadeComponent& c) {
-      self.post_proces_settings.fade_amount = c.amount;
-      self.post_proces_settings.fade_color = c.color;
+  self.queries->screen_fades.each([&](flecs::entity e, const TransformComponent& tc, const ScreenFadeComponent& c) {
+    self.post_proces_settings.fade_amount = c.amount;
+    self.post_proces_settings.fade_color = c.color;
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
-    });
+    self.gpu_scene_flags |= GPU::SceneFlags::HasScreenFade;
+  });
 
   auto filmic = GPU::FilmicSettings{};
-  self.scene.world
-    .query_builder<const TonemappingComponent>() //
-    .build()
-    .each([&](flecs::entity e, const TonemappingComponent& tc) {
-      self.tonemap_type = tc.tonemap_type;
-      filmic = {
-        .max_brightness = tc.max_brightness,
-        .contrast = tc.contrast,
-        .linear_start = tc.linear_start,
-        .linear_length = tc.linear_length,
-        .black_tightness = tc.black_tightness,
-        .pedestal = tc.pedestal,
-        .hue_preservation = tc.hue_preservation,
-      };
-    });
+  self.queries->tonemappings.each([&](flecs::entity e, const TonemappingComponent& tc) {
+    self.tonemap_type = tc.tonemap_type;
+    filmic = {
+      .max_brightness = tc.max_brightness,
+      .contrast = tc.contrast,
+      .linear_start = tc.linear_start,
+      .linear_length = tc.linear_length,
+      .black_tightness = tc.black_tightness,
+      .pedestal = tc.pedestal,
+      .hue_preservation = tc.hue_preservation,
+    };
+  });
 
-  self.scene.world
-    .query_builder<const ColorGradingComponent>() //
-    .build()
-    .each([&](flecs::entity e, const ColorGradingComponent& c) {
-      if (!e.enabled()) {
-        return;
+  self.queries->color_gradings.each([&](flecs::entity e, const ColorGradingComponent& c) {
+    if (!e.enabled()) {
+      return;
+    }
+
+    self.gpu_scene_flags |= GPU::SceneFlags::HasColorGrading;
+
+    auto user_lut_view_index = ~0u;
+    if (c.lut) {
+      if (const auto texture = asset_man.get_texture(c.lut)) {
+        user_lut_view_index = texture->get_view_index();
       }
+    }
 
-      self.gpu_scene_flags |= GPU::SceneFlags::HasColorGrading;
-
-      auto user_lut_view_index = ~0u;
-      if (c.lut) {
-        if (const auto texture = asset_man.get_texture(c.lut)) {
-          user_lut_view_index = texture->get_view_index();
-        }
-      }
-
-      self.color_grading_settings = {
-        .temperature = c.temperature,
-        .tint = c.tint,
-        .saturation = c.saturation,
-        .contrast = c.contrast,
-        .lift = c.lift,
-        .gamma = c.gamma,
-        .gain = c.gain,
-        .lut_contribution = c.lut_contribution,
-        .user_lut_view_index = user_lut_view_index,
-      };
-    });
+    self.color_grading_settings = {
+      .temperature = c.temperature,
+      .tint = c.tint,
+      .saturation = c.saturation,
+      .contrast = c.contrast,
+      .lift = c.lift,
+      .gamma = c.gamma,
+      .gain = c.gain,
+      .lut_contribution = c.lut_contribution,
+      .user_lut_view_index = user_lut_view_index,
+    };
+  });
 
   self.post_proces_settings.filmic = filmic;
   self.color_grading_settings.filmic = filmic;
@@ -4024,18 +3994,65 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     "skinned blas addresses"
   );
 
-  if (info.mesh_instances_dirty || self.mesh_instances_buffer == BufferID::Invalid) {
-    ensure_buffer(render_context, self.mesh_instances_buffer, info.gpu_mesh_instances.size_bytes(), "mesh instances");
-    data.mesh_instances.assign(info.gpu_mesh_instances.begin(), info.gpu_mesh_instances.end());
+  {
+    memory::ScopedStack stack;
 
+    const auto is_instances_reallocated = ensure_buffer(
+      render_context,
+      self.mesh_instances_buffer,
+      info.gpu_mesh_instances.size_bytes(),
+      "mesh instances"
+    );
     const auto visibility_mask_size = (info.max_meshlet_instance_count + 31) / 32 * sizeof(u32);
-    ensure_buffer(
+    const auto is_mask_reallocated = ensure_buffer(
       render_context,
       self.meshlet_instance_visibility_mask_buffer,
       visibility_mask_size,
       "meshlet instance visibility mask"
     );
-    data.is_meshlet_visibility_reset = true;
+
+    // the buffer is undefined after a reallocation, so a full upload also covers a fresh buffer
+    const auto is_full_upload = info.meshes_dirty || is_instances_reallocated;
+    if (is_full_upload) {
+      data.mesh_instances.assign(info.gpu_mesh_instances.begin(), info.gpu_mesh_instances.end());
+      if (!data.mesh_instances.empty()) {
+        data.mesh_instance_runs.push_back({.src = 0, .dst = 0, .count = static_cast<u32>(data.mesh_instances.size())});
+      }
+    } else if (info.skinned_mesh_instances_dirty) {
+      auto indices = stack.alloc<u32>(info.skinned_mesh_instances.size());
+      auto index_count = 0_sz;
+      for (const auto& skinned : info.skinned_mesh_instances) {
+        if (skinned.gpu_instance_index < info.gpu_mesh_instances.size()) {
+          indices[index_count++] = skinned.gpu_instance_index;
+        }
+      }
+
+      indices = indices.first(index_count);
+      std::sort(indices.begin(), indices.end());
+      indices = indices.first(static_cast<usize>(std::unique(indices.begin(), indices.end()) - indices.begin()));
+
+      data.mesh_instances.reserve(indices.size());
+      for (const auto index : indices) {
+        data.mesh_instances.push_back(info.gpu_mesh_instances[index]);
+      }
+
+      for (auto i = 0_sz; i < indices.size();) {
+        const auto start_index = indices[i];
+        auto run_length = 1_sz;
+        while (i + run_length < indices.size() && indices[i + run_length] == start_index + run_length) {
+          ++run_length;
+        }
+
+        data.mesh_instance_runs.push_back(
+          {.src = static_cast<u32>(i), .dst = start_index, .count = static_cast<u32>(run_length)}
+        );
+        i += run_length;
+      }
+    }
+
+    if (info.meshes_dirty || is_mask_reallocated || is_instances_reallocated) {
+      data.is_meshlet_visibility_reset = true;
+    }
   }
 
   if (self.scene.terrain != nullptr && self.scene.terrain->is_baked()) {

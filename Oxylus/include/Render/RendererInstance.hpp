@@ -33,6 +33,7 @@ struct ColorBlendAttachmentState;
 
 namespace ox {
 struct RecordedFrame;
+struct RendererInstanceQueries;
 
 inline constexpr auto BASE_AMBIENT_COLOR = glm::vec3(0.02f, 0.03f, 0.04f);
 
@@ -200,9 +201,9 @@ struct RendererInstanceUpdateInfo {
   u32 max_meshlet_instance_count = 0;
 
   // the mesh and instance arrays are only rebuilt when the instance set changes, but skinned
-  // instances carry per-frame vertex pointers and bounds, so their upload runs more often
+  // instances carry per-frame vertex pointers and bounds, so only their entries upload more often
   bool meshes_dirty = false;
-  bool mesh_instances_dirty = false;
+  bool skinned_mesh_instances_dirty = false;
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
@@ -226,7 +227,7 @@ struct ParticleMeshDraw {
   u32 index_count = 0;
 };
 
-struct TransformRun {
+struct UploadRun {
   u32 src = 0;
   u32 dst = 0;
   u32 count = 0;
@@ -248,11 +249,13 @@ struct FrameData {
   // projected transforms packed per run, no runs means no upload
   std::vector<GPU::TransformWorld> transforms_world = {};
   std::vector<GPU::TransformPrevious> transforms_previous = {};
-  std::vector<TransformRun> transform_runs = {};
+  std::vector<UploadRun> transform_runs = {};
 
   // meshes and instances are only filled when they changed
   std::vector<GPU::Mesh> meshes = {};
+  // packed per run like transforms: everything, only the skinned entries, or nothing
   std::vector<GPU::MeshInstance> mesh_instances = {};
+  std::vector<UploadRun> mesh_instance_runs = {};
   std::vector<u64> blas_addresses = {};
   // one entry per skinned instance rather than per mesh, because ten characters sharing a model
   // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
@@ -1092,7 +1095,7 @@ struct PreparedFrame {
   UploadVariables meshes_upload = {};
   UploadVariables blas_addresses_upload = {};
   UploadVariables skinned_blas_addresses_upload = {};
-  UploadVariables mesh_instances_upload = {};
+  vir::ValueID mesh_instances_staging = vir::ValueID::Invalid;
   UploadVariables skinning_transforms_upload = {};
   UploadVariables lights_upload = {};
   vir::ValueID is_meshlet_visibility_reset = vir::ValueID::Invalid;
@@ -1225,6 +1228,9 @@ public:
   ) -> void;
 
   auto clear_stages(this RendererInstance& self) -> void;
+
+  // has to run before the scene's world is released, the cached queries are finalized against it
+  auto release_queries(this RendererInstance& self) -> void;
 
   // renders into `target`, which the frame leaves at `vir::Access::FragmentSampled`
   auto render(
@@ -1486,6 +1492,7 @@ public:
   FrameData frame_data = {};
 
 private:
+  std::unique_ptr<RendererInstanceQueries> queries;
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
   std::vector<std::vector<usize>> before_callbacks;

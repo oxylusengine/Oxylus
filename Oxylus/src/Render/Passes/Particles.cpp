@@ -5,6 +5,7 @@
 #include <utility>
 #include <vir/RenderGraph.hpp>
 
+#include "../RendererInstanceQueries.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/ParticleEmitterProgram.hpp"
 #include "Core/App.hpp"
@@ -79,10 +80,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
   auto pool_offset = 0_u32;
   auto layout_changed = false;
 
-  self.scene.world
-    .query_builder<const TransformComponent, const ParticleSystemComponent>() //
-    .build()
-    .each([&](flecs::entity entity, const TransformComponent&, const ParticleSystemComponent& component) {
+  self.queries->particle_systems.each(
+    [&](flecs::entity entity, const TransformComponent&, const ParticleSystemComponent& component) {
       const auto emitter_it = self.scene.entity_particle_emitters_map.find(entity);
       if (emitter_it == self.scene.entity_particle_emitters_map.end()) {
         return;
@@ -319,7 +318,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       data.particle_total_spawn += spawn_count;
       data.particle_sort_enabled = data.particle_sort_enabled || snapshot.render.sort;
       data.particle_emitters.emplace_back(gpu_emitter);
-    });
+    }
+  );
 
   if (data.particle_emitters.empty()) {
     return;
