@@ -175,6 +175,9 @@ struct BoundCameraPose {
 // nothing here is reflectable
 struct CinematicInstance {
   UUID cinematic_uuid = {};
+  // what `cinematic_uuid` resolves to, refreshed from the player's handle every tick, so a handle the
+  // scene loader resolves late is picked up and nothing goes through the registry per frame
+  CinematicID cinematic_id = CinematicID::Invalid;
   f32 current_time = 0.0f;
   bool bound = false;
   bool was_playing = false;
@@ -195,6 +198,8 @@ public:
   struct GPUMeshSource {
     ModelID model_id = ModelID::Invalid;
     u32 mesh_node_index = 0;
+    // the length of the visibility range each of its instances reserved
+    u32 lod0_meshlet_count = 0;
   };
 
   std::string scene_name = "Untitled";
@@ -237,7 +242,8 @@ public:
   std::vector<AnimationInstance*> animation_evaluation_queue = {};
   u32 skinned_vertex_total = 0;
 
-  // rebuilt only when `meshes_dirty`, though skinned entries are patched in place every frame
+  // rebuilt when `meshes_dirty`, otherwise static instances are appended and swap-removed in place.
+  // Skinned entries are patched in place every frame
   std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<GPUMeshSource> gpu_mesh_sources = {};
   // parallel to `gpu_meshes`, and unlike the rest of these it is refreshed every frame
@@ -245,6 +251,18 @@ public:
   std::vector<GPU::MeshInstance> gpu_mesh_instances = {};
   // `mesh_instances` slot index to its entry in `gpu_mesh_instances`, ~0 for a free slot
   std::vector<u32> gpu_mesh_instance_index_by_slot = {};
+  // the reverse, parallel to `gpu_mesh_instances`
+  std::vector<u32> gpu_mesh_instance_slot_by_index = {};
+  // kept between rebuilds so an added instance finds its mesh's entry
+  ankerl::unordered_dense::map<std::pair<UUID, usize>, u32> gpu_mesh_index_by_source = {};
+  // instance changes since the tables were last brought up to date
+  std::vector<u32> removed_mesh_instance_slots = {};
+  std::vector<MeshInstanceID> added_mesh_instances = {};
+  // entries changed in place that no submitted frame has uploaded yet
+  std::vector<u32> changed_mesh_instance_indices = {};
+  bool is_gpu_meshes_changed = false;
+  // visibility ranges of removed instances, a rebuild packs them away
+  u32 unused_meshlet_instance_count = 0;
   std::vector<SkinnedMeshInstance> skinned_mesh_instances = {};
 
   SlotMap<GPU::Light, GPU::LightID> lights = {};

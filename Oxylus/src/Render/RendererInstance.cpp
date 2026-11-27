@@ -1079,6 +1079,7 @@ auto RendererInstance::render(
   self.bind_frame(program->program, program->prepared);
   const auto ticket = render_context.execute(program->program);
   self.is_skinning_synced = ticket.has_value();
+  self.is_mesh_instances_synced = ticket.has_value();
   if (ticket && shape.has_atmosphere) {
     self.atmosphere_luts_dirty = false;
   }
@@ -4030,7 +4031,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     }
   }
 
-  if (info.meshes_dirty || self.meshes_buffer == BufferID::Invalid) {
+  if (info.meshes_dirty || info.is_gpu_meshes_changed || self.meshes_buffer == BufferID::Invalid) {
     ensure_buffer(render_context, self.meshes_buffer, info.gpu_meshes.size_bytes(), "meshes");
     data.meshes.assign(info.gpu_meshes.begin(), info.gpu_meshes.end());
   }
@@ -4080,18 +4081,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     );
 
     // the buffer is undefined after a reallocation, so a full upload also covers a fresh buffer
-    const auto is_full_upload = info.meshes_dirty || is_instances_reallocated;
+    const auto is_full_upload = info.meshes_dirty || is_instances_reallocated || !self.is_mesh_instances_synced;
+    self.is_mesh_instances_synced = false;
     if (is_full_upload) {
       data.mesh_instances.assign(info.gpu_mesh_instances.begin(), info.gpu_mesh_instances.end());
       if (!data.mesh_instances.empty()) {
         data.mesh_instance_runs.push_back({.src = 0, .dst = 0, .count = static_cast<u32>(data.mesh_instances.size())});
       }
-    } else if (info.skinned_mesh_instances_dirty) {
-      auto indices = stack.alloc<u32>(info.skinned_mesh_instances.size());
+    } else if (info.skinned_mesh_instances_dirty || !info.changed_mesh_instance_indices.empty()) {
+      const auto skinned_count = info.skinned_mesh_instances_dirty ? info.skinned_mesh_instances.size() : 0_sz;
+      auto indices = stack.alloc<u32>(skinned_count + info.changed_mesh_instance_indices.size());
       auto index_count = 0_sz;
-      for (const auto& skinned : info.skinned_mesh_instances) {
+      for (const auto& skinned : info.skinned_mesh_instances.first(skinned_count)) {
         if (skinned.gpu_instance_index < info.gpu_mesh_instances.size()) {
           indices[index_count++] = skinned.gpu_instance_index;
+        }
+      }
+
+      // a later removal may have shrunk the array past an index changed before it
+      for (const auto index : info.changed_mesh_instance_indices) {
+        if (index < info.gpu_mesh_instances.size()) {
+          indices[index_count++] = index;
         }
       }
 
@@ -4118,7 +4128,8 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       }
     }
 
-    if (info.meshes_dirty || is_mask_reallocated || is_instances_reallocated) {
+    // appended instances take ranges past every one in use, whose bits the last reset cleared
+    if (is_full_upload || is_mask_reallocated) {
       data.is_meshlet_visibility_reset = true;
     }
   }

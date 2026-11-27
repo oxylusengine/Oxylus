@@ -141,6 +141,10 @@ than an ECS wrapper — it also owns the GPU-side mirrors of scene state:
 - `SlotMap<GPU::Transforms, GPU::TransformID> transforms` plus `entity_transforms_map` and
   `dirty_transforms`; `set_dirty(entity)` marks a transform for re-upload.
 - `mesh_instances`, `lights`, `gpu_materials`, and `dirty_mesh_instances` similarly feed the renderer.
+  `attach_mesh`/`detach_mesh` queue their change, and `prepare_render` appends a static instance to the
+  GPU tables or swap-removes it in place. `meshes_dirty` forces the full rebuild, which is also the
+  fallback for anything skinned, a mesh entry that no longer matches its model, and a visibility mask
+  more than half holes. Don't set it for a plain spawn or despawn.
 - A `RendererInstance` (one per scene) and a Jolt `PhysicsSystem` with contact/activation listeners.
 - `ComponentDB`, which tracks flecs component ids imported from flecs modules
   (`CoreComponentsModule` in `Scene/Components.hpp`) so serialization and the inspector know what

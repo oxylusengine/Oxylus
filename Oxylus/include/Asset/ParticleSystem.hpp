@@ -150,6 +150,9 @@ enum class ParticleEmitterID : u64 { Invalid = std::numeric_limits<u64>::max() }
 // scene JSON.
 struct ParticleEmitterState {
   UUID asset = {};
+  // the payload `asset` resolves to, refreshed whenever the component is set. Stable while the
+  // component's handle holds the asset, since an edit replaces the payload in the same slot
+  ParticleSystemID asset_id = ParticleSystemID::Invalid;
   bool playing = false;
   f32 time = 0.0f;
   f32 spawn_accumulator = 0.0f;

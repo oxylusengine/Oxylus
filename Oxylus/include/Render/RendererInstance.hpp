@@ -222,6 +222,9 @@ struct RendererInstanceUpdateInfo {
   std::span<u64> gpu_mesh_blas_addresses = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
   std::span<u32> dirty_mesh_instance_indices = {};
+  // entries appended or moved without a rebuild, uploaded on their own
+  std::span<const u32> changed_mesh_instance_indices = {};
+  bool is_gpu_meshes_changed = false;
 
   std::span<const SkinnedMeshInstance> skinned_mesh_instances = {};
   std::span<GPU::SkinningTransform> skinning_transforms = {};
@@ -1636,6 +1639,8 @@ private:
   // false from `update` until that frame submits, so a frame that never ran makes the next one
   // upload and skin everything instead of only what moved
   bool is_skinning_synced = false;
+  // the same for the mesh instance buffer, so a frame that never ran makes the next one upload it whole
+  bool is_mesh_instances_synced = false;
   // in the same quantized format as the bind pose, so every downstream consumer works by pointer
   // swap alone
   BufferID skinned_vertices_buffer = BufferID::Invalid;

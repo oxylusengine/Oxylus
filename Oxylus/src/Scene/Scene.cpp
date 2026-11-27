@@ -288,6 +288,180 @@ static auto unlink_skinned_mesh(Scene& scene, flecs::entity entity) -> void {
   scene.meshes_dirty = true;
 }
 
+// a rebuild covers every change, and a scene that never renders never applies the queue, so neither queues
+static auto is_queueing_mesh_instance_changes(Scene& scene) -> bool {
+  if (scene.get_renderer_instance() == nullptr || scene.meshes_dirty) {
+    return false;
+  }
+
+  // past this a rebuild is cheaper than replaying the changes one by one
+  const auto queued = scene.removed_mesh_instance_slots.size() + scene.added_mesh_instances.size();
+  if (queued > scene.gpu_mesh_instances.size() + 1024) {
+    scene.meshes_dirty = true;
+    scene.removed_mesh_instance_slots.clear();
+    scene.added_mesh_instances.clear();
+    return false;
+  }
+
+  return true;
+}
+
+static auto queue_mesh_instance_removal(Scene& scene, MeshInstanceID instance_id) -> void {
+  if (is_queueing_mesh_instance_changes(scene)) {
+    scene.removed_mesh_instance_slots.push_back(SlotMap_decode_id(instance_id).index);
+  }
+}
+
+static auto queue_mesh_instance_addition(Scene& scene, MeshInstanceID instance_id) -> void {
+  if (is_queueing_mesh_instance_changes(scene)) {
+    scene.added_mesh_instances.push_back(instance_id);
+  }
+}
+
+static auto is_skinned_gpu_mesh_instance(const Scene& scene, u32 gpu_index) -> bool {
+  const auto skinned_index = scene.gpu_mesh_instances[gpu_index].skinned_instance_index;
+  return skinned_index < scene.skinned_mesh_instances.size() &&
+         scene.skinned_mesh_instances[skinned_index].gpu_instance_index == gpu_index;
+}
+
+// the last model and material resolved, because instances of one model usually come one after another.
+// Lives for one `prepare_render`, as long as the view may be held
+struct MeshInstanceLookup {
+  UUID model_uuid = UUID(nullptr);
+  AssetView<Model> model = {};
+  ModelID model_id = ModelID::Invalid;
+  UUID material_uuid = UUID(nullptr);
+  MaterialID material_id = MaterialID::Invalid;
+};
+
+// appends one instance to the GPU tables, adding its mesh's entry on first use. Empty when the model is
+// gone, or when the entry no longer matches it (a reloaded model, or a mesh that finished uploading since),
+// which only a rebuild can fix because the entry's instances reserved their visibility ranges from it
+static auto append_gpu_mesh_instance(
+  Scene& scene, MeshInstanceLookup& lookup, u32 slot_index, const MeshInstance& mesh_instance
+) -> option<u32> {
+  auto& asset_man = App::mod<AssetManager>();
+  if (!lookup.model || lookup.model_uuid != mesh_instance.model_uuid) {
+    lookup.model.reset();
+    lookup.model_id = ModelID::Invalid;
+    {
+      // scoped, because `get_model` re-enters `get_asset` and the registry lock is not recursive
+      const auto model_asset = asset_man.get_asset(mesh_instance.model_uuid);
+      lookup.model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
+    }
+
+    lookup.model = asset_man.get_model(lookup.model_id);
+    lookup.model_uuid = mesh_instance.model_uuid;
+  }
+
+  const auto& model = lookup.model;
+  const auto model_id = lookup.model_id;
+  if (!model) {
+    return nullopt;
+  }
+
+  // a mesh's streamed fields are only written once its upload job sets its ready flag, so one still
+  // uploading reads as empty. Spawning attaches only ready meshes, this is the fallback
+  const auto is_mesh_ready = model->is_mesh_ready(mesh_instance.mesh_node_index);
+  const auto lod0_meshlet_count = is_mesh_ready ? model->lod0_meshlet_counts[mesh_instance.mesh_node_index] : 0_u32;
+  if (lookup.material_id == MaterialID::Invalid || lookup.material_uuid != mesh_instance.material_uuid) {
+    {
+      const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+      lookup.material_id = material_asset ? material_asset->material_id : MaterialID::Invalid;
+    }
+
+    if (lookup.material_id == MaterialID::Invalid) {
+      lookup.material_id = asset_man.get_null_material()->material_id;
+    }
+
+    lookup.material_uuid = mesh_instance.material_uuid;
+  }
+
+  const auto material_id = lookup.material_id;
+
+  const auto source = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
+  auto mesh_index = 0_u32;
+  if (const auto it = scene.gpu_mesh_index_by_source.find(source); it != scene.gpu_mesh_index_by_source.end()) {
+    mesh_index = it->second;
+    const auto& mesh_source = scene.gpu_mesh_sources[mesh_index];
+    if (mesh_source.model_id != model_id || mesh_source.lod0_meshlet_count != lod0_meshlet_count) {
+      return nullopt;
+    }
+  } else {
+    mesh_index = static_cast<u32>(scene.gpu_meshes.size());
+    scene.gpu_meshes.emplace_back(is_mesh_ready ? model->gpu_meshes[mesh_instance.mesh_node_index] : GPU::Mesh{});
+    scene.gpu_mesh_sources.emplace_back(
+      Scene::GPUMeshSource{
+        .model_id = model_id,
+        .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
+        .lod0_meshlet_count = lod0_meshlet_count,
+      }
+    );
+    scene.gpu_mesh_blas_addresses.emplace_back(0_u64);
+    scene.gpu_mesh_index_by_source.emplace(source, mesh_index);
+    scene.is_gpu_meshes_changed = true;
+  }
+
+  // appended past every range in use, so its bits are still clear from the last reset
+  scene.gpu_mesh_instances.emplace_back(
+    GPU::MeshInstance{
+      .mesh_index = mesh_index,
+      .lod_index = 0,
+      .material_index = SlotMap_decode_id(material_id).index,
+      .transform_index = SlotMap_decode_id(mesh_instance.transform_id).index,
+      .meshlet_instance_visibility_offset = scene.max_meshlet_instance_count,
+      .flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows : GPU::MeshInstanceFlag::None,
+      .layer_mask = mesh_instance.layer_mask,
+    }
+  );
+  scene.max_meshlet_instance_count += lod0_meshlet_count;
+
+  const auto gpu_index = static_cast<u32>(scene.gpu_mesh_instances.size() - 1);
+  auto& index_by_slot = scene.gpu_mesh_instance_index_by_slot;
+  if (slot_index >= index_by_slot.size()) {
+    index_by_slot.resize(slot_index + 1, ~0_u32);
+  }
+
+  index_by_slot[slot_index] = gpu_index;
+  scene.gpu_mesh_instance_slot_by_index.push_back(slot_index);
+  return gpu_index;
+}
+
+// swaps the last entry into the hole. False when only a rebuild can remove it: a skinned entry's index is
+// also held by the skinned tables and its skinning job
+static auto remove_gpu_mesh_instance(Scene& scene, u32 slot_index) -> bool {
+  auto& index_by_slot = scene.gpu_mesh_instance_index_by_slot;
+  if (slot_index >= index_by_slot.size() || index_by_slot[slot_index] == ~0_u32) {
+    return true;
+  }
+
+  const auto hole = index_by_slot[slot_index];
+  if (hole >= scene.gpu_mesh_instances.size()) {
+    return false;
+  }
+
+  const auto last = static_cast<u32>(scene.gpu_mesh_instances.size() - 1);
+  if (is_skinned_gpu_mesh_instance(scene, hole) || is_skinned_gpu_mesh_instance(scene, last)) {
+    return false;
+  }
+
+  const auto mesh_index = scene.gpu_mesh_instances[hole].mesh_index;
+  scene.unused_meshlet_instance_count += scene.gpu_mesh_sources[mesh_index].lod0_meshlet_count;
+  if (hole != last) {
+    // the moved entry keeps its visibility range, so what culling learned about it carries over
+    scene.gpu_mesh_instances[hole] = scene.gpu_mesh_instances[last];
+    const auto moved_slot = scene.gpu_mesh_instance_slot_by_index[last];
+    scene.gpu_mesh_instance_slot_by_index[hole] = moved_slot;
+    index_by_slot[moved_slot] = hole;
+    scene.changed_mesh_instance_indices.push_back(hole);
+  }
+
+  scene.gpu_mesh_instances.pop_back();
+  scene.gpu_mesh_instance_slot_by_index.pop_back();
+  index_by_slot[slot_index] = ~0_u32;
+  return true;
+}
+
 static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
   return scene.renderer_cvar.cvar_enable_debug_renderer.as_bool() &&
          scene.renderer_cvar.cvar_enable_physics_debug_renderer.as_bool();
@@ -1158,7 +1332,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      // the component's handle holds the reference, the emitter only names the asset
+      // the component's handle holds the reference, the emitter only names the asset. The id is taken on
+      // every set, the scene loader resolves the handle after the emitter first sees it
+      state->asset_id = static_cast<ParticleSystemID>(c.particle_system.payload_id());
       if (state->asset != c.particle_system.uuid()) {
         state->asset = c.particle_system.uuid();
         state->pool_valid = false;
@@ -1725,14 +1901,59 @@ auto Scene::prepare_render(this Scene& self) -> void {
 
   if (self.renderer_instance) {
     auto& asset_man = App::mod<AssetManager>();
-    auto meshlet_instance_visibility_offset = 0_u32;
-    auto max_meshlet_instance_count = 0_u32;
     auto& gpu_meshes = self.gpu_meshes;
     // Parallel to `gpu_meshes`, so the TLAS build can look a BLAS up by mesh index.
     auto& blas_addresses = self.gpu_mesh_blas_addresses;
     auto& mesh_sources = self.gpu_mesh_sources;
     auto& gpu_mesh_instances = self.gpu_mesh_instances;
     auto& gpu_index_by_slot = self.gpu_mesh_instance_index_by_slot;
+
+    // removals first, so an add that reuses a removed instance's slot finds it free
+    if (!self.meshes_dirty) {
+      for (const auto slot_index : self.removed_mesh_instance_slots) {
+        if (!remove_gpu_mesh_instance(self, slot_index)) {
+          self.meshes_dirty = true;
+          break;
+        }
+      }
+
+      // past half, a rebuild is cheaper than carrying a visibility mask that is mostly holes
+      if (self.unused_meshlet_instance_count * 2 > self.max_meshlet_instance_count) {
+        self.meshes_dirty = true;
+      }
+
+      auto lookup = MeshInstanceLookup();
+      for (const auto instance_id : self.added_mesh_instances) {
+        if (self.meshes_dirty) {
+          break;
+        }
+
+        const auto* mesh_instance = self.mesh_instances.slotc(instance_id);
+        if (mesh_instance == nullptr) {
+          continue;
+        }
+
+        const auto slot_index = static_cast<u32>(SlotMap_decode_id(instance_id).index);
+        if (slot_index < gpu_index_by_slot.size() && gpu_index_by_slot[slot_index] != ~0_u32) {
+          continue;
+        }
+
+        const auto gpu_index = mesh_instance->animator_entity == 0
+                                 ? append_gpu_mesh_instance(self, lookup, slot_index, *mesh_instance)
+                                 : nullopt;
+        if (!gpu_index.has_value()) {
+          self.meshes_dirty = true;
+          break;
+        }
+
+        self.changed_mesh_instance_indices.push_back(*gpu_index);
+      }
+
+      self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
+    }
+
+    self.removed_mesh_instance_slots.clear();
+    self.added_mesh_instances.clear();
     const auto meshes_were_dirty = self.meshes_dirty;
 
     if (self.meshes_dirty) {
@@ -1740,88 +1961,47 @@ auto Scene::prepare_render(this Scene& self) -> void {
       blas_addresses.clear();
       mesh_sources.clear();
       gpu_mesh_instances.clear();
+      self.gpu_mesh_index_by_source.clear();
+      self.gpu_mesh_instance_slot_by_index.clear();
+      self.changed_mesh_instance_indices.clear();
       self.skinned_mesh_instances.clear();
       self.skinned_vertex_total = 0;
+      self.max_meshlet_instance_count = 0;
+      self.unused_meshlet_instance_count = 0;
       gpu_index_by_slot.assign(self.mesh_instances.capacity(), ~0_u32);
-      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
 
+      auto lookup = MeshInstanceLookup();
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
-        auto model_id = ModelID::Invalid;
-        {
-          // scoped, because `get_model` re-enters `get_asset` and the registry lock is not recursive
-          const auto model_asset = asset_man.get_asset(mesh_instance.model_uuid);
-          model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
+        const auto gpu_index = append_gpu_mesh_instance(self, lookup, static_cast<u32>(index), mesh_instance);
+        if (!gpu_index.has_value()) {
+          return;
         }
-        const auto model = asset_man.get_model(model_id);
-        // a mesh's streamed fields are only written once its upload job sets its ready flag, so one still
-        // uploading reads as empty. Spawning attaches only ready meshes, this is the fallback
-        const auto is_mesh_ready = model->is_mesh_ready(mesh_instance.mesh_node_index);
-        const auto mesh = is_mesh_ready ? model->gpu_meshes[mesh_instance.mesh_node_index] : GPU::Mesh{};
-        const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
-        const auto material_id = material_asset ? material_asset->material_id
-                                                : asset_man.get_null_material()->material_id;
-
-        auto unique_mesh = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
-        auto mesh_index = 0_u32;
-        if (auto it = unique_mesh_to_gpu_mesh.find(unique_mesh); it != unique_mesh_to_gpu_mesh.end()) {
-          mesh_index = it->second;
-        } else {
-          mesh_index = static_cast<u32>(gpu_meshes.size());
-          gpu_meshes.emplace_back(mesh);
-          mesh_sources.emplace_back(
-            GPUMeshSource{
-              .model_id = model_id,
-              .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
-            }
-          );
-          blas_addresses.emplace_back(0_u64);
-          unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
-        }
-
-        auto lod0_index = 0;
-        const auto lod0_meshlet_count = is_mesh_ready ? model->lod0_meshlet_counts[mesh_instance.mesh_node_index]
-                                                      : 0_u32;
-
-        auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
-        gpu_mesh_instance.mesh_index = mesh_index;
-        gpu_mesh_instance.lod_index = lod0_index;
-        gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
-        gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
-        gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
-        gpu_mesh_instance.flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows
-                                                             : GPU::MeshInstanceFlag::None;
-        gpu_mesh_instance.layer_mask = mesh_instance.layer_mask;
-
-        const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
-        gpu_index_by_slot[index] = gpu_index;
 
         const auto animator = self.world.entity(mesh_instance.animator_entity);
         const auto animation_it = mesh_instance.animator_entity != 0
                                     ? self.entity_to_animation_instance_map.find(animator)
                                     : self.entity_to_animation_instance_map.end();
 
+        auto& gpu_mesh_instance = gpu_mesh_instances[*gpu_index];
+        const auto& mesh = gpu_meshes[gpu_mesh_instance.mesh_index];
         if (animation_it != self.entity_to_animation_instance_map.end() && mesh.skin_joint_indices != 0) {
           gpu_mesh_instance.skinned_instance_index = static_cast<u32>(self.skinned_mesh_instances.size());
           self.skinned_mesh_instances.emplace_back(
             SkinnedMeshInstance{
-              .gpu_instance_index = gpu_index,
+              .gpu_instance_index = *gpu_index,
               .vertex_count = mesh.vertex_count,
               .vertex_offset = self.skinned_vertex_total,
               .mesh_instance_slot = static_cast<u32>(index),
-              .model_id = model_id,
+              .model_id = mesh_sources[gpu_mesh_instance.mesh_index].model_id,
               .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
               .animation_instance_id = animation_it->second,
             }
           );
           self.skinned_vertex_total += mesh.vertex_count;
         }
-
-        meshlet_instance_visibility_offset += lod0_meshlet_count;
-        max_meshlet_instance_count += lod0_meshlet_count;
       });
 
       self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
-      self.max_meshlet_instance_count = max_meshlet_instance_count;
     }
 
     auto dirty_mesh_instance_gpu_indices = std::vector<u32>();
@@ -1936,6 +2116,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
       .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
       .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
+      .changed_mesh_instance_indices = self.changed_mesh_instance_indices,
+      .is_gpu_meshes_changed = self.is_gpu_meshes_changed,
       .skinned_mesh_instances = self.skinned_mesh_instances,
       .skinning_transforms = self.skinning_transforms,
       .skinned_vertex_total = self.skinned_vertex_total,
@@ -3156,8 +3338,8 @@ auto Scene::attach_mesh(
   auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
   if (mesh_instances_it != self.entity_to_mesh_instance_map.end()) {
     const auto old_mesh_instance_id = mesh_instances_it->second;
+    queue_mesh_instance_removal(self, old_mesh_instance_id);
     self.mesh_instances.destroy_slot(old_mesh_instance_id);
-    self.meshes_dirty = true;
   }
 
   const auto* layer = entity.try_get<LayerComponent>();
@@ -3173,7 +3355,7 @@ auto Scene::attach_mesh(
     }
   );
   self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);
-  self.meshes_dirty = true;
+  queue_mesh_instance_addition(self, instance_id);
   // attaching does not change a transform, so queue the exact GPU records that now reference it
   // without notifying descendants, because notifying from a skinned child would reach this observer
   // again through its animator ancestor and recursively reattach the mesh
@@ -3214,8 +3396,8 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
+  queue_mesh_instance_removal(self, instance_id);
   self.mesh_instances.destroy_slot(instance_id);
-  self.meshes_dirty = true;
 
   self.entity_to_mesh_instance_map.erase(instances_it);
 
@@ -3282,7 +3464,7 @@ auto Scene::set_particle_parameter(
     component.override_parameters = true;
 
     if (auto* state = self.particle_emitter_state(entity); state && state->asset) {
-      if (auto system = App::mod<AssetManager>().get_particle_system(state->asset)) {
+      if (auto system = App::mod<AssetManager>().get_particle_system(state->asset_id)) {
         for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
           component.parameter(i) = i < system->parameters.size() ? system->parameters[i].default_value
                                                                  : glm::vec4(0.0f);
@@ -3303,7 +3485,7 @@ auto Scene::set_particle_parameter(
   }
 
   auto index = [&]() -> option<u32> {
-    auto system = App::mod<AssetManager>().get_particle_system(state->asset);
+    auto system = App::mod<AssetManager>().get_particle_system(state->asset_id);
     return system ? system->find_parameter(name) : nullopt;
   }();
 
@@ -4201,6 +4383,8 @@ auto Scene::render(
     self.dirty_transforms.clear();
     self.dirty_mesh_instances.clear();
     self.removed_mesh_bounds.clear();
+    self.changed_mesh_instance_indices.clear();
+    self.is_gpu_meshes_changed = false;
     self.meshes_dirty = false;
   }
   return ticket;

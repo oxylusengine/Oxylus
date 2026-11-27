@@ -96,7 +96,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       if (snapshot_it == snapshot_of.end()) {
         auto snapshot = ParticleAssetSnapshot{};
         {
-          auto system = asset_man.get_particle_system(state->asset);
+          auto system = asset_man.get_particle_system(state->asset_id);
           if (!system || !system->compile_error.empty()) {
             return;
           }
