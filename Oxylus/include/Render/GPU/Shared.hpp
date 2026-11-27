@@ -258,26 +258,36 @@ OX_CONST f32 CAMERA_SCALE_UNIT = 0.01f;
 OX_CONST f32 INV_CAMERA_SCALE_UNIT = 1.0f / CAMERA_SCALE_UNIT;
 OX_CONST f32 PLANET_RADIUS_OFFSET = 0.001f;
 
+struct DensityProfileLayer {
+  f32 width = 0.0f;
+  f32 exp_term = 0.0f;
+  f32 exp_scale = 0.0f;
+  f32 linear_term = 0.0f;
+  f32 constant_term = 0.0f;
+};
+
 struct Atmosphere {
-  f32x3 rayleigh_scatter = f32x3(0.005802f, 0.013558f, 0.033100f);
-  f32 rayleigh_density = 8.0f;
+  f32x3 rayleigh_scatter = f32x3(0.006604931f, 0.012344918f, 0.039412623f);
+  f32 base_altitude_km = 6.0f;
 
   f32x3 mie_scatter = f32x3(0.003996f, 0.003996f, 0.003996f);
-  f32 mie_density = 1.2f;
   f32 mie_extinction = 0.004440f;
   f32 mie_asymmetry = 3.6f;
-  f32 mie_haze_amount = 0.7f;
-  f32 mie_haze_scale_height = 11.0f;
 
-  f32x3 ozone_absorption = f32x3(0.000650f, 0.001881f, 0.000085f);
-  f32 ozone_height = 25.0f;
-  f32 ozone_thickness = 15.0f;
+  f32x3 ozone_absorption = f32x3(0.00129072f, 0.00254036f, 0.0f);
 
   f32x3 terrain_albedo = f32x3(0.3f, 0.3f, 0.3f);
   f32 planet_radius = 6360.0f;
   f32 atmos_radius = 6460.0f;
   f32 aerial_perspective_start_km = 8.0f;
   f32 aerial_perspective_exposure = 1.0f;
+
+  DensityProfileLayer rayleigh_layer_0 = {23.1f, 2.0f, -0.325f, 0.0f, 0.166f};
+  DensityProfileLayer rayleigh_layer_1 = {100.0f, 0.0f, -0.085f, 0.0f, 0.021f};
+  DensityProfileLayer mie_layer_0 = {11.0f, 1.19f, -0.530f, 0.0f, 0.266f};
+  DensityProfileLayer mie_layer_1 = {74.7f, 0.730f, -0.090f, 0.0f, 0.0f};
+  DensityProfileLayer ozone_layer_0 = {52.9f, 0.00182376393f, 0.122f, 0.0f, 0.0f};
+  DensityProfileLayer ozone_layer_1 = {52.2f, 20.6245170027f, -0.06666666666f, 0.0f, 0.0f};
 
   i32x3 transmittance_lut_size = {};
   i32x3 sky_view_lut_size = {};
