@@ -3,7 +3,7 @@
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/SystemInterface.h>
 #include <SDL3/SDL.h>
-#include <unordered_map>
+#include <array>
 
 #include "Core/Types.hpp"
 #include "Utils/Log.hpp"
@@ -11,7 +11,6 @@
 namespace ox {
 class RmlSystem : public Rml::SystemInterface {
 public:
-  RmlSystem();
   ~RmlSystem() override;
 
   auto GetElapsedTime() -> double override;
@@ -28,7 +27,8 @@ public:
   static auto convert_mod(i16 sdl_mods) -> int;
 
 private:
-  std::unordered_map<Rml::String, SDL_Cursor*> cursor_map_;
+  // made on first use, SDL makes none before it is up and this is constructed earlier
+  std::array<SDL_Cursor*, SDL_SYSTEM_CURSOR_COUNT> cursors = {};
 };
 
 } // namespace ox

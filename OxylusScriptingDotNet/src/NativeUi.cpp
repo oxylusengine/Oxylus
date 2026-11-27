@@ -26,7 +26,24 @@ static auto to_ox(const Rml::String& text) -> OxStringView {
 static auto elements = ankerl::unordered_dense::map<u64, Rml::ObserverPtr<Rml::Element>>{};
 static auto element_handles = ankerl::unordered_dense::map<Rml::Element*, u64>{};
 static auto next_element = 1_u64;
+// how many the last sweep left. every event hands its targets a handle, so the maps are swept again once they double
+static auto swept_elements = 0_sz;
 static auto contexts = ankerl::unordered_dense::map<ecs_world_t*, Rml::Context*>{};
+
+// forgets freed elements, and every element in `context` when there is one
+static auto sweep_elements(Rml::Context* context) -> void {
+  ZoneScoped;
+
+  std::erase_if(elements, [context](const auto& entry) {
+    auto* element = entry.second.get();
+    return !element || (context && element->GetContext() == context);
+  });
+  std::erase_if(element_handles, [](const auto& entry) {
+    const auto it = elements.find(entry.second);
+    return it == elements.end() || it->second.get() != entry.first;
+  });
+  swept_elements = elements.size();
+}
 
 static auto handle_of(Rml::Element* element) -> u64 {
   if (!element) {
@@ -39,6 +56,10 @@ static auto handle_of(Rml::Element* element) -> u64 {
     if (existing != elements.end() && existing->second.get() == element) {
       return it->second;
     }
+  }
+
+  if (elements.size() >= 2 * std::max(swept_elements, 256_sz)) {
+    sweep_elements(nullptr);
   }
 
   const auto handle = next_element++;
@@ -456,6 +477,10 @@ auto release_ui(ecs_world_t* world) -> void {
     (*it)->context->RemoveDataModel((*it)->name);
     it = models.erase(it);
   }
+
+  if (context) {
+    sweep_elements(context);
+  }
 }
 
 auto release_ui() -> void {
@@ -471,6 +496,7 @@ auto release_ui() -> void {
 
   elements.clear();
   element_handles.clear();
+  swept_elements = 0;
 }
 
 static auto ui_clear_style_sheet_cache() -> void { Rml::Factory::ClearStyleSheetCache(); }

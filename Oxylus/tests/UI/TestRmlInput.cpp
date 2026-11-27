@@ -1,5 +1,7 @@
 #include <RmlUi/Core.h>
+#include <SDL3/SDL.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "UI/RmlUI.hpp"
 #include "Utils/Log.hpp"
@@ -93,4 +95,95 @@ TEST_F(RmlInputTest, AFullScreenBodyTakesTheMouseByDefault) {
 
   context->ProcessMouseMove(500, 500, 0);
   EXPECT_TRUE(context->IsMouseInteracting());
+}
+
+TEST_F(RmlInputTest, TheDebuggerOpensInTheContextItInspects) {
+  auto rml_ui = RmlUI{};
+  auto* other = Rml::CreateContext("rml_input_test_other", {800, 600}, &render);
+  ASSERT_NE(other, nullptr);
+
+  EXPECT_FALSE(rml_ui.show_debugger(nullptr));
+  EXPECT_FALSE(rml_ui.is_debugger_visible(context));
+
+  ASSERT_TRUE(rml_ui.show_debugger(context));
+  context->Update();
+  EXPECT_TRUE(rml_ui.is_debugger_visible(context));
+  EXPECT_FALSE(rml_ui.is_debugger_visible(other));
+  EXPECT_GT(context->GetNumDocuments(), 0);
+
+  ASSERT_TRUE(rml_ui.show_debugger(other));
+  other->Update();
+  EXPECT_TRUE(rml_ui.is_debugger_visible(other));
+  EXPECT_FALSE(rml_ui.is_debugger_visible(context));
+  EXPECT_EQ(context->GetNumDocuments(), 0);
+
+  rml_ui.hide_debugger();
+  Rml::RemoveContext("rml_input_test_other");
+}
+
+TEST_F(RmlInputTest, HidingTheDebuggerTakesItsPanelsToo) {
+  auto rml_ui = RmlUI{};
+  ASSERT_TRUE(rml_ui.show_debugger(context));
+  auto* panel = context->GetDocument("rmlui-debug-info");
+  ASSERT_NE(panel, nullptr);
+  panel->Show();
+  context->Update();
+  ASSERT_TRUE(panel->IsVisible());
+
+  rml_ui.hide_debugger();
+  EXPECT_FALSE(rml_ui.is_debugger_visible(context));
+  EXPECT_EQ(context->GetNumDocuments(), 0);
+
+  ASSERT_TRUE(rml_ui.show_debugger(context));
+  context->Update();
+  EXPECT_TRUE(rml_ui.is_debugger_visible(context));
+  rml_ui.hide_debugger();
+}
+
+TEST_F(RmlInputTest, TheDebuggerSurvivesItsContextUnloadingEverything) {
+  auto rml_ui = RmlUI{};
+  ASSERT_TRUE(rml_ui.show_debugger(context));
+  context->Update();
+
+  context->UnloadAllDocuments();
+  EXPECT_FALSE(rml_ui.is_debugger_visible(context));
+  context->Update();
+  EXPECT_FALSE(rml_ui.is_debugger_visible(context));
+
+  ASSERT_TRUE(rml_ui.show_debugger(context));
+  context->Update();
+  EXPECT_TRUE(rml_ui.is_debugger_visible(context));
+  rml_ui.hide_debugger();
+}
+
+TEST(RmlSystemTest, MakesItsCursorsOnceSdlIsUp) {
+  // the app constructs its modules, RmlUI's system among them, before it opens a window
+  auto system = std::make_unique<RmlSystem>();
+  system->SetMouseCursor("pointer");
+
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
+    GTEST_SKIP() << "no video driver: " << SDL_GetError();
+  }
+
+  if (auto* probe = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER)) {
+    SDL_DestroyCursor(probe);
+
+    system->SetMouseCursor("pointer");
+    auto* pointer = SDL_GetCursor();
+    EXPECT_NE(pointer, SDL_GetDefaultCursor());
+
+    system->SetMouseCursor("text");
+    EXPECT_NE(SDL_GetCursor(), pointer);
+
+    system->SetMouseCursor("rmlui-scroll-up-left");
+    auto* scroll = SDL_GetCursor();
+    system->SetMouseCursor("move");
+    EXPECT_EQ(SDL_GetCursor(), scroll);
+
+    system->SetMouseCursor("pointer");
+    EXPECT_EQ(SDL_GetCursor(), pointer);
+  }
+
+  system.reset();
+  SDL_Quit();
 }

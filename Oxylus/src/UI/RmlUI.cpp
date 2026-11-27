@@ -19,15 +19,22 @@ namespace ox {
 // mouse events carry no modifiers, so they are read when the event arrives: shift-click extends a text selection
 static auto key_modifiers() -> i32 { return RmlSystem::convert_mod(static_cast<i16>(SDL_GetModState())); }
 
+// an owner may render before RmlUI's update or after it, so a shown view is up to one frame behind
+static auto is_placed(const RmlView& view) -> bool { return view.frames_unplaced <= 1; }
+
 // Reverse order so the view registered last wins where two overlap.
 static auto hit_test(std::span<RmlView* const> views, glm::vec2 position) -> RmlView* {
   for (auto* view : std::ranges::reverse_view(views)) {
-    if (view->viewport_size.x <= 0.f || view->viewport_size.y <= 0.f) {
+    if (!is_placed(*view) || !view->accepts_mouse) {
+      continue;
+    }
+
+    if (view->viewport_size.x <= 0.0f || view->viewport_size.y <= 0.0f) {
       continue;
     }
 
     const auto local = position - view->viewport_origin;
-    if (local.x >= 0.f && local.y >= 0.f && local.x < view->viewport_size.x && local.y < view->viewport_size.y) {
+    if (local.x >= 0.0f && local.y >= 0.0f && local.x < view->viewport_size.x && local.y < view->viewport_size.y) {
       return view;
     }
   }
@@ -160,8 +167,15 @@ auto RmlUI::deinit(this RmlUI& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
   Rml::Shutdown();
+  self.debugger_host_context = nullptr;
 
   return {};
+}
+
+auto RmlUI::update(this RmlUI& self, const Timestep&) -> void {
+  for (auto* view : self.views) {
+    view->frames_unplaced++;
+  }
 }
 
 auto RmlUI::register_view(this RmlUI& self, RmlView* view) -> void {
@@ -170,10 +184,6 @@ auto RmlUI::register_view(this RmlUI& self, RmlView* view) -> void {
   OX_CHECK_NULL(view);
 
   self.views.push_back(view);
-
-  if (!self.debugger_host_context && Rml::Debugger::Initialise(view->context())) {
-    self.debugger_host_context = view->context();
-  }
 }
 
 auto RmlUI::unregister_view(this RmlUI& self, RmlView* view) -> void {
@@ -183,7 +193,10 @@ auto RmlUI::unregister_view(this RmlUI& self, RmlView* view) -> void {
 
   if (self.hovered_view == view) {
     self.hovered_view = nullptr;
+    // nothing is left to hover out of it
+    self.rml_system.SetMouseCursor({});
   }
+
   if (self.capture_view == view) {
     self.capture_view = nullptr;
     self.held_buttons = 0;
@@ -191,14 +204,13 @@ auto RmlUI::unregister_view(this RmlUI& self, RmlView* view) -> void {
 
   // The debugger draws through its host context, so it cannot outlive it.
   if (view->context() && self.debugger_host_context == view->context()) {
-    Rml::Debugger::Shutdown();
-    self.debugger_host_context = nullptr;
+    self.hide_debugger();
   }
 }
 
 auto RmlUI::keyboard_view(this RmlUI& self) -> RmlView* {
   for (auto* view : self.views) {
-    if (view->keyboard_focused) {
+    if (view->keyboard_focused && is_placed(*view)) {
       return view;
     }
   }
@@ -208,6 +220,10 @@ auto RmlUI::keyboard_view(this RmlUI& self) -> RmlView* {
 
 auto RmlUI::update_hover(this RmlUI& self, glm::vec2 position) -> RmlView* {
   auto* target = self.capture_view ? self.capture_view : hit_test(self.views, position);
+  // a press on the UI is followed to its release, even when what it pressed locked the mouse
+  if (self.is_mouse_locked && self.ui_buttons == 0) {
+    target = nullptr;
+  }
 
   if (self.hovered_view && self.hovered_view != target) {
     // Without this the last hovered element stays lit once the cursor moves to another view.
@@ -223,7 +239,7 @@ auto RmlUI::update_hover(this RmlUI& self, glm::vec2 position) -> RmlView* {
   return target;
 }
 
-auto RmlUI::process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> bool {
+auto RmlUI::process_key(this RmlUI& self, u32 key_code, u16 mods, bool down, bool repeat) -> bool {
   ZoneScoped;
 
   auto* view = self.keyboard_view();
@@ -233,6 +249,19 @@ auto RmlUI::process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> 
 
   auto* context = view->context();
   const auto key = RmlSystem::convert_key(key_code);
+#ifndef OX_DISTRIBUTION
+  if (key == Rml::Input::KI_F8) {
+    const auto is_pressed = down && !repeat;
+    if (is_pressed && self.is_debugger_visible(context)) {
+      self.hide_debugger();
+    } else if (is_pressed) {
+      self.show_debugger(context);
+    }
+
+    return true;
+  }
+#endif
+
   const auto modifiers = RmlSystem::convert_mod(mods);
   const auto is_propagated = down ? context->ProcessKeyDown(key, modifiers) : context->ProcessKeyUp(key, modifiers);
 
@@ -295,11 +324,13 @@ auto RmlUI::process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool
   const auto is_ui_release = (self.ui_buttons & button_bit) != 0;
   self.ui_buttons &= static_cast<u8>(~button_bit);
 
-  if (!target) {
+  // a press in the game is followed too, and released though the game has locked the mouse since
+  auto* released = self.capture_view ? self.capture_view : target;
+  if (!released) {
     return is_ui_release;
   }
 
-  target->context()->ProcessMouseButtonUp(rml_button, key_modifiers());
+  released->context()->ProcessMouseButtonUp(rml_button, key_modifiers());
 
   self.held_buttons &= static_cast<u8>(~button_bit);
   if (self.held_buttons == 0) {
@@ -327,5 +358,46 @@ auto RmlUI::reload_ui_files(this RmlUI& self, std::span<const std::string> paths
   for (auto* view : self.views) {
     reload_rml_documents(view->context(), paths);
   }
+}
+
+auto RmlUI::show_debugger(this RmlUI& self, Rml::Context* context) -> bool {
+  ZoneScoped;
+
+  if (!context) {
+    return false;
+  }
+
+  if (self.is_debugger_visible(context)) {
+    return true;
+  }
+
+  // its documents live in the context they inspect, so inspecting another context moves them there
+  self.hide_debugger();
+  if (!Rml::Debugger::Initialise(context)) {
+    return false;
+  }
+
+  self.debugger_host_context = context;
+  Rml::Debugger::SetVisible(true);
+  return true;
+}
+
+auto RmlUI::hide_debugger(this RmlUI& self) -> void {
+  ZoneScoped;
+
+  // `SetVisible` only hides the menu, the panels opened from it would stay on screen
+  if (self.debugger_host_context) {
+    Rml::Debugger::Shutdown();
+    self.debugger_host_context = nullptr;
+  }
+}
+
+auto RmlUI::is_debugger_visible(this const RmlUI& self, Rml::Context* context) -> bool {
+  if (!context || self.debugger_host_context != context) {
+    return false;
+  }
+
+  // unloading every document takes the debugger's with it, and `IsVisible` doesn't check
+  return context->GetDocument("rmlui-debug-menu") && Rml::Debugger::IsVisible();
 }
 } // namespace ox

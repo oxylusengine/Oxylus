@@ -746,6 +746,9 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
                                    nullptr,
                                    ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel
                                  );
+    self.editor_scene->get_scene()->set_rml_accepts_mouse(
+      self.is_viewport_hovered && !self.is_ui_capturing_mouse && !self.is_menubar_hovered
+    );
   } else {
     self.is_viewport_focused = false;
     self.is_viewport_hovered = false;

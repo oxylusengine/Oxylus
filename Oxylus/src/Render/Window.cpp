@@ -275,7 +275,7 @@ auto Window::update(const Timestep& timestep) const -> void {
     }
 
     if (
-      App::has_mod<RmlUI>() && App::mod<RmlUI>().process_key(key_code, mods, down) &&
+      App::has_mod<RmlUI>() && App::mod<RmlUI>().process_key(key_code, mods, down, repeat) &&
       (down || !input_system.get_key_held(ox_scan_code))
     ) {
       // same as the console: a key the game saw go down still comes back up
@@ -383,6 +383,10 @@ auto Window::update(const Timestep& timestep) const -> void {
   };
 
   impl->cursor_overridden = false;
+
+  if (App::has_mod<RmlUI>()) {
+    App::mod<RmlUI>().is_mouse_locked = SDL_GetWindowRelativeMouseMode(impl->handle);
+  }
 
   poll(window_callbacks);
 }

@@ -4109,6 +4109,12 @@ auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
   return self.rml_view ? self.rml_view->name() : std::string_view{};
 }
 
+auto Scene::set_rml_accepts_mouse(this const Scene& self, bool accepts_mouse) -> void {
+  if (self.rml_view) {
+    self.rml_view->accepts_mouse = accepts_mouse;
+  }
+}
+
 auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {
   ZoneScoped;
 

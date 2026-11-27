@@ -401,6 +401,7 @@ public:
   auto get_renderer_instance() const -> RendererInstance* { return renderer_instance.get(); }
   auto get_rml_context(this const Scene& self) -> Rml::Context*;
   auto get_rml_context_name(this const Scene& self) -> std::string_view;
+  auto set_rml_accepts_mouse(this const Scene& self, bool accepts_mouse) -> void;
   auto set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void;
   auto clear_rml_dpi_ratio_override(this const Scene& self) -> void;
 

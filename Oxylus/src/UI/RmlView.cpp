@@ -101,6 +101,7 @@ auto RmlView::set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 siz
   self.viewport_origin = {static_cast<f32>(origin.x), static_cast<f32>(origin.y)};
   self.viewport_size = {static_cast<f32>(size.x), static_cast<f32>(size.y)};
   self.keyboard_focused = keyboard_focused_;
+  self.frames_unplaced = 0;
   self.sync_dpi_ratio();
 }
 

@@ -33,6 +33,7 @@
 #include "Render/RenderContext.hpp"
 #include "Render/Window.hpp"
 #include "UI/ImGuiRenderer.hpp"
+#include "UI/RmlUI.hpp"
 #include "UI/UI.hpp"
 #include "Utils/Command.hpp"
 
@@ -720,6 +721,23 @@ void Editor::draw_menubar(this Editor& self) {
       ImGui::MenuItem("Text Editor", nullptr, &self.editor_panel_registry.get<TextEditorPanel>().visible);
       ImGui::MenuItem("Particle Editor", nullptr, &self.editor_panel_registry.get<ParticleEditorPanel>().visible);
       ImGui::MenuItem("Cinematic Editor", nullptr, &self.editor_panel_registry.get<CinematicEditorPanel>().visible);
+      if (App::has_mod<RmlUI>()) {
+        auto& rml_ui = App::mod<RmlUI>();
+        auto* scene = self.get_selected_scene();
+        auto* rml_context = scene ? scene->get_rml_context() : nullptr;
+        auto is_debugger_visible = rml_ui.is_debugger_visible(rml_context);
+        ImGui::BeginDisabled(!rml_context);
+        if (ImGui::MenuItem("UI Debugger", "F8", &is_debugger_visible)) {
+          if (is_debugger_visible) {
+            rml_ui.show_debugger(rml_context);
+          } else {
+            rml_ui.hide_debugger();
+          }
+        }
+
+        ImGui::EndDisabled();
+      }
+
       if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Classic")) {
           self.set_docking_layout(EditorLayout::Classic);

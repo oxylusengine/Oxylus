@@ -1,21 +1,39 @@
 #include "UI/RmlSystem.hpp"
 
+#include <algorithm>
+#include <string_view>
+
 namespace ox {
-RmlSystem::RmlSystem() {
-  cursor_map_["arrow"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
-  cursor_map_["text"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
-  cursor_map_["pointer"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
-  cursor_map_["cross"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
-  cursor_map_["size-nwse"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE);
-  cursor_map_["size-nesw"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE);
-  cursor_map_["size-ew"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
-  cursor_map_["size-ns"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
-  cursor_map_["move"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE);
-  cursor_map_["unavailable"] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NOT_ALLOWED);
+static auto system_cursor(std::string_view name) -> SDL_SystemCursor {
+  struct NamedCursor {
+    std::string_view name = {};
+    SDL_SystemCursor cursor = SDL_SYSTEM_CURSOR_DEFAULT;
+  };
+
+  constexpr static auto CURSORS = std::to_array<NamedCursor>({
+    {"text", SDL_SYSTEM_CURSOR_TEXT},
+    {"pointer", SDL_SYSTEM_CURSOR_POINTER},
+    {"cross", SDL_SYSTEM_CURSOR_CROSSHAIR},
+    {"resize", SDL_SYSTEM_CURSOR_NWSE_RESIZE},
+    {"size-nwse", SDL_SYSTEM_CURSOR_NWSE_RESIZE},
+    {"size-nesw", SDL_SYSTEM_CURSOR_NESW_RESIZE},
+    {"size-ew", SDL_SYSTEM_CURSOR_EW_RESIZE},
+    {"size-ns", SDL_SYSTEM_CURSOR_NS_RESIZE},
+    {"move", SDL_SYSTEM_CURSOR_MOVE},
+    {"unavailable", SDL_SYSTEM_CURSOR_NOT_ALLOWED},
+  });
+
+  // RmlUi's own while it autoscrolls, one per direction
+  if (name.starts_with("rmlui-scroll")) {
+    return SDL_SYSTEM_CURSOR_MOVE;
+  }
+
+  const auto it = std::ranges::find(CURSORS, name, &NamedCursor::name);
+  return it == CURSORS.end() ? SDL_SYSTEM_CURSOR_DEFAULT : it->cursor;
 }
 
 RmlSystem::~RmlSystem() {
-  for (auto& [name, cursor] : cursor_map_) {
+  for (auto* cursor : this->cursors) {
     if (cursor) {
       SDL_DestroyCursor(cursor);
     }
@@ -40,17 +58,13 @@ auto RmlSystem::LogMessage(Rml::Log::Type type, const Rml::String& message) -> b
 }
 
 auto RmlSystem::SetMouseCursor(const Rml::String& cursor_name) -> void {
-  if (cursor_name.empty() || cursor_name == "auto") {
-    SDL_SetCursor(SDL_GetDefaultCursor());
-    return;
+  const auto shape = system_cursor(cursor_name);
+  auto*& cursor = this->cursors[static_cast<usize>(shape)];
+  if (!cursor) {
+    cursor = SDL_CreateSystemCursor(shape);
   }
 
-  auto it = cursor_map_.find(cursor_name);
-  if (it != cursor_map_.end() && it->second) {
-    SDL_SetCursor(it->second);
-  } else {
-    SDL_SetCursor(SDL_GetDefaultCursor());
-  }
+  SDL_SetCursor(cursor ? cursor : SDL_GetDefaultCursor());
 }
 
 auto RmlSystem::SetClipboardText(const Rml::String& text) -> void { SDL_SetClipboardText(text.c_str()); }

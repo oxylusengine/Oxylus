@@ -12,9 +12,9 @@
 
 namespace ox {
 // every PushLayer gets a fresh one, so a frame's layers never share an image
-enum class RmlLayerID : u16 { Base = 0, Invalid = ~0_u16 };
-enum class RmlSavedTextureID : u16 { Invalid = ~0_u16 };
-enum class RmlMaskID : u16 { Invalid = ~0_u16 };
+enum class RmlLayerID : u16 { Base = 0, Invalid = 0xFFFF_u16 };
+enum class RmlSavedTextureID : u16 { Invalid = 0xFFFF_u16 };
+enum class RmlMaskID : u16 { Invalid = 0xFFFF_u16 };
 
 enum class RmlPassKind : u8 { Draw, ClipClear, ClipDraw, PushLayer, Composite, SaveTexture, SaveMask };
 enum class RmlClipWrite : u8 { Replace, Increment };

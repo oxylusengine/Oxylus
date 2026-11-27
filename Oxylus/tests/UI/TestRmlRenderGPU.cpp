@@ -1,4 +1,5 @@
 #include <RmlUi/Core.h>
+#include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_filesystem.h>
 #include <VkBootstrap.h>
 #include <atomic>
@@ -19,10 +20,18 @@
 #endif
 
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetManager.hpp"
+#include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
+#include "Core/Input.hpp"
+#include "Core/Keycodes.hpp"
 #include "Render/RenderContext.hpp"
 #include "Render/RenderResources.hpp"
+#include "Render/Renderer.hpp"
 #include "UI/RmlRenderer.hpp"
+#include "UI/RmlUI.hpp"
+#include "UI/RmlView.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
 constexpr static auto SIZE = 64_u32;
@@ -474,5 +483,195 @@ TEST_F(RmlRenderGPU, MasksWithAnImage) {
   EXPECT_GT(at(pixels, 1, 8).r, 240);
   EXPECT_LT(at(pixels, 62, 8).r, 16);
   EXPECT_NEAR(at(pixels, 32, 8).r, 128, 20);
+}
+
+// RmlUI's routing needs views, and a view needs a renderer
+class RmlInputRouting : public RmlRenderGPU {
+protected:
+  void SetUp() override {
+    RmlRenderGPU::SetUp();
+    if (IsSkipped() || HasFatalFailure()) {
+      return;
+    }
+
+    app->with<AudioEngine>().with<AssetManager>().with<Input>().with<Renderer>().with<RmlUI>();
+    back = std::make_unique<RmlView>("back");
+    front = std::make_unique<RmlView>("front");
+    for (auto* view : {back.get(), front.get()}) {
+      auto* document = view->context()->LoadDocumentFromMemory(R"(<rml><head><style>
+        body { width: 64px; height: 64px; margin: 0; pointer-events: none; }
+        div { position: absolute; display: block; left: 0px; top: 0px; width: 32px; height: 64px; pointer-events: auto; }
+      </style></head><body><div id="ui"></div></body></rml>)");
+      ASSERT_NE(document, nullptr);
+      document->Show();
+    }
+  }
+
+  void TearDown() override {
+    front.reset();
+    back.reset();
+    RmlRenderGPU::TearDown();
+  }
+
+  // the frame's `App::step`: modules update, then whoever owns a view renders it
+  auto frame(this RmlInputRouting&, std::initializer_list<RmlView*> shown) -> void {
+    const auto timestep = Timestep(16.0);
+    App::mod<RmlUI>().update(timestep);
+    for (auto* view : shown) {
+      view->set_viewport({0, 0}, {64, 64}, true);
+      view->update({64, 64});
+    }
+  }
+
+  static auto press(bool down) -> bool {
+    return App::mod<RmlUI>().process_mouse_button(static_cast<u8>(MouseCode::Left), down);
+  }
+
+  static auto key(u32 code, bool down, bool repeat = false) -> bool {
+    return App::mod<RmlUI>().process_key(code, 0, down, repeat);
+  }
+
+  constexpr static auto ON_UI = glm::vec2(16.0f, 32.0f);
+  constexpr static auto ON_GAME = glm::vec2(48.0f, 32.0f);
+
+  std::unique_ptr<RmlView> back = {};
+  std::unique_ptr<RmlView> front = {};
+};
+
+struct ClickCounter final : Rml::EventListener {
+  u32 clicks = 0;
+  auto ProcessEvent(Rml::Event&) -> void override { clicks++; }
+};
+
+TEST_F(RmlInputRouting, AViewNothingShowsTakesNoInput) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({back.get(), front.get()});
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_TRUE(front->context()->IsMouseInteracting());
+  EXPECT_FALSE(back->context()->IsMouseInteracting());
+
+  // the tab over it is switched to
+  frame({back.get()});
+  frame({back.get()});
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(front->context()->IsMouseInteracting());
+  EXPECT_TRUE(back->context()->IsMouseInteracting());
+
+  EXPECT_TRUE(key(SDLK_F8, true));
+  EXPECT_TRUE(rml_ui.is_debugger_visible(back->context()));
+  EXPECT_FALSE(rml_ui.is_debugger_visible(front->context()));
+  rml_ui.hide_debugger();
+
+  frame({});
+  frame({});
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(back->context()->IsMouseInteracting());
+  EXPECT_FALSE(press(true));
+  EXPECT_FALSE(key(SDLK_F8, true));
+}
+
+// an owner that updates before RmlUI does places its view one update earlier
+TEST_F(RmlInputRouting, AViewRenderedBeforeTheUpdateStillTakesInput) {
+  for (u32 i = 0; i < 3; i++) {
+    frame({back.get(), front.get()});
+    App::mod<RmlUI>().update(Timestep(16.0));
+    App::mod<RmlUI>().process_mouse_move(ON_UI);
+    EXPECT_TRUE(front->context()->IsMouseInteracting());
+    front->set_viewport({0, 0}, {64, 64}, true);
+    back->set_viewport({0, 0}, {64, 64}, true);
+  }
+}
+
+TEST_F(RmlInputRouting, ACoveredViewLeavesTheMouseAlone) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({front.get()});
+  frame({front.get()});
+  front->accepts_mouse = false;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(front->context()->IsMouseInteracting());
+  EXPECT_FALSE(press(true));
+  EXPECT_FALSE(press(false));
+  EXPECT_FALSE(rml_ui.process_mouse_scroll({0.0f, 1.0f}));
+
+  // what covers it doesn't end a press the view already has
+  front->accepts_mouse = true;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_TRUE(press(true));
+  front->accepts_mouse = false;
+  EXPECT_TRUE(press(false));
+}
+
+TEST_F(RmlInputRouting, ALockedMouseIsTheGames) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({front.get()});
+  frame({front.get()});
+  rml_ui.process_mouse_move(ON_UI);
+  ASSERT_TRUE(front->context()->IsMouseInteracting());
+
+  rml_ui.is_mouse_locked = true;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(front->context()->IsMouseInteracting());
+  EXPECT_FALSE(press(true));
+  EXPECT_FALSE(press(false));
+  EXPECT_FALSE(rml_ui.process_mouse_scroll({0.0f, 1.0f}));
+
+  rml_ui.is_mouse_locked = false;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_TRUE(front->context()->IsMouseInteracting());
+}
+
+TEST_F(RmlInputRouting, AUiPressThatLocksTheMouseStillClicks) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({front.get()});
+  frame({front.get()});
+  auto counter = ClickCounter{};
+  auto* element = front->context()->GetDocument(0)->GetElementById("ui");
+  element->AddEventListener("click", &counter);
+
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_TRUE(press(true));
+  rml_ui.is_mouse_locked = true;
+  EXPECT_TRUE(press(false));
+  EXPECT_EQ(counter.clicks, 1u);
+
+  EXPECT_FALSE(press(true));
+  EXPECT_FALSE(press(false));
+  EXPECT_EQ(counter.clicks, 1u);
+  element->RemoveEventListener("click", &counter);
+}
+
+TEST_F(RmlInputRouting, AGamePressThatLocksTheMouseLetsTheViewGo) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({front.get()});
+  frame({front.get()});
+  rml_ui.process_mouse_move(ON_GAME);
+  EXPECT_FALSE(press(true));
+
+  // drifting over the UI while it is held is still the game's
+  rml_ui.is_mouse_locked = true;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(front->context()->IsMouseInteracting());
+  EXPECT_FALSE(press(false));
+
+  rml_ui.is_mouse_locked = false;
+  front->accepts_mouse = false;
+  rml_ui.process_mouse_move(ON_UI);
+  EXPECT_FALSE(front->context()->IsMouseInteracting()) << "the press still holds the view";
+}
+
+TEST_F(RmlInputRouting, HoldingTheDebuggerKeyTogglesItOnce) {
+  auto& rml_ui = App::mod<RmlUI>();
+  frame({front.get()});
+  frame({front.get()});
+
+  EXPECT_TRUE(key(SDLK_F8, true));
+  front->context()->Update();
+  EXPECT_TRUE(key(SDLK_F8, true, true));
+  EXPECT_TRUE(rml_ui.is_debugger_visible(front->context()));
+  EXPECT_TRUE(key(SDLK_F8, false));
+
+  EXPECT_TRUE(key(SDLK_F8, true));
+  EXPECT_FALSE(rml_ui.is_debugger_visible(front->context()));
+  EXPECT_TRUE(key(SDLK_F8, false));
 }
 } // namespace ox

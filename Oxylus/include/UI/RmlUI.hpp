@@ -16,6 +16,7 @@ class AssetManager;
 class Renderer;
 class Input;
 class RmlView;
+class Timestep;
 
 // a focused text field takes every key, including the letters it lets propagate
 auto rml_wants_keyboard(Rml::Context* context) -> bool;
@@ -34,6 +35,7 @@ public:
 
   auto init(this RmlUI& self) -> std::expected<void, std::string>;
   auto deinit(this RmlUI& self) -> std::expected<void, std::string>;
+  auto update(this RmlUI& self, const Timestep& timestep) -> void;
 
   // Called by RmlView's constructor and destructor. Views must outlive their registration.
   auto register_view(this RmlUI& self, RmlView* view) -> void;
@@ -41,7 +43,7 @@ public:
 
   // Mouse follows the cursor, keyboard follows the focused view. The bool ones return whether the UI
   // took the event, in which case the game shouldn't see it
-  auto process_key(this RmlUI& self, u32 key_code, u16 mods, bool down) -> bool;
+  auto process_key(this RmlUI& self, u32 key_code, u16 mods, bool down, bool repeat) -> bool;
   auto process_text(this RmlUI& self, std::string_view text) -> void;
   auto process_mouse_move(this RmlUI& self, glm::vec2 position) -> void;
   auto process_mouse_button(this RmlUI& self, u8 button, bool down) -> bool;
@@ -50,6 +52,15 @@ public:
 
   // `reload_rml_documents` for every view, `paths` are virtual
   auto reload_ui_files(this RmlUI& self, std::span<const std::string> paths) -> void;
+
+  // RmlUi's inspector, drawn over the UI it inspects. Outside distribution builds F8 toggles it on the view with
+  // keyboard focus
+  auto show_debugger(this RmlUI& self, Rml::Context* context) -> bool;
+  auto hide_debugger(this RmlUI& self) -> void;
+  auto is_debugger_visible(this const RmlUI& self, Rml::Context* context) -> bool;
+
+  // the game holds the mouse, so a cursor nobody sees has nothing to hover or click
+  bool is_mouse_locked = false;
 
 private:
   auto keyboard_view(this RmlUI& self) -> RmlView*;

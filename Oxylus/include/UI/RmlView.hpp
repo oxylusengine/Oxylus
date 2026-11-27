@@ -55,6 +55,10 @@ public:
   glm::vec2 viewport_size = {};
   glm::ivec2 surface_size = {};
   bool keyboard_focused = false;
+  // off while something drawn over the view has the mouse
+  bool accepts_mouse = true;
+  // since `set_viewport`, counted by RmlUI. a view nothing shows any more keeps its rectangle
+  u32 frames_unplaced = 0;
 
 private:
   Rml::Context* rml_context = nullptr;
