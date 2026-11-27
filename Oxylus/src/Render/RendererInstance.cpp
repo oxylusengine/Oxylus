@@ -4036,6 +4036,10 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     data.meshes.assign(info.gpu_meshes.begin(), info.gpu_meshes.end());
   }
 
+  // the TLAS build is the one reader of both address tables, so nothing is uploaded while nothing
+  // traces. Same answer the scene used to decide whether to refresh them
+  const auto is_tracing = render_context.use_ray_tracing() && self.tlas_has_consumer(cvar);
+
   // uploaded every frame rather than under `meshes_dirty`, matching how the scene refreshes it: the
   // TLAS build dereferences these as raw pointers, and it is 8 bytes per unique mesh
   ensure_buffer(
@@ -4044,22 +4048,27 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     info.gpu_mesh_blas_addresses.size_bytes(),
     "blas addresses"
   );
-  data.blas_addresses.assign(info.gpu_mesh_blas_addresses.begin(), info.gpu_mesh_blas_addresses.end());
+  if (is_tracing) {
+    data.blas_addresses.assign(info.gpu_mesh_blas_addresses.begin(), info.gpu_mesh_blas_addresses.end());
+  }
 
   // an entry the pool has not actually built yet reads back as zero, which drops that instance out
   // of the TLAS rather than pointing the build at memory nothing has written. Since this runs before
   // the frame stages its builds, a freshly pooled structure publishes its address next frame
   data.skinned_instance_count = static_cast<u32>(info.skinned_mesh_instances.size());
-  data.skinned_blas_addresses.assign(ox::max(info.skinned_mesh_instances.size(), 1_sz), 0_u64);
-  for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
-    data.skinned_blas_addresses[i] = self.skinned_blas_pool.address_of(
-      info.skinned_mesh_instances[i].mesh_instance_slot
-    );
+  if (is_tracing) {
+    data.skinned_blas_addresses.assign(ox::max(info.skinned_mesh_instances.size(), 1_sz), 0_u64);
+    for (usize i = 0; i < info.skinned_mesh_instances.size(); i++) {
+      data.skinned_blas_addresses[i] = self.skinned_blas_pool.address_of(
+        info.skinned_mesh_instances[i].mesh_instance_slot
+      );
+    }
   }
+
   ensure_buffer(
     render_context,
     self.skinned_blas_addresses_buffer,
-    std::span<const u64>(data.skinned_blas_addresses).size_bytes(),
+    ox::max(info.skinned_mesh_instances.size(), 1_sz) * sizeof(u64),
     "skinned blas addresses"
   );
 

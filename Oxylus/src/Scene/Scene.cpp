@@ -2072,13 +2072,15 @@ auto Scene::prepare_render(this Scene& self) -> void {
 
     // a BLAS address is a raw pointer the TLAS build dereferences, and nothing promises that whatever
     // moves one also raises `meshes_dirty`, so the table is re-read from the models every frame
-    // instead of being captured once at rebuild
-    {
-      auto& render_context = App::get_rendercontext();
+    // instead of being captured once at rebuild. Only while something traces, because the TLAS build is
+    // its one reader and this runs before the renderer uploads it, so a frame that starts tracing
+    // refreshes whatever went stale meanwhile
+    auto& render_context = App::get_rendercontext();
+    const auto is_tracing = render_context.use_ray_tracing() &&
+                            self.renderer_instance->tlas_has_consumer(self.renderer_cvar);
+    if (is_tracing) {
       // static structures are built only once something traces against the TLAS, and a mesh still
       // without one keeps address zero, which leaves its instances out of the TLAS
-      const auto is_tracing = render_context.use_ray_tracing() &&
-                              self.renderer_instance->tlas_has_consumer(self.renderer_cvar);
       auto build_budget = StaticBLASBudget{
         .triangle_budget = static_cast<u64>(std::max(0, self.renderer_cvar.cvar_rt_static_build_budget.get())),
       };
@@ -2095,7 +2097,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
                                    render_context,
                                    *cached_model.value,
                                    source.mesh_node_index,
-                                   is_tracing ? &build_budget : nullptr
+                                   &build_budget
                                  )
                                : 0_u64;
       }
