@@ -5,6 +5,7 @@
 #include <array>
 #include <basisu/encoder/basisu_enc.h>
 #include <memory>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -357,12 +358,19 @@ auto Window::update(const Timestep& timestep) const -> void {
   window_callbacks.on_gamepad_axis = [](void* user_data, u8 axis, i16 value, u32 instance_id) {
     auto& input_system = App::mod<Input>();
     auto ox_axis_code = static_cast<GamepadAxisCode>(axis);
-    input_system.set_gamepad_axis(instance_id, ox_axis_code, value);
+    // at rest rather than held back, the game must not keep the tilt it last saw
+    const auto is_ui_axis = App::has_mod<RmlUI>() &&
+                            App::mod<RmlUI>().process_gamepad_axis(instance_id, ox_axis_code, value);
+    input_system.set_gamepad_axis(instance_id, ox_axis_code, is_ui_axis ? 0.0f : static_cast<f32>(value));
   };
 
   window_callbacks.on_gamepad = [](void* user_data, u32 button_code, u32 instance_id, bool down) {
     auto& input_system = App::mod<Input>();
     const auto ox_button_code = static_cast<GamepadButtonCode>(button_code);
+
+    if (App::has_mod<RmlUI>() && App::mod<RmlUI>().process_gamepad_button(instance_id, ox_button_code, down)) {
+      return;
+    }
 
     if (down) {
       input_system.set_gamepad_button_pressed(instance_id, ox_button_code, true);
@@ -385,7 +393,23 @@ auto Window::update(const Timestep& timestep) const -> void {
   impl->cursor_overridden = false;
 
   if (App::has_mod<RmlUI>()) {
-    App::mod<RmlUI>().is_mouse_locked = SDL_GetWindowRelativeMouseMode(impl->handle);
+    auto& rml_ui = App::mod<RmlUI>();
+    rml_ui.is_mouse_locked = SDL_GetWindowRelativeMouseMode(impl->handle);
+
+    // a stick held still while a menu opens sends nothing the UI could take
+    if (rml_ui.wants_gamepad()) {
+      for (const auto instance_id : input.input_data.gamepad_data_map | std::views::keys) {
+        for (const auto axis :
+             {GamepadAxisCode::AxisLeftX,
+              GamepadAxisCode::AxisLeftY,
+              GamepadAxisCode::AxisRightX,
+              GamepadAxisCode::AxisRightY}) {
+          if (input.get_gamepad_axis(instance_id, axis) != 0.0f) {
+            input.set_gamepad_axis(instance_id, axis, 0.0f);
+          }
+        }
+      }
+    }
   }
 
   poll(window_callbacks);

@@ -514,8 +514,8 @@ protected:
   }
 
   // the frame's `App::step`: modules update, then whoever owns a view renders it
-  auto frame(this RmlInputRouting&, std::initializer_list<RmlView*> shown) -> void {
-    const auto timestep = Timestep(16.0);
+  auto frame(this RmlInputRouting&, std::initializer_list<RmlView*> shown, f64 millis = 16.0) -> void {
+    const auto timestep = Timestep(millis);
     App::mod<RmlUI>().update(timestep);
     for (auto* view : shown) {
       view->set_viewport({0, 0}, {64, 64}, true);
@@ -529,6 +529,42 @@ protected:
 
   static auto key(u32 code, bool down, bool repeat = false) -> bool {
     return App::mod<RmlUI>().process_key(code, 0, down, repeat);
+  }
+
+  static auto button(GamepadButtonCode code, bool down) -> bool {
+    return App::mod<RmlUI>().process_gamepad_button(1, code, down);
+  }
+
+  static auto tap(GamepadButtonCode code) -> bool {
+    const auto is_taken = button(code, true);
+    EXPECT_EQ(button(code, false), is_taken);
+    return is_taken;
+  }
+
+  static auto axis(GamepadAxisCode code, f32 tilt) -> bool {
+    return App::mod<RmlUI>().process_gamepad_axis(1, code, static_cast<i16>(tilt * 32767.0f));
+  }
+
+  auto open(this RmlInputRouting& self, std::string_view head, std::string_view body) -> Rml::ElementDocument* {
+    const auto rml = std::string(R"(<rml><head><style>
+      body { width: 64px; height: 64px; margin: 0; }
+      button { display: block; width: 32px; height: 16px; tab-index: auto; nav: auto; }
+    )") + std::string(head) + "</style></head><body>" +
+                     std::string(body) + "</body></rml>";
+    auto* document = self.front->context()->LoadDocumentFromMemory(rml);
+    EXPECT_NE(document, nullptr);
+    document->Show();
+    self.frame({self.front.get()});
+    return document;
+  }
+
+  auto open_menu(this RmlInputRouting& self) -> Rml::ElementDocument* {
+    return self.open("body { nav: auto; }", R"(<button id="a"/><button id="b"/><button id="c"/>)");
+  }
+
+  auto focus_id(this RmlInputRouting& self) -> Rml::String {
+    auto* focus = self.front->context()->GetFocusElement();
+    return focus ? focus->GetId() : Rml::String{};
   }
 
   constexpr static auto ON_UI = glm::vec2(16.0f, 32.0f);
@@ -673,5 +709,271 @@ TEST_F(RmlInputRouting, HoldingTheDebuggerKeyTogglesItOnce) {
   EXPECT_TRUE(key(SDLK_F8, true));
   EXPECT_FALSE(rml_ui.is_debugger_visible(front->context()));
   EXPECT_TRUE(key(SDLK_F8, false));
+}
+
+struct KeyStopper final : Rml::EventListener {
+  Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
+  u32 hits = 0;
+
+  auto ProcessEvent(Rml::Event& event) -> void override {
+    if (event.GetParameter<int>("key_identifier", 0) == key) {
+      hits++;
+      event.StopPropagation();
+    }
+  }
+};
+
+TEST_F(RmlInputRouting, AHudLeavesTheGamepadToTheGame) {
+  frame({front.get()});
+  ASSERT_NE(front->context()->GetFocusElement(), nullptr);
+  EXPECT_FALSE(rml_wants_gamepad(nullptr));
+  EXPECT_FALSE(rml_wants_gamepad(front->context()));
+
+  for (const auto code :
+       {GamepadButtonCode::DPadUp,
+        GamepadButtonCode::DPadDown,
+        GamepadButtonCode::DPadLeft,
+        GamepadButtonCode::DPadRight,
+        GamepadButtonCode::South,
+        GamepadButtonCode::East,
+        GamepadButtonCode::Start}) {
+    EXPECT_FALSE(tap(code));
+  }
+
+  EXPECT_FALSE(axis(GamepadAxisCode::AxisLeftY, 1.0f));
+  EXPECT_FALSE(axis(GamepadAxisCode::AxisRightY, 1.0f));
+}
+
+TEST_F(RmlInputRouting, TheDPadMovesFocusAndSouthClicks) {
+  auto* menu = open_menu();
+  auto counter = ClickCounter{};
+  menu->GetElementById("b")->AddEventListener("click", &counter);
+
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "a");
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "b");
+  EXPECT_TRUE(menu->GetElementById("b")->IsPseudoClassSet("focus-visible"));
+  EXPECT_TRUE(tap(GamepadButtonCode::South));
+  EXPECT_EQ(counter.clicks, 1u);
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "c");
+
+  // nowhere further to go, and still not the game's
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "c");
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadUp));
+  EXPECT_EQ(focus_id(), "b");
+  EXPECT_EQ(counter.clicks, 1u);
+
+  EXPECT_FALSE(tap(GamepadButtonCode::Start));
+  EXPECT_FALSE(tap(GamepadButtonCode::LeftShoulder));
+  EXPECT_FALSE(axis(GamepadAxisCode::AxisRightTrigger, 1.0f));
+  menu->GetElementById("b")->RemoveEventListener("click", &counter);
+}
+
+// RmlUi navigates from the nearest ancestor that can be
+TEST_F(RmlInputRouting, FocusInsideAMenuStillNavigates) {
+  auto* menu = open("body { nav: auto; }", R"(<p id="text">text</p><button id="a"/><button id="b"/>)");
+  ASSERT_TRUE(menu->GetElementById("text")->Focus());
+  EXPECT_TRUE(rml_wants_gamepad(front->context()));
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "a");
+}
+
+// `data-if` hides a panel with the focus still in it
+TEST_F(RmlInputRouting, AHiddenPanelLeavesTheGamepadToWhatItWasIn) {
+  constexpr static auto BODY = R"(<div id="panel"><button id="a"/></div><button id="b"/>)";
+  auto* menu = open("body { nav: auto; }", BODY);
+  ASSERT_TRUE(menu->GetElementById("a")->Focus(true));
+  menu->GetElementById("panel")->SetProperty("display", "none");
+  frame({front.get()});
+  EXPECT_TRUE(rml_wants_gamepad(front->context()));
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "b");
+  menu->Close();
+  frame({front.get()});
+
+  auto* hud = open("", BODY);
+  ASSERT_TRUE(hud->GetElementById("a")->Focus(true));
+  EXPECT_TRUE(rml_wants_gamepad(front->context()));
+  hud->GetElementById("panel")->SetProperty("display", "none");
+  frame({front.get()});
+  EXPECT_FALSE(rml_wants_gamepad(front->context()));
+  EXPECT_FALSE(tap(GamepadButtonCode::DPadDown));
+}
+
+TEST_F(RmlInputRouting, AHeldDPadRepeats) {
+  open_menu();
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, true));
+  EXPECT_EQ(focus_id(), "a");
+  frame({front.get()}, 300.0);
+  EXPECT_EQ(focus_id(), "a");
+  frame({front.get()}, 150.0);
+  EXPECT_EQ(focus_id(), "b");
+  frame({front.get()}, 60.0);
+  EXPECT_EQ(focus_id(), "b");
+  frame({front.get()}, 70.0);
+  EXPECT_EQ(focus_id(), "c");
+
+  EXPECT_TRUE(button(GamepadButtonCode::DPadUp, true));
+  EXPECT_EQ(focus_id(), "b");
+  // letting go of what was held before leaves what is held now
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, false));
+  frame({front.get()}, 450.0);
+  EXPECT_EQ(focus_id(), "a");
+
+  EXPECT_TRUE(button(GamepadButtonCode::DPadUp, false));
+  ASSERT_TRUE(front->context()->GetDocument(1)->GetElementById("c")->Focus(true));
+  frame({front.get()}, 1000.0);
+  EXPECT_EQ(focus_id(), "c");
+}
+
+TEST_F(RmlInputRouting, TheLeftStickMovesFocus) {
+  open_menu();
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 0.5f));
+  EXPECT_NE(focus_id(), "a");
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 0.9f));
+  EXPECT_EQ(focus_id(), "a");
+
+  // wavering, and leaning sideways, is the same tilt
+  axis(GamepadAxisCode::AxisLeftY, 0.5f);
+  axis(GamepadAxisCode::AxisLeftY, 0.8f);
+  axis(GamepadAxisCode::AxisLeftX, 0.9f);
+  axis(GamepadAxisCode::AxisLeftX, 0.0f);
+  EXPECT_EQ(focus_id(), "a");
+
+  frame({front.get()}, 450.0);
+  EXPECT_EQ(focus_id(), "b");
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 0.0f));
+  frame({front.get()}, 1000.0);
+  EXPECT_EQ(focus_id(), "b");
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, -1.0f));
+  EXPECT_EQ(focus_id(), "a");
+}
+
+TEST_F(RmlInputRouting, AStickTiltedWhenTheMenuOpensWaitsToBeLetGo) {
+  frame({front.get()});
+  EXPECT_FALSE(axis(GamepadAxisCode::AxisLeftY, 1.0f));
+  open_menu();
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 0.95f));
+  frame({front.get()}, 1000.0);
+  EXPECT_EQ(focus_id(), "");
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 0.0f));
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisLeftY, 1.0f));
+  EXPECT_EQ(focus_id(), "a");
+}
+
+TEST_F(RmlInputRouting, AReleaseGoesWhereItsPressWent) {
+  frame({front.get()});
+  EXPECT_FALSE(button(GamepadButtonCode::South, true));
+  auto* menu = open_menu();
+  EXPECT_FALSE(button(GamepadButtonCode::South, false));
+
+  EXPECT_TRUE(button(GamepadButtonCode::South, true));
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, true));
+  menu->Hide();
+  frame({front.get()});
+  EXPECT_FALSE(rml_wants_gamepad(front->context()));
+  EXPECT_TRUE(button(GamepadButtonCode::South, false));
+
+  // what was held when it closed moves nothing in the next one
+  menu->Show();
+  ASSERT_TRUE(menu->GetElementById("a")->Focus(true));
+  frame({front.get()}, 1000.0);
+  EXPECT_EQ(focus_id(), "a");
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, false));
+
+  // another gamepad's press is its own
+  EXPECT_TRUE(button(GamepadButtonCode::South, true));
+  EXPECT_FALSE(App::mod<RmlUI>().process_gamepad_button(2, GamepadButtonCode::South, false));
+  EXPECT_TRUE(button(GamepadButtonCode::South, false));
+}
+
+TEST_F(RmlInputRouting, EastIsTheGamesUnlessTheUiGoesBackOnIt) {
+  auto* menu = open_menu();
+  EXPECT_FALSE(tap(GamepadButtonCode::East));
+
+  auto stopper = KeyStopper{};
+  stopper.key = Rml::Input::KI_ESCAPE;
+  menu->AddEventListener("keydown", &stopper);
+  EXPECT_TRUE(tap(GamepadButtonCode::East));
+  EXPECT_EQ(stopper.hits, 1u);
+  menu->RemoveEventListener("keydown", &stopper);
+}
+
+TEST_F(RmlInputRouting, ControlsWithoutNavGoAlongTheTabOrder) {
+  auto* menu = open(
+    "input { display: block; width: 32px; height: 16px; } input.check { width: 16px; }",
+    R"(<input id="one" class="check" type="checkbox"/><input id="two" class="check" type="checkbox"/>
+       <input id="range" type="range" min="0" max="10" step="1" value="5"/>)"
+  );
+  ASSERT_TRUE(menu->GetElementById("one")->Focus(true));
+
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "two");
+  EXPECT_TRUE(tap(GamepadButtonCode::South));
+  EXPECT_TRUE(menu->GetElementById("two")->HasAttribute("checked"));
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadUp));
+  EXPECT_EQ(focus_id(), "one");
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_EQ(focus_id(), "range");
+
+  // a slider takes its own directions
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadRight));
+  EXPECT_EQ(focus_id(), "range");
+  EXPECT_EQ(menu->GetElementById("range")->GetAttribute<Rml::String>("value", ""), "6");
+  EXPECT_TRUE(tap(GamepadButtonCode::DPadUp));
+  EXPECT_EQ(focus_id(), "two");
+}
+
+TEST_F(RmlInputRouting, TheRightStickScrollsAroundFocus) {
+  auto* menu = open(
+    "div { display: block; } #list { width: 64px; height: 32px; overflow-y: scroll; } #tall { height: 400px; }",
+    R"(<div id="list"><button id="a"/><div id="tall"/></div>)"
+  );
+  auto* list = menu->GetElementById("list");
+  ASSERT_TRUE(menu->GetElementById("a")->Focus(true));
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisRightY, 0.1f));
+  frame({front.get()}, 100.0);
+  EXPECT_EQ(list->GetScrollTop(), 0.0f);
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisRightY, 1.0f));
+  frame({front.get()}, 100.0);
+  const auto scrolled = list->GetScrollTop();
+  EXPECT_GT(scrolled, 50.0f);
+
+  // a fraction of a pixel a frame still adds up
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisRightY, -0.22f));
+  for (u32 i = 0; i < 200; i++) {
+    frame({front.get()}, 1.0);
+  }
+
+  EXPECT_LT(list->GetScrollTop(), scrolled);
+  EXPECT_GT(list->GetScrollTop(), scrolled - 20.0f);
+
+  EXPECT_TRUE(axis(GamepadAxisCode::AxisRightY, 0.0f));
+  const auto rested = list->GetScrollTop();
+  frame({front.get()}, 100.0);
+  EXPECT_EQ(list->GetScrollTop(), rested);
+}
+
+TEST_F(RmlInputRouting, AViewNothingShowsTakesNoGamepad) {
+  open_menu();
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, true));
+  EXPECT_EQ(focus_id(), "a");
+  frame({});
+  frame({}, 1000.0);
+  frame({}, 1000.0);
+  EXPECT_EQ(focus_id(), "a");
+  EXPECT_TRUE(button(GamepadButtonCode::DPadDown, false));
+  EXPECT_FALSE(tap(GamepadButtonCode::DPadDown));
+  EXPECT_FALSE(axis(GamepadAxisCode::AxisLeftY, 1.0f));
+  EXPECT_EQ(focus_id(), "a");
 }
 } // namespace ox

@@ -4,9 +4,13 @@
 #include <RmlUi/Debugger.h>
 #include <SDL3/SDL_keyboard.h>
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
+#include <glm/common.hpp>
 #include <ranges>
+#include <utility>
 
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
@@ -14,8 +18,19 @@
 #include "Memory/Stack.hpp"
 #include "UI/RmlView.hpp"
 #include "Utils/Log.hpp"
+#include "Utils/Timestep.hpp"
 
 namespace ox {
+constexpr static auto NAV_REPEAT_DELAY = 0.4f;
+constexpr static auto NAV_REPEAT_INTERVAL = 0.12f;
+// a stick lets go later than it engages, so one resting near the edge doesn't flutter
+constexpr static auto STICK_ENGAGE = 0.6f;
+constexpr static auto STICK_RELEASE = 0.4f;
+constexpr static auto STICK_AXIS_BIAS = 1.5f;
+constexpr static auto SCROLL_DEAD_ZONE = 0.2f;
+// dp per second at full tilt
+constexpr static auto SCROLL_SPEED = 1000.0f;
+
 // mouse events carry no modifiers, so they are read when the event arrives: shift-click extends a text selection
 static auto key_modifiers() -> i32 { return RmlSystem::convert_mod(static_cast<i16>(SDL_GetModState())); }
 
@@ -69,6 +84,95 @@ auto rml_wants_keyboard(Rml::Context* context) -> bool {
   // RmlUi makes a text field of every input type it doesn't know
   const auto type = focus->GetAttribute<Rml::String>("type", "text");
   return type != "radio" && type != "checkbox" && type != "range" && type != "submit" && type != "button";
+}
+
+static auto is_horizontal(RmlNavDirection direction) -> bool {
+  return direction == RmlNavDirection::Left || direction == RmlNavDirection::Right;
+}
+
+static auto nav_key(RmlNavDirection direction) -> Rml::Input::KeyIdentifier {
+  switch (direction) {
+    case RmlNavDirection::Up   : return Rml::Input::KI_UP;
+    case RmlNavDirection::Down : return Rml::Input::KI_DOWN;
+    case RmlNavDirection::Left : return Rml::Input::KI_LEFT;
+    case RmlNavDirection::Right: return Rml::Input::KI_RIGHT;
+    case RmlNavDirection::None : break;
+  }
+
+  return Rml::Input::KI_UNKNOWN;
+}
+
+static auto dpad_direction(GamepadButtonCode button) -> RmlNavDirection {
+  switch (button) {
+    case GamepadButtonCode::DPadUp   : return RmlNavDirection::Up;
+    case GamepadButtonCode::DPadDown : return RmlNavDirection::Down;
+    case GamepadButtonCode::DPadLeft : return RmlNavDirection::Left;
+    case GamepadButtonCode::DPadRight: return RmlNavDirection::Right;
+    default                          : return RmlNavDirection::None;
+  }
+}
+
+static auto stick_direction(glm::vec2 stick, RmlNavDirection current) -> RmlNavDirection {
+  auto horizontal = std::abs(stick.x);
+  auto vertical = std::abs(stick.y);
+  const auto is_engaged = current != RmlNavDirection::None;
+  if (std::max(horizontal, vertical) < (is_engaged ? STICK_RELEASE : STICK_ENGAGE)) {
+    return RmlNavDirection::None;
+  }
+
+  // a diagonal keeps the axis it is on
+  if (is_engaged) {
+    (is_horizontal(current) ? horizontal : vertical) *= STICK_AXIS_BIAS;
+  }
+
+  if (horizontal > vertical) {
+    return stick.x < 0.0f ? RmlNavDirection::Left : RmlNavDirection::Right;
+  }
+
+  return stick.y < 0.0f ? RmlNavDirection::Up : RmlNavDirection::Down;
+}
+
+static auto has_navigation(Rml::Element& element) -> bool {
+  return std::ranges::any_of(
+    std::array{Rml::PropertyId::NavUp, Rml::PropertyId::NavDown, Rml::PropertyId::NavLeft, Rml::PropertyId::NavRight},
+    [&element](Rml::PropertyId id) {
+      const auto* property = element.GetLocalProperty(id);
+      return property &&
+             (property->unit != Rml::Unit::KEYWORD || property->Get<i32>() != static_cast<i32>(Rml::Style::Nav::None));
+    }
+  );
+}
+
+static auto is_tabbed_to(Rml::Element& element) -> bool {
+  return element.IsVisible(true) && element.GetComputedValues().tab_index() == Rml::Style::TabIndex::Auto;
+}
+
+auto rml_wants_gamepad(Rml::Context* context) -> bool {
+  // a click focuses whatever it hits and a hidden panel keeps the focus in it, RmlUi navigates from what that is inside
+  for (auto* element = context ? context->GetFocusElement() : nullptr; element; element = element->GetParentNode()) {
+    if (is_tabbed_to(*element) || (element->IsVisible(true) && has_navigation(*element))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// what RmlUi's own navigation leaves alone, a control without `nav`, goes along the tab order
+static auto navigate(Rml::Context& context, RmlNavDirection direction) -> void {
+  auto* from = context.GetFocusElement();
+  while (from && !is_tabbed_to(*from)) {
+    from = from->GetParentNode();
+  }
+
+  const auto is_in_tab_order = from && !has_navigation(*from);
+  const auto is_propagated = context.ProcessKeyDown(nav_key(direction), 0);
+  if (!is_propagated || !is_in_tab_order) {
+    return;
+  }
+
+  const auto is_backward = direction == RmlNavDirection::Up || direction == RmlNavDirection::Left;
+  context.ProcessKeyDown(Rml::Input::KI_TAB, is_backward ? Rml::Input::KM_SHIFT : 0);
 }
 
 static auto normalized_path(std::string_view path) -> std::string {
@@ -172,9 +276,31 @@ auto RmlUI::deinit(this RmlUI& self) -> std::expected<void, std::string> {
   return {};
 }
 
-auto RmlUI::update(this RmlUI& self, const Timestep&) -> void {
+auto RmlUI::update(this RmlUI& self, const Timestep& timestep) -> void {
+  ZoneScoped;
+
   for (auto* view : self.views) {
     view->frames_unplaced++;
+  }
+
+  if (!self.wants_gamepad()) {
+    self.stop_navigation();
+    self.scroll_remainder = {};
+    return;
+  }
+
+  auto* context = self.keyboard_view()->context();
+  const auto seconds = static_cast<f32>(timestep.get_seconds());
+  self.scroll_focus(context, seconds);
+
+  if (self.nav_direction == RmlNavDirection::None) {
+    return;
+  }
+
+  self.nav_delay -= seconds;
+  if (self.nav_delay <= 0.0f) {
+    self.nav_delay = NAV_REPEAT_INTERVAL;
+    navigate(*context, self.nav_direction);
   }
 }
 
@@ -350,6 +476,138 @@ auto RmlUI::process_mouse_scroll(this RmlUI& self, glm::vec2 offset) -> bool {
 
   const auto is_propagated = target->context()->ProcessMouseWheel(Rml::Vector2f(offset.x, -offset.y), key_modifiers());
   return !is_propagated || target->context()->IsMouseInteracting();
+}
+
+auto RmlUI::wants_gamepad(this RmlUI& self) -> bool {
+  auto* view = self.keyboard_view();
+  return view && rml_wants_gamepad(view->context());
+}
+
+auto RmlUI::gamepad(this RmlUI& self, u32 instance_id) -> RmlGamepad& {
+  const auto it = std::ranges::find(self.gamepads, instance_id, &RmlGamepad::instance_id);
+  return it == self.gamepads.end() ? self.gamepads.emplace_back(RmlGamepad{.instance_id = instance_id}) : *it;
+}
+
+auto RmlUI::start_navigation(this RmlUI& self, RmlNavDirection direction, bool is_from_stick) -> void {
+  self.nav_direction = direction;
+  self.is_nav_from_stick = is_from_stick;
+  self.nav_delay = NAV_REPEAT_DELAY;
+  navigate(*self.keyboard_view()->context(), direction);
+}
+
+auto RmlUI::stop_navigation(this RmlUI& self) -> void { self.nav_direction = RmlNavDirection::None; }
+
+auto RmlUI::scroll_focus(this RmlUI& self, Rml::Context* context, f32 seconds) -> void {
+  auto stick = glm::vec2(0.0f);
+  for (const auto& gamepad : self.gamepads) {
+    for (const auto axis : {0, 1}) {
+      const auto tilt = std::abs(gamepad.right_stick[axis]);
+      if (tilt > SCROLL_DEAD_ZONE) {
+        stick[axis] += std::copysign((tilt - SCROLL_DEAD_ZONE) / (1.0f - SCROLL_DEAD_ZONE), gamepad.right_stick[axis]);
+      }
+    }
+  }
+
+  auto* scrolled = stick == glm::vec2(0.0f) ? nullptr : context->GetFocusElement()->GetClosestScrollableContainer();
+  if (!scrolled) {
+    self.scroll_remainder = {};
+    return;
+  }
+
+  self.scroll_remainder += stick * SCROLL_SPEED * context->GetDensityIndependentPixelRatio() * seconds;
+  const auto pixels = glm::trunc(self.scroll_remainder);
+  self.scroll_remainder -= pixels;
+  if (pixels.x != 0.0f) {
+    scrolled->SetScrollLeft(scrolled->GetScrollLeft() + pixels.x);
+  }
+
+  if (pixels.y != 0.0f) {
+    scrolled->SetScrollTop(scrolled->GetScrollTop() + pixels.y);
+  }
+}
+
+auto RmlUI::process_gamepad_button(this RmlUI& self, u32 instance_id, GamepadButtonCode button, bool down) -> bool {
+  ZoneScoped;
+
+  const auto direction = dpad_direction(button);
+  auto key = nav_key(direction);
+  if (button == GamepadButtonCode::South) {
+    key = Rml::Input::KI_RETURN;
+  } else if (button == GamepadButtonCode::East) {
+    key = Rml::Input::KI_ESCAPE;
+  }
+
+  if (key == Rml::Input::KI_UNKNOWN) {
+    return false;
+  }
+
+  auto& pad = self.gamepad(instance_id);
+  const auto button_bit = 1u << static_cast<u32>(button);
+  auto* view = self.keyboard_view();
+  if (!down) {
+    if (!self.is_nav_from_stick && self.nav_direction == direction) {
+      self.stop_navigation();
+    }
+
+    const auto is_ui_release = (pad.ui_buttons & button_bit) != 0;
+    pad.ui_buttons &= ~button_bit;
+    if (is_ui_release && view) {
+      view->context()->ProcessKeyUp(key, 0);
+    }
+
+    return is_ui_release;
+  }
+
+  if (!view || !rml_wants_gamepad(view->context())) {
+    return false;
+  }
+
+  // the press may close the menu it lands on, its release is still the UI's
+  pad.ui_buttons |= button_bit;
+  if (direction != RmlNavDirection::None) {
+    self.start_navigation(direction, false);
+    return true;
+  }
+
+  const auto is_propagated = view->context()->ProcessKeyDown(key, 0);
+  if (is_propagated && button == GamepadButtonCode::East) {
+    // nothing in the UI goes back on it, the game may
+    pad.ui_buttons &= ~button_bit;
+    return false;
+  }
+
+  return true;
+}
+
+auto RmlUI::process_gamepad_axis(this RmlUI& self, u32 instance_id, GamepadAxisCode axis, i16 value) -> bool {
+  ZoneScoped;
+
+  const auto tilt = std::max(static_cast<f32>(value) / 32767.0f, -1.0f);
+  auto& pad = self.gamepad(instance_id);
+  switch (axis) {
+    case GamepadAxisCode::AxisLeftX : pad.left_stick.x = tilt; break;
+    case GamepadAxisCode::AxisLeftY : pad.left_stick.y = tilt; break;
+    case GamepadAxisCode::AxisRightX: pad.right_stick.x = tilt; break;
+    case GamepadAxisCode::AxisRightY: pad.right_stick.y = tilt; break;
+    default                         : return false;
+  }
+
+  // kept while the game has the stick, one already tilted when a menu opens moves nothing until it is let go
+  const auto previous = std::exchange(pad.stick_direction, stick_direction(pad.left_stick, pad.stick_direction));
+  const auto is_changed = previous != pad.stick_direction;
+  if (is_changed && self.is_nav_from_stick) {
+    self.stop_navigation();
+  }
+
+  if (!self.wants_gamepad()) {
+    return false;
+  }
+
+  if (is_changed && pad.stick_direction != RmlNavDirection::None) {
+    self.start_navigation(pad.stick_direction, true);
+  }
+
+  return true;
 }
 
 auto RmlUI::reload_ui_files(this RmlUI& self, std::span<const std::string> paths) -> void {
