@@ -807,12 +807,10 @@ TEST_F(DotNetSceneTest, HullsEveryMeshOfAModelRoot) {
     .set(ox::BoxColliderComponent{.size = {50.0f, 0.5f, 50.0f}});
   auto slab = scene->create_entity("Slab").set(ox::TransformComponent{.position = {0.0f, 2.0f, 0.0f}});
   for (const auto mesh_index : {0_u32, 1_u32}) {
-    // the MeshComponent gives its reference back when it goes, as a spawned mesh entity does
-    assets.load_asset(model_uuid);
     scene->create_entity(mesh_index == 0 ? "Bottom" : "Top")
       .child_of(slab)
       .set(ox::TransformComponent{})
-      .set(ox::MeshComponent{.model_uuid = model_uuid, .mesh_index = mesh_index});
+      .set(ox::MeshComponent{.model_uuid = ox::AssetHandle<ox::Model>::acquire(model_uuid), .mesh_index = mesh_index});
   }
 
   slab.set(ox::MeshColliderComponent{.convex = true})
@@ -893,8 +891,9 @@ TEST_F(DotNetSceneTest, ReachesAssetsAudioScenesAndFilesFromCSharp) {
   scene->runtime_stop();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "content released, refs 1"), 1);
 
-  // the speaker going with the scene gives back the last reference
+  // the speaker going with the scene gives back the last reference, and the unload lands at the commit
   scene.reset();
+  assets.commit();
   EXPECT_FALSE(assets.is_loaded(content.beep));
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
   std::ignore = ox::App::get_event_system().unsubscribe<ox::SceneLoadRequestEvent>(handler);
@@ -915,6 +914,7 @@ TEST_F(DotNetSceneTest, ReleasesHandlesTheScriptsForgot) {
     ),
     1
   ) << logs_text();
+  assets.commit();
   EXPECT_FALSE(assets.is_loaded(content.beep));
 }
 
@@ -1170,9 +1170,11 @@ TEST_F(DotNetSceneTest, MirrorsUuidFieldsOfComponents) {
   const auto& b = first.get<ox::SpriteComponent>().material;
   EXPECT_TRUE(a);
   EXPECT_TRUE(b);
-  EXPECT_NE(a, b);
-  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, std::format("sprite materials {} {} valid True", a.str(), b.str())), 1)
-    << logs_text();
+  EXPECT_NE(a.uuid(), b.uuid());
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, std::format("sprite materials {} {} valid True", a.uuid().str(), b.uuid().str())),
+    1
+  ) << logs_text();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "sprite swapped"), 1) << logs_text();
 }
 

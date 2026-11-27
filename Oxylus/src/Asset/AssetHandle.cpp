@@ -6,6 +6,11 @@
 #include "Core/App.hpp"
 
 namespace ox {
+// a ref made where no asset manager runs, like a component reflected by a tool, keeps only its UUID
+static auto running_asset_manager() -> AssetManager* {
+  return App::get() != nullptr && App::has_mod<AssetManager>() ? &App::mod<AssetManager>() : nullptr;
+}
+
 template <typename Id>
 static auto payload_as(const Asset* record, const AssetType type) -> option<Id> {
   if (record == nullptr || record->type != type) {
@@ -123,12 +128,12 @@ auto AssetRef::acquire(const UUID& uuid) -> AssetRef {
   }
 
   // a successful load takes the reference this ref then holds
-  auto& asset_man = App::mod<AssetManager>();
-  if (!asset_man.load_asset(uuid)) {
+  auto* asset_man = running_asset_manager();
+  if (asset_man == nullptr || !asset_man->load_asset(uuid)) {
     return ref;
   }
 
-  if (const auto asset = asset_man.get_asset(uuid); asset && asset->is_loaded()) {
+  if (const auto asset = asset_man->get_asset(uuid); asset && asset->is_loaded()) {
     ref.record_ = asset.value;
   }
 
@@ -150,11 +155,12 @@ auto AssetRef::set_unresolved(this AssetRef& self, const UUID& uuid) -> void {
 auto AssetRef::take_over(this AssetRef& self, const UUID& uuid) -> void {
   self.uuid_ = uuid;
   self.record_ = nullptr;
-  if (!uuid) {
+  auto* asset_man = running_asset_manager();
+  if (!uuid || asset_man == nullptr) {
     return;
   }
 
-  if (const auto asset = App::mod<AssetManager>().get_asset(uuid); asset && asset->is_loaded()) {
+  if (const auto asset = asset_man->get_asset(uuid); asset && asset->is_loaded()) {
     self.record_ = asset.value;
   }
 }
@@ -178,19 +184,19 @@ auto AssetRef::release(this AssetRef& self) -> void {
 
 auto AssetRef::point_at_loaded(this AssetRef& self) -> void {
   self.record_ = nullptr;
-  if (!self.uuid_) {
+  auto* asset_man = running_asset_manager();
+  if (!self.uuid_ || asset_man == nullptr) {
     return;
   }
 
   // a copy holds a count only when there is a loaded asset to count, like the ref it copies
-  auto& asset_man = App::mod<AssetManager>();
-  auto asset = asset_man.get_asset(self.uuid_);
+  auto asset = asset_man->get_asset(self.uuid_);
   if (!asset || !asset->is_loaded()) {
     return;
   }
 
   auto* record = asset.value;
-  asset_man.acquire_ref(std::move(asset));
+  asset_man->acquire_ref(std::move(asset));
   self.record_ = record;
 }
 } // namespace ox

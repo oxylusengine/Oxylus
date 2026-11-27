@@ -1,6 +1,7 @@
 #include <flecs.h>
 #include <gtest/gtest.h>
 
+#include "Asset/AssetHandle.hpp"
 #include "Scene/Components.hpp"
 
 TEST(DecalComponentTest, SurvivesReflectionJsonRoundTrip) {
@@ -8,7 +9,9 @@ TEST(DecalComponentTest, SurvivesReflectionJsonRoundTrip) {
   world.import<ox::CoreComponentsModule>();
 
   const auto source = ox::DecalComponent{
-    .material = ox::UUID::from_string("2b0c8f3e-6c51-4c55-9f6f-3c1d8a0e7b21").value(),
+    .material = ox::AssetHandle<ox::Material>::acquire(
+      ox::UUID::from_string("2b0c8f3e-6c51-4c55-9f6f-3c1d8a0e7b21").value()
+    ),
     .opacity = 0.35f,
     .sort_order = -7,
     .angle_fade_start = 30.0f,
@@ -27,7 +30,7 @@ TEST(DecalComponentTest, SurvivesReflectionJsonRoundTrip) {
   auto decal = ox::DecalComponent{};
   ASSERT_NE(world.from_json(&decal, json.c_str()), nullptr) << json.c_str();
 
-  EXPECT_EQ(decal.material, source.material);
+  EXPECT_EQ(decal.material.uuid(), source.material.uuid());
   EXPECT_FLOAT_EQ(decal.opacity, 0.35f);
   EXPECT_EQ(decal.sort_order, -7);
   EXPECT_FLOAT_EQ(decal.angle_fade_start, 30.0f);

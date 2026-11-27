@@ -493,7 +493,9 @@ static auto audio_set_sound(ecs_world_t* world, u64 entity, const OxAssetId* sou
   return OxStatus::Ok;
 }
 
-static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
+// a component whose `material` handle field scripts can't write, since the handle owns a reference
+template <typename Component>
+static auto set_component_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
   ZoneScoped;
 
   auto* assets = asset_manager();
@@ -501,13 +503,13 @@ static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* 
     return OxStatus::NotFound;
   }
 
-  const auto* decal = flecs::entity(world, entity).try_get<DecalComponent>();
-  if (!decal) {
+  const auto* component = flecs::entity(world, entity).try_get<Component>();
+  if (!component) {
     return OxStatus::NotFound;
   }
 
   const auto uuid = to_uuid(*material);
-  if (uuid == decal->material.uuid()) {
+  if (uuid == component->material.uuid()) {
     return OxStatus::Ok;
   }
 
@@ -533,10 +535,18 @@ static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* 
     return OxStatus::NotFound;
   }
 
-  auto updated = *decal;
+  auto updated = *component;
   updated.material = std::move(handle);
-  flecs::entity(world, entity).set<DecalComponent>(std::move(updated));
+  flecs::entity(world, entity).set<Component>(std::move(updated));
   return OxStatus::Ok;
+}
+
+static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
+  return set_component_material<DecalComponent>(world, entity, material);
+}
+
+static auto sprite_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
+  return set_component_material<SpriteComponent>(world, entity, material);
 }
 
 static auto audio_one_shot(const OxAssetId* sound, f32 volume, const OxVec3* position) -> OxStatus {
@@ -892,6 +902,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.audio_set_sound = audio_set_sound;
   api.audio_one_shot = audio_one_shot;
   api.decal_set_material = decal_set_material;
+  api.sprite_set_material = sprite_set_material;
   api.scene_spawn = scene_spawn;
   api.scene_spawn_model = scene_spawn_model;
   api.scene_spawn_particles = scene_spawn_particles;

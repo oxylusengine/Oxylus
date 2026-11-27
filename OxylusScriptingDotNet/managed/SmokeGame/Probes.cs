@@ -1042,8 +1042,8 @@ public sealed class SpriteProbe : EntityBehaviour
         var b = second.Get<SpriteComponent>().Material;
         Log.Info($"sprite materials {a} {b} valid {a.IsValid && b.IsValid}");
 
-        first.Get<SpriteComponent>().Material = b;
-        second.Get<SpriteComponent>().Material = a;
+        first.Sprite.SetMaterial(b);
+        second.Sprite.SetMaterial(a);
         Log.Info("sprite swapped");
     }
 }
