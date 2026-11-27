@@ -642,6 +642,11 @@ auto ViewportPanel::on_render(this ViewportPanel& self, const SwapchainInfo& swa
       ImGui::SetCursorPosY(self.viewport_size.y * 0.5f);
       ImGui::Text(warning_text);
     } else {
+      // set per frame since viewports can share a scene, and a play scene is a copy the editor camera isn't in
+      const auto is_editor_camera_usable = !self.editor_scene->is_playing() && self.editor_camera.is_alive() &&
+                                           self.editor_camera.has<CameraComponent>();
+      renderer_instance->camera_override = is_editor_camera_usable ? self.editor_camera.id() : 0;
+
       constexpr auto get_mouse_texel_coords =
         [](glm::uvec2 render_s, ImVec2 window_pos, ImVec2 content_min, ImVec2 content_max, ImVec2 mouse_pos)
         -> glm::uvec2 {

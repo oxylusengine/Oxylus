@@ -3259,6 +3259,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   // an explicitly active camera wins over a later one; with none marked the last one still does,
   // which is what every single-camera scene has always relied on
   auto found_active_camera = false;
+  auto found_override_camera = false;
   flecs::entity_t camera_entity = 0;
 
   self.queries->cameras.each([&](flecs::entity e, const TransformComponent& tc, const CameraComponent& c) {
@@ -3278,10 +3279,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
         .draw_frustum(proj, glm::vec4(0, 1, 0, 1), frozen_camera.near_clip, frozen_camera.far_clip);
     }
 
-    if (c.active || !found_active_camera) {
+    const auto is_override_camera = self.camera_override != 0 && e.id() == self.camera_override;
+    if (is_override_camera || (!found_override_camera && (c.active || !found_active_camera))) {
       current_camera = c;
       camera_entity = e.id();
       found_active_camera = c.active;
+      found_override_camera = is_override_camera;
     }
   });
 

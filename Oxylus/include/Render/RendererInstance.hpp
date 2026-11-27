@@ -1506,6 +1506,9 @@ public:
 
   FrameProgramStats program_stats = {};
 
+  // renders through this camera entity whatever the scene's own cameras say, the editor's viewport camera
+  flecs::entity_t camera_override = 0;
+
   // read by passes and their variables, filled per frame
   FrameParams frame_params = {};
   FrameData frame_data = {};
