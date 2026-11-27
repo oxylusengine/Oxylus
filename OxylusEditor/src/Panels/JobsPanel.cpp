@@ -241,7 +241,13 @@ static auto draw_active_row(
   ImGui::PopID();
 }
 
-JobsPanel::JobsPanel() : EditorPanelState("Jobs", ICON_MDI_COGS, false) {}
+JobsPanel::JobsPanel() : EditorPanelState("Jobs", ICON_MDI_COGS, false) {
+  auto& window = App::get_window();
+  auto width = window.get_logical_width() * 0.6f;
+  auto height = window.get_logical_height() * 0.75f;
+  window_default_size = {width, height};
+  window_center_at_appear = true;
+}
 
 auto JobsPanel::on_render(this JobsPanel& self, const SwapchainInfo&) -> void {
   ZoneScoped;

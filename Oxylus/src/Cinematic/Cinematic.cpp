@@ -173,6 +173,16 @@ auto Cinematic::make_default() -> Cinematic {
   return cinematic;
 }
 
+auto Cinematic::clone(this const Cinematic& self) -> Cinematic {
+  auto copy = Cinematic{};
+  copy.name = self.name;
+  copy.duration = self.duration;
+  copy.loop = self.loop;
+  copy.camera_tracks = self.camera_tracks;
+  copy.property_tracks = self.property_tracks;
+  return copy;
+}
+
 auto Cinematic::keyed_extent(this const Cinematic& self) -> f32 {
   auto extent = 0.0f;
   for (const auto& track : self.camera_tracks) {

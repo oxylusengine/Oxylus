@@ -21,9 +21,9 @@ static auto payload_as(const Asset* record, const AssetType type) -> option<Id> 
 }
 
 template <typename T>
-auto resolve_asset(const Asset* record) -> ReadGuard<T> {
+auto resolve_asset(const Asset* record) -> AssetView<T> {
   auto& asset_man = App::mod<AssetManager>();
-  const auto resolve = [&asset_man](auto id) -> ReadGuard<T> {
+  const auto resolve = [&asset_man](auto id) -> AssetView<T> {
     if (!id.has_value()) {
       return {};
     }
@@ -75,16 +75,16 @@ auto resolve_asset(const Asset* record) -> ReadGuard<T> {
   }
 }
 
-template auto resolve_asset<Model>(const Asset*) -> ReadGuard<Model>;
-template auto resolve_asset<Texture>(const Asset*) -> ReadGuard<Texture>;
-template auto resolve_asset<Material>(const Asset*) -> ReadGuard<Material>;
-template auto resolve_asset<Scene>(const Asset*) -> ReadGuard<Scene>;
-template auto resolve_asset<AudioSource>(const Asset*) -> ReadGuard<AudioSource>;
-template auto resolve_asset<TerrainEdits>(const Asset*) -> ReadGuard<TerrainEdits>;
-template auto resolve_asset<ParticleSystem>(const Asset*) -> ReadGuard<ParticleSystem>;
-template auto resolve_asset<Skeleton>(const Asset*) -> ReadGuard<Skeleton>;
-template auto resolve_asset<AnimationClip>(const Asset*) -> ReadGuard<AnimationClip>;
-template auto resolve_asset<Cinematic>(const Asset*) -> ReadGuard<Cinematic>;
+template auto resolve_asset<Model>(const Asset*) -> AssetView<Model>;
+template auto resolve_asset<Texture>(const Asset*) -> AssetView<Texture>;
+template auto resolve_asset<Material>(const Asset*) -> AssetView<Material>;
+template auto resolve_asset<Scene>(const Asset*) -> AssetView<Scene>;
+template auto resolve_asset<AudioSource>(const Asset*) -> AssetView<AudioSource>;
+template auto resolve_asset<TerrainEdits>(const Asset*) -> AssetView<TerrainEdits>;
+template auto resolve_asset<ParticleSystem>(const Asset*) -> AssetView<ParticleSystem>;
+template auto resolve_asset<Skeleton>(const Asset*) -> AssetView<Skeleton>;
+template auto resolve_asset<AnimationClip>(const Asset*) -> AssetView<AnimationClip>;
+template auto resolve_asset<Cinematic>(const Asset*) -> AssetView<Cinematic>;
 
 AssetRef::AssetRef(const AssetRef& other) : uuid_(other.uuid_) { point_at_loaded(); }
 

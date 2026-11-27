@@ -162,12 +162,26 @@ for reading and `JsonWriter` for writing.
 record that never moves: an erased record is kept in `retired_records` until shutdown, and registering
 the UUID again revives it. A record holds a type tag and the loaded payload's slot-map id, written and
 read through `payload_id()`/`set_payload_id()` (atomic, so handles read it without the registry lock).
-Payloads live in per-type `SlotMap`s (`SlotMapSync::External`) guarded by per-type
-`std::shared_mutex`, and the accessors return `ReadGuard<T>` (`Memory/ReadGuard.hpp`), which holds that
-lock. Don't store a guard past its use site, and **never hold two guards of the same asset type on one
-thread**: the second shared lock queues behind a waiting writer and deadlocks. Read both under one lock
-instead (`AssetManager::with_animations`). Where this is heading (a per-frame commit point and lock-free
-reads) is in `docs/systems/asset-ownership.md`.
+Every payload type lives in an `AssetStorage<T, ID>` (`Asset/AssetStorage.hpp`). Its slots never
+move and keep their index for life (a material's index is its GPU index), payloads are immutable once
+published, and `get_*` and `AssetHandle<T>::get()` return an `AssetView<T>` (`Asset/AssetView.hpp`): a
+`const T*` read without any lock, so reading any number of assets at once is fine. A writer replaces a
+payload instead of editing it (`edit_cinematic` and `edit_particle_system` edit a `clone()` and swap it in,
+`set_terrain_edits` and `set_material` swap a new value in, the material inspector edits a copy and
+commits it with `set_material`) and passes the old one to `AssetManager::retire`. The next `commit`
+destroys whatever the frame retired, on the main thread, and GPU resources inside go through
+`RenderContext` retirement from there. So a view stays valid until the next commit and must not be kept
+across a frame or handed to a job that may outlive it; such a reader takes `AssetStorage::share` instead.
+
+A model's meshes stream in after it is published. Its per-mesh fields (`gpu_meshes`, `gpu_mesh_buffers`,
+`lod0_index_ranges`, `lod0_meshlet_counts`, `collision_meshes`) are `mutable`, written once by that
+mesh's upload job before it sets `mesh_ready[i]`; read a mesh's entries only after `is_mesh_ready(i)`.
+`mesh_blases` is a lazily built cache whose slots are claimed with an atomic exchange.
+
+The registry itself keeps its `std::shared_mutex`: `get_asset` returns a `ReadGuard<Asset>`
+(`Memory/ReadGuard.hpp`) that holds it. Don't store one past its use site, and drop it before calling
+anything that takes the registry's write lock (`load_asset`, `unload_asset`, `register_asset`). Handles
+never touch it after they are made. Where this came from is in `docs/systems/asset-ownership.md`.
 
 **Hold assets with `AssetHandle<T>` (`Asset/AssetHandle.hpp`), not a UUID.** A handle owns one
 reference: copying takes another, moving transfers it, destroying gives it back. Every asset field on
@@ -197,10 +211,27 @@ loads twice), then each queued field takes over the reference its load took, and
 marked modified once after its last field resolves. Any new path that deserializes components must end
 in `load_requested_assets`, or its handle fields stay empty.
 
+**Loads that finish on a worker appear at the next frame boundary.** Every payload enters the registry
+through `AssetManager::publish_payload`. On the main thread it is published at once. On any other
+thread it is staged on the record and queued, and `AssetManager::commit`, which `App::step` runs before
+any module updates, publishes the queue in order, so children land before the parents that hold them.
+While staged, `is_loading` is true and `is_loaded`, `get_*` and handles see nothing. A main-thread load
+of a staged asset publishes it on demand, and a worker load of one just counts on the record, so
+nothing is built twice. Worker code must not load an asset and expect to read it through the registry
+before the next commit; it can use the slot-map id it built, as the model loader's mesh jobs do.
+Registration is the exception: `register_asset`, `update_asset_path` and `create_asset` take effect at
+once on any thread, because import results are used in the frame their job finishes.
+
+**Unloads happen at the commit too.** An asset whose count reaches zero is queued, and the next
+`commit` unloads it only if it is still at zero, so taking it again in the same frame keeps it, and a
+payload read this frame outlives the frame. Until then `is_loaded` stays true. `delete_asset` is the
+one path that unloads at once, because the record goes away with it. Tests that check an asset is gone
+call `commit()` first.
+
 **Bare UUIDs are still counted by hand.** Code that holds an asset by UUID instead of a handle takes
 exactly one reference when it starts (`load_asset` does, unless `should_acquire = false`, even for an
 already loaded asset) and gives exactly one back when it stops (`unload_asset`, which is just
-`release_ref`; the payload is destroyed only at zero). Never call the payload-level `unload_*` helpers
+`release_ref`). Never call the payload-level `unload_*` helpers
 or erase from `asset_registry` to force an unload; that strands every other holder on a freed slot.
 
 **Children are held by the loaded asset, not counted per holder.** A loaded asset keeps one `AssetRef`
@@ -504,16 +535,14 @@ preference:
   window. Unlock manually on the failure paths and return a default-constructed (null) guard:
 
   ```cpp
-  auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) -> ReadGuard<Model> {
-    if (model_id == ModelID::Invalid)
-      return {};
-    self.models_mutex.lock_shared();
-    auto* model = self.model_map.slot(model_id);
-    if (!model) {
-      self.models_mutex.unlock_shared();
+  auto AssetManager::get_asset(this AssetManager& self, const UUID& uuid) -> ReadGuard<Asset> {
+    self.registry_mutex.lock_shared();
+    const auto it = self.asset_registry.find(uuid);
+    if (it == self.asset_registry.end()) {
+      self.registry_mutex.unlock_shared();
       return {};
     }
-    return ReadGuard<Model>(self.models_mutex, model, adopt_lock);
+    return ReadGuard<Asset>(self.registry_mutex, it->second.get(), adopt_lock);
   }
   ```
 

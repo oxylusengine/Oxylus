@@ -11,6 +11,8 @@
 #include "Animation/Skeleton.hpp"
 #include "Asset/AssetFile.hpp"
 #include "Asset/AssetHandle.hpp"
+#include "Asset/AssetStorage.hpp"
+#include "Asset/AssetView.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
@@ -136,6 +138,9 @@ public:
   // still there. Runs on the main thread once per frame, before any module updates, so asset state
   // never changes under a frame in progress and a payload read this frame outlives the frame
   auto commit(this AssetManager& self) -> void;
+  // unloads what dropped to zero references now instead of at the next commit. Payloads it unloads are
+  // only retired, so views read this frame stay valid. Main thread only
+  auto flush_unloads(this AssetManager& self) -> void;
   auto is_loading(this AssetManager& self, const UUID& uuid) -> bool;
 
   auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
@@ -144,23 +149,25 @@ public:
 
   auto get_asset(this AssetManager& self, const UUID& uuid) -> ReadGuard<Asset>;
 
-  auto get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model>;
-  auto get_model(this AssetManager& self, ModelID model_id) -> ReadGuard<Model>;
+  auto get_model(this AssetManager& self, const UUID& uuid) -> AssetView<Model>;
+  auto get_model(this AssetManager& self, ModelID model_id) -> AssetView<Model>;
   // the device address of a mesh's ray tracing structure, 0 while it has none. Static structures are built here and
   // nowhere else: a ready mesh without one gets it first when `budget` admits it, blocking until it is done. A null
   // `budget` builds nothing
-  static auto resolve_mesh_blas(RenderContext& render_context, Model& model, usize mesh_index, StaticBLASBudget* budget)
-    -> u64;
+  static auto resolve_mesh_blas(
+    RenderContext& render_context, const Model& model, usize mesh_index, StaticBLASBudget* budget
+  ) -> u64;
 
-  auto get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture>;
-  auto get_texture(this AssetManager& self, TextureID texture_id) -> ReadGuard<Texture>;
+  auto get_texture(this AssetManager& self, const UUID& uuid) -> AssetView<Texture>;
+  auto get_texture(this AssetManager& self, TextureID texture_id) -> AssetView<Texture>;
 
   auto get_null_material(this AssetManager& self) -> ReadGuard<Asset>;
-  auto get_material(this AssetManager& self, const UUID& uuid) -> ReadGuard<Material>;
-  auto get_material(this AssetManager& self, MaterialID material_id) -> ReadGuard<Material>;
+  auto get_material(this AssetManager& self, const UUID& uuid) -> AssetView<Material>;
+  auto get_material(this AssetManager& self, MaterialID material_id) -> AssetView<Material>;
   // replaces a loaded material's parameters and marks it dirty. Every texture it newly names is loaded and gets as many
   // references as the material has holders, the ones it stops naming give those back, the way releasing the material
   // would. False when `uuid` isn't a loaded material or a new texture won't load
+  // replaces the payload, so readers of this frame keep the version they read
   auto set_material(this AssetManager& self, const UUID& uuid, const Material& material) -> bool;
   // takes a reference on every child the payload names now and gives back the ones it held before, in
   // that order, so a child that stays never drops to zero. Whoever writes a payload's child uuids in
@@ -173,18 +180,17 @@ public:
   auto get_materials_revision(this AssetManager& self) -> u32;
   template <typename Func>
   auto for_each_material_index(this AssetManager& self, Func&& func) -> void {
-    auto lock = std::shared_lock(self.materials_mutex);
-    self.material_map.for_each_active([&func](usize index, const Material&) { func(index); });
+    self.material_storage.for_each_index([&func](u32 index) { func(static_cast<usize>(index)); });
   }
 
-  auto get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene>;
-  auto get_scene(this AssetManager& self, SceneID scene_id) -> ReadGuard<Scene>;
+  auto get_scene(this AssetManager& self, const UUID& uuid) -> AssetView<Scene>;
+  auto get_scene(this AssetManager& self, SceneID scene_id) -> AssetView<Scene>;
 
-  auto get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource>;
-  auto get_audio(this AssetManager& self, AudioID audio_id) -> ReadGuard<AudioSource>;
+  auto get_audio(this AssetManager& self, const UUID& uuid) -> AssetView<AudioSource>;
+  auto get_audio(this AssetManager& self, AudioID audio_id) -> AssetView<AudioSource>;
 
-  auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits>;
-  auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> ReadGuard<TerrainEdits>;
+  auto get_terrain_edits(this AssetManager& self, const UUID& uuid) -> AssetView<TerrainEdits>;
+  auto get_terrain_edits(this AssetManager& self, TerrainEditsID terrain_edits_id) -> AssetView<TerrainEdits>;
   auto set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void;
 
   // these have no file of their own, so publishing is how the importer's payload enters the
@@ -199,41 +205,22 @@ public:
   // Needs the renderer, a null UUID without one
   auto create_model(this AssetManager& self, ModelData&& model_data) -> UUID;
 
-  auto get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton>;
-  auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> ReadGuard<Skeleton>;
+  auto get_skeleton(this AssetManager& self, const UUID& uuid) -> AssetView<Skeleton>;
+  auto get_skeleton(this AssetManager& self, SkeletonID skeleton_id) -> AssetView<Skeleton>;
 
-  auto get_animation(this AssetManager& self, const UUID& uuid) -> ReadGuard<AnimationClip>;
-  auto get_animation(this AssetManager& self, AnimationID animation_id) -> ReadGuard<AnimationClip>;
-  // both clips under one read lock, for a crossfade that samples them together. Two guards on the
-  // same mutex from one thread deadlock once a load queues for the write lock between them. `func`
-  // gets null for a clip that is not loaded, and must not call back into the asset manager
-  template <typename Func>
-  auto with_animations(this AssetManager& self, const UUID& first, const UUID& second, Func&& func) -> void {
-    const auto animation_id_of = [&self](const UUID& uuid) -> AnimationID {
-      if (!uuid) {
-        return AnimationID::Invalid;
-      }
-
-      const auto asset = self.get_asset(uuid);
-      return asset && asset->type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
-    };
-
-    // looked up before the lock, so the registry's lock is never held under this one
-    const auto first_id = animation_id_of(first);
-    const auto second_id = animation_id_of(second);
-    auto lock = std::shared_lock(self.animations_mutex);
-    func(self.animation_map.slot(first_id), self.animation_map.slot(second_id));
-  }
-
-  auto get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem>;
-  auto get_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> ReadGuard<ParticleSystem>;
+  auto get_animation(this AssetManager& self, const UUID& uuid) -> AssetView<AnimationClip>;
+  auto get_animation(this AssetManager& self, AnimationID animation_id) -> AssetView<AnimationClip>;
+  auto get_particle_system(this AssetManager& self, const UUID& uuid) -> AssetView<ParticleSystem>;
+  auto get_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> AssetView<ParticleSystem>;
+  // recompiles into a new version that replaces the payload
   auto set_particle_system_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto edit_particle_system(
     this AssetManager& self, const UUID& uuid, const std::function<void(ParticleSystem&)>& mutate, bool recompile = true
   ) -> void;
 
-  auto get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic>;
-  auto get_cinematic(this AssetManager& self, CinematicID cinematic_id) -> ReadGuard<Cinematic>;
+  auto get_cinematic(this AssetManager& self, const UUID& uuid) -> AssetView<Cinematic>;
+  auto get_cinematic(this AssetManager& self, CinematicID cinematic_id) -> AssetView<Cinematic>;
+  // `mutate` edits a copy, which then replaces the payload, so readers of this frame keep the old one
   auto edit_cinematic(this AssetManager& self, const UUID& uuid, const std::function<void(Cinematic&)>& mutate) -> void;
 
 private:
@@ -241,6 +228,8 @@ private:
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
   ) -> bool;
 
+  // the storage owner for a model, whose GPU resources go with it when the commit destroys it
+  static auto model_payload(Model&& model) -> std::shared_ptr<const Model>;
   enum class PublishResult : u8 { Published, Staged, Rejected };
   // the one place a payload enters the registry: published straight away on the main thread, staged for
   // the next commit on any other. `type` None accepts any record type. Rejected means the record is gone,
@@ -248,6 +237,7 @@ private:
   auto publish_payload(this AssetManager& self, const UUID& uuid, AssetType type, u64 payload_id) -> PublishResult;
   // false when the record no longer stages `payload_id`
   auto publish_staged(this AssetManager& self, const UUID& uuid, u64 payload_id) -> bool;
+  auto retire(this AssetManager& self, std::shared_ptr<const void> payload) -> void;
   // unloads at once if the asset is loaded and nothing references it. The commit's path, and
   // `delete_asset`'s, which cannot wait for one
   auto unload_now(this AssetManager& self, const UUID& uuid) -> void;
@@ -333,18 +323,10 @@ private:
   std::vector<UUID> pending_unloads = {};
   // only pushed to and swapped out, never read in place
   std::mutex pending_unloads_mutex = {};
-  std::shared_mutex models_mutex = {};
-  std::shared_mutex textures_mutex = {};
-  std::shared_mutex materials_mutex = {};
-  std::shared_mutex scenes_mutex = {};
-  std::shared_mutex audio_mutex = {};
-  std::shared_mutex terrain_edits_mutex = {};
-  std::shared_mutex particle_systems_mutex = {};
-  std::shared_mutex skeletons_mutex = {};
-  std::shared_mutex animations_mutex = {};
-  std::shared_mutex cinematics_mutex = {};
 
   std::vector<MaterialID> dirty_materials = {};
+  // guards `dirty_materials`, every section changes it
+  std::mutex dirty_materials_mutex = {};
   // bumped whenever a material is created, changed or destroyed
   u32 materials_revision = 0;
 
@@ -358,16 +340,25 @@ private:
   std::condition_variable model_load_cv = {};
 
   // each one is only touched under its matching `*_mutex` above, so they skip a lock of their own
-  SlotMap<Model, ModelID, SlotMapSync::External> model_map = {};
-  SlotMap<Texture, TextureID, SlotMapSync::External> texture_map = {};
-  SlotMap<Material, MaterialID, SlotMapSync::External> material_map = {};
-  SlotMap<std::unique_ptr<Scene>, SceneID, SlotMapSync::External> scene_map = {};
-  SlotMap<AudioSource, AudioID, SlotMapSync::External> audio_map = {};
-  SlotMap<TerrainEdits, TerrainEditsID, SlotMapSync::External> terrain_edits_map = {};
-  SlotMap<ParticleSystem, ParticleSystemID, SlotMapSync::External> particle_system_map = {};
-  SlotMap<Skeleton, SkeletonID, SlotMapSync::External> skeleton_map = {};
-  SlotMap<AnimationClip, AnimationID, SlotMapSync::External> animation_map = {};
-  SlotMap<Cinematic, CinematicID, SlotMapSync::External> cinematic_map = {};
+  // immutable once published and read without a lock, see `retire`
+  AssetStorage<AudioSource, AudioID> audio_storage = {};
+  AssetStorage<Skeleton, SkeletonID> skeleton_storage = {};
+  AssetStorage<AnimationClip, AnimationID> animation_storage = {};
+  AssetStorage<Model, ModelID> model_storage = {};
+  AssetStorage<Texture, TextureID> texture_storage = {};
+  // a material's slot index is its index in the renderer's GPU material buffer
+  AssetStorage<Material, MaterialID> material_storage = {};
+  AssetStorage<Cinematic, CinematicID> cinematic_storage = {};
+  AssetStorage<TerrainEdits, TerrainEditsID> terrain_edits_storage = {};
+  AssetStorage<ParticleSystem, ParticleSystemID> particle_system_storage = {};
+  // a scene never moves, its observers hold its address, so its slot adopts the allocation it was built in
+  AssetStorage<Scene, SceneID> scene_storage = {};
+
+  // payloads replaced or destroyed since the last commit, which destroys them: by then no reader of the
+  // frame they were retired in can still hold a pointer to one. Always destroyed on the main thread
+  std::vector<std::shared_ptr<const void>> retired_payloads = {};
+  // only pushed to and swapped out, never read in place
+  std::mutex retired_payloads_mutex = {};
 
   UUID null_material = {};
 };

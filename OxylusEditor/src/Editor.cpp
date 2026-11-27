@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
+#include <imgui.h>
 #include <imgui_internal.h>
 #include <implot.h>
 #include <vir/Program.hpp>
@@ -777,9 +778,10 @@ void Editor::draw_menubar(this Editor& self) {
         ImVec2(ImGui::GetMainViewport()->Size.x - UI::scale(10.0f) - ImGui::CalcTextSize(project_name.c_str()).x, 0)
       );
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::Button(project_name.c_str());
-      ImGui::PopStyleColor(2);
+      ImGui::PopStyleColor(3);
     }
 
     ImGui::EndMenuBar();

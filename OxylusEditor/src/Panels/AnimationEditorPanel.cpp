@@ -245,7 +245,12 @@ auto AnimationEditorPanel::frame_model(this AnimationEditorPanel& self) -> void 
   auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
 
   if (auto model = App::mod<AssetManager>().get_model(self.model_uuid)) {
-    for (const auto& mesh : model->gpu_meshes) {
+    for (usize mesh_index = 0; mesh_index < model->gpu_meshes.size(); mesh_index++) {
+      if (!model->is_mesh_ready(mesh_index)) {
+        continue;
+      }
+
+      const auto& mesh = model->gpu_meshes[mesh_index];
       const auto half_extent = mesh.bounds.aabb_extent * 0.5f;
       bounds_min = glm::min(bounds_min, mesh.bounds.aabb_center - half_extent);
       bounds_max = glm::max(bounds_max, mesh.bounds.aabb_center + half_extent);

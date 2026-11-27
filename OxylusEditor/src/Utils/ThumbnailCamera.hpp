@@ -169,7 +169,7 @@ private:
     glm::mat4 world_transform = parent_transform * local_transform;
 
     for (size_t mesh_index : group.mesh_indices) {
-      if (mesh_index >= model.gpu_meshes.size())
+      if (mesh_index >= model.gpu_meshes.size() || !model.is_mesh_ready(mesh_index))
         continue;
       const auto& mesh = model.gpu_meshes[mesh_index];
 

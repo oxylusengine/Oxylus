@@ -89,6 +89,10 @@ struct SpriteAnimationComponent {
   glm::vec2 frame_size = {};
 
   float current_time = 0.f;
+  // the current frame's rect in the albedo texture, as a share of its uv. Written by
+  // sprite_animation_update and never saved, so the shared material stays untouched
+  glm::vec2 frame_uv_size = {1.0f, 1.0f};
+  glm::vec2 frame_uv_offset = {0.0f, 0.0f};
 
   void reset() { current_time = 0.f; }
 

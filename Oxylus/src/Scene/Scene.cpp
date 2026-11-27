@@ -150,7 +150,6 @@ static auto evaluate_animation_instance(
 ) -> void {
   ZoneScoped;
 
-  auto& asset_man = App::mod<AssetManager>();
   auto skeleton = instance.skeleton.get();
   if (!skeleton || !skeleton->is_valid()) {
     return;
@@ -160,31 +159,25 @@ static auto evaluate_animation_instance(
   auto& task_system = instance.task_system;
   task_system.reset();
 
-  // sampled inside the callback: the task system holds raw AnimationClip pointers into the slot
-  // map, so the read lock has to stay taken until the sampling is done
+  // lock-free reads stay valid until the next commit, which is after the sampling below, so both clips
+  // of a crossfade can be read at once
   const auto& evaluation = instance.evaluation;
   auto is_sampled = false;
-  asset_man.with_animations(
-    evaluation.has_clip ? instance.clip.uuid() : UUID(nullptr),
-    evaluation.has_fade ? instance.fade_from_clip.uuid() : UUID(nullptr),
-    [&](const AnimationClip* clip, const AnimationClip* fade_from) -> void {
-      if (clip == nullptr || clip->skeleton_uuid != instance.skeleton.uuid()) {
-        return;
-      }
-
-      auto task = task_system.register_sample(clip, evaluation.current_time);
-      if (fade_from != nullptr && fade_from->skeleton_uuid == instance.skeleton.uuid()) {
-        const auto fade_task = task_system.register_sample(fade_from, evaluation.fade_from_time);
-        // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
-        task = task_system.register_blend(fade_task, task, evaluation.fade_weight);
-      }
-
-      if (task != INVALID_POSE_TASK) {
-        task_system.execute(*skeleton.value, instance.pose);
-        is_sampled = true;
-      }
+  const auto clip = evaluation.has_clip ? instance.clip.get() : AssetView<AnimationClip>{};
+  if (clip && clip->skeleton_uuid == instance.skeleton.uuid()) {
+    auto task = task_system.register_sample(clip.value, evaluation.current_time);
+    const auto fade_from = evaluation.has_fade ? instance.fade_from_clip.get() : AssetView<AnimationClip>{};
+    if (fade_from && fade_from->skeleton_uuid == instance.skeleton.uuid()) {
+      const auto fade_task = task_system.register_sample(fade_from.value, evaluation.fade_from_time);
+      // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
+      task = task_system.register_blend(fade_task, task, evaluation.fade_weight);
     }
-  );
+
+    if (task != INVALID_POSE_TASK) {
+      task_system.execute(*skeleton.value, instance.pose);
+      is_sampled = true;
+    }
+  }
 
   if (!is_sampled) {
     // not playing, no clip yet, or it failed to load, so fall back to the reference pose because
@@ -1472,14 +1465,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const u32 frame_y = frame / sprite_animation.columns;
 
       const auto albedo_texture = asset_manager.get_texture(material->albedo_texture);
-      auto& uv_size = material->uv_size;
+      if (!albedo_texture) {
+        return;
+      }
 
-      auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
-      uv_size = {
-        sprite_animation.frame_size[0] * 1.f / texture_size[0],
-        sprite_animation.frame_size[1] * 1.f / texture_size[1]
-      };
-      material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
+      // the frame lives on the sprite, the material is shared and never edited from here
+      const auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
+      const auto frame_uv_size = sprite_animation.frame_size / texture_size;
+      sprite_animation.frame_uv_size = frame_uv_size;
+      sprite_animation.frame_uv_offset = frame_uv_size * glm::vec2(frame_x, frame_y);
     });
 
   // after every engine system, so systems the runtime registers run after the engine's within a phase
@@ -1759,7 +1753,10 @@ auto Scene::prepare_render(this Scene& self) -> void {
           model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
         }
         const auto model = asset_man.get_model(model_id);
-        const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
+        // a mesh's streamed fields are only written once its upload job sets its ready flag, so one still
+        // uploading reads as empty. Spawning attaches only ready meshes, this is the fallback
+        const auto is_mesh_ready = model->is_mesh_ready(mesh_instance.mesh_node_index);
+        const auto mesh = is_mesh_ready ? model->gpu_meshes[mesh_instance.mesh_node_index] : GPU::Mesh{};
         const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
         const auto material_id = material_asset ? material_asset->material_id
                                                 : asset_man.get_null_material()->material_id;
@@ -1782,7 +1779,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
         }
 
         auto lod0_index = 0;
-        const auto lod0_meshlet_count = model->lod0_meshlet_counts[mesh_instance.mesh_node_index];
+        const auto lod0_meshlet_count = is_mesh_ready ? model->lod0_meshlet_counts[mesh_instance.mesh_node_index]
+                                                      : 0_u32;
 
         auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
         gpu_mesh_instance.mesh_index = mesh_index;
@@ -1841,7 +1839,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
     auto any_skinned_advanced = false;
     {
       auto cached_model_id = ModelID::Invalid;
-      auto cached_model = ReadGuard<Model>();
+      auto cached_model = AssetView<Model>();
       for (auto& skinned : self.skinned_mesh_instances) {
         skinned.pose_advanced = false;
         skinned.needs_skinning = false;
@@ -1900,7 +1898,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
         .triangle_budget = static_cast<u64>(std::max(0, self.renderer_cvar.cvar_rt_static_build_budget.get())),
       };
       auto cached_model_id = ModelID::Invalid;
-      auto cached_model = ReadGuard<Model>();
+      auto cached_model = AssetView<Model>();
       for (const auto& [source, address] : std::views::zip(mesh_sources, blas_addresses)) {
         if (source.model_id != cached_model_id) {
           cached_model.reset();
@@ -2135,7 +2133,7 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
   return e.add<TransformComponent>().add<LayerComponent>();
 }
 
-auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity {
+auto Scene::spawn_model_hierarchy(this Scene& self, const Model& model, PendingModelSpawn& spawn) -> flecs::entity {
   ZoneScoped;
 
   const auto& root_node = model.mesh_groups.front();
@@ -2228,7 +2226,7 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
   return root_entity;
 }
 
-auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+auto Scene::resolve_mesh_spawn(this Scene& self, const Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
   -> MeshSpawnInfo {
   ZoneScoped;
   memory::ScopedStack stack;

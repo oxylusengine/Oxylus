@@ -893,7 +893,7 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
 }
 
 auto InspectorPanel::draw_material_properties(
-  ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
+  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) -> bool {
   if (material_uuid) {
     const auto& window = App::get_window();
@@ -1053,8 +1053,8 @@ auto InspectorPanel::draw_material_properties(
         return UUID(nullptr);
       }
 
-      // loaded without a reference: the material takes its own when the caller hands its new
-      // children over with hold_children, which also gives back the old texture's
+      // loaded without a reference: the material takes its own when the edit is committed with
+      // set_material, which also gives back the old texture's
       if (!App::mod<AssetManager>().load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb}, false)) {
         return UUID(nullptr);
       }
@@ -1610,11 +1610,12 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
         break;
       }
 
-      const auto material_dirty = draw_material_properties(std::move(material), uuid, path);
+      // the payload is immutable, so the edit goes into a copy that replaces it, which also marks it
+      // dirty and moves the material's texture references over
+      auto edited = material.copy();
       material.reset();
-      if (material_dirty) {
-        asset_man.set_material_dirty(material_id);
-        asset_man.hold_children(uuid);
+      if (draw_material_properties(&edited, uuid, path)) {
+        asset_man.set_material(uuid, edited);
         editor.thumbnail_manager.invalidate_material(uuid);
       }
       break;
@@ -1680,7 +1681,7 @@ auto InspectorPanel::draw_asset_info(
 }
 
 auto InspectorPanel::draw_audio_asset(
-  this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio
+  this InspectorPanel& self, const std::filesystem::path& path, AssetView<AudioSource> audio
 ) -> void {
   ZoneScoped;
   memory::ScopedStack stack;

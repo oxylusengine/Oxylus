@@ -2,8 +2,8 @@
 
 #include <utility>
 
+#include "Asset/AssetView.hpp"
 #include "Core/UUID.hpp"
-#include "Memory/ReadGuard.hpp"
 
 namespace ox {
 struct Asset;
@@ -60,7 +60,7 @@ private:
 };
 
 template <typename T>
-auto resolve_asset(const Asset* record) -> ReadGuard<T>;
+auto resolve_asset(const Asset* record) -> AssetView<T>;
 
 template <typename T>
 class AssetHandle : public AssetRef {
@@ -71,7 +71,7 @@ public:
   static auto acquire(const UUID& uuid) -> AssetHandle { return AssetHandle(AssetRef::acquire(uuid)); }
   static auto from_loaded(const UUID& uuid) -> AssetHandle { return AssetHandle(AssetRef::from_loaded(uuid)); }
 
-  // holds the payload's lock like every asset accessor, null when the asset is not loaded or is not a `T`
-  auto get(this const AssetHandle& self) -> ReadGuard<T> { return resolve_asset<T>(self.record()); }
+  // null when the asset is not loaded or is not a `T`
+  auto get(this const AssetHandle& self) -> AssetView<T> { return resolve_asset<T>(self.record()); }
 };
 } // namespace ox

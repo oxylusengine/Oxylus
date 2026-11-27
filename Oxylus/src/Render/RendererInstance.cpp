@@ -3774,12 +3774,15 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
 
         if (auto transform_id = s.get_entity_transform_id(e)) {
+          const auto* animation = e.try_get<SpriteAnimationComponent>();
           rq2d.add(
             flags,
             tc.position.y,
             SlotMap_decode_id(*transform_id).index,
             SlotMap_decode_id(static_cast<MaterialID>(comp.material.payload_id())).index,
-            distance
+            distance,
+            animation != nullptr ? animation->frame_uv_size : glm::vec2(1.0f, 1.0f),
+            animation != nullptr ? animation->frame_uv_offset : glm::vec2(0.0f, 0.0f)
           );
         } else {
           OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());

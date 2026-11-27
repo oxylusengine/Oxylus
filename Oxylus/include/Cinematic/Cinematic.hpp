@@ -82,6 +82,8 @@ struct Cinematic {
 
   // longest keyed time across every track, so the editor can grow `duration` to fit what was recorded
   auto keyed_extent(this const Cinematic& self) -> f32;
+  // copies are explicit, an edit builds the next version from one
+  auto clone(this const Cinematic& self) -> Cinematic;
 };
 
 namespace cinematic {

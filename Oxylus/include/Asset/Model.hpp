@@ -64,22 +64,28 @@ struct Model {
   f32 max_bone_influence_radius = 0.f;
   std::vector<MeshGroup> mesh_groups = {};
   std::vector<Light> lights = {};
-  std::vector<u32> lod0_meshlet_counts = {};
-  std::vector<IndexRange> lod0_index_ranges = {};
-  std::vector<GPU::Mesh> gpu_meshes = {};
   std::vector<option<u32>> material_indices = {}; // these are per mesh, not per MeshGroup
-  std::vector<BufferID> gpu_mesh_buffers = {};
-  std::vector<AccelerationStructureID> mesh_blases = {};
-  std::vector<CollisionMesh> collision_meshes = {};
 
-  std::vector<std::atomic_flag> mesh_ready = {};
-  u32 pending_meshes = 0;
+  // A published model is const, but its meshes stream in after it. These are sized before it is
+  // published and never resized; each mesh's entries are written once, by that mesh's upload job,
+  // before it sets `mesh_ready[i]`. Read a mesh's entries only after `is_mesh_ready(i)`.
+  mutable std::vector<u32> lod0_meshlet_counts = {};
+  mutable std::vector<IndexRange> lod0_index_ranges = {};
+  mutable std::vector<GPU::Mesh> gpu_meshes = {};
+  mutable std::vector<BufferID> gpu_mesh_buffers = {};
+  mutable std::vector<CollisionMesh> collision_meshes = {};
+  mutable std::vector<std::atomic_flag> mesh_ready = {};
+  mutable u32 pending_meshes = 0;
+
+  // built lazily by `AssetManager::resolve_mesh_blas`, each slot claimed with an atomic exchange
+  mutable std::vector<AccelerationStructureID> mesh_blases = {};
 
   usize default_scene_index = 0;
 
   auto is_mesh_ready(this const Model& self, usize mesh_index) -> bool;
-  auto destroy_gpu_resources(this Model& self, RenderContext& render_context) -> void;
-  auto is_fully_loaded(this Model& self) -> bool;
+  // for the model's last owner, when its storage slot destroys it
+  auto destroy_gpu_resources(this const Model& self, RenderContext& render_context) -> void;
+  auto is_fully_loaded(this const Model& self) -> bool;
 
   auto get_mesh_bounds(this const Model& self) -> GPU::MeshBounds;
 };

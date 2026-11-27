@@ -962,6 +962,10 @@ struct SpriteGPUData {
   u32 material_id16_ypos16 = 0;
   u32 flags16_distance16 = 0;
   u32 transform_id = 0;
+  // half2 each: an animated sprite's frame rect in texture uv, applied before the material's own uv
+  // transform. 0x3c003c00 is (1.0, 1.0), the whole texture
+  u32 frame_uv_size16x2 = 0x3c003c00;
+  u32 frame_uv_offset16x2 = 0;
 };
 
 // --- Particles ---

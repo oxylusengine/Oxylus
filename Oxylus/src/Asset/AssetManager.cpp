@@ -126,20 +126,20 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.source_index.clear();
   self.pending_load_info.clear();
   self.dirty_materials.clear();
-  for (usize index = 0; index < self.model_map.capacity(); index++) {
-    if (auto* model = self.model_map.slot_from_index(index)) {
-      model->destroy_gpu_resources(App::get_rendercontext());
-    }
+  self.model_storage.destroy_all();
+  self.audio_storage.destroy_all();
+  self.skeleton_storage.destroy_all();
+  self.animation_storage.destroy_all();
+  self.texture_storage.destroy_all();
+  self.material_storage.destroy_all();
+  self.cinematic_storage.destroy_all();
+  self.terrain_edits_storage.destroy_all();
+  self.particle_system_storage.destroy_all();
+  self.scene_storage.destroy_all();
+  {
+    auto lock = std::unique_lock(self.retired_payloads_mutex);
+    self.retired_payloads.clear();
   }
-
-  self.model_map.reset();
-  self.texture_map.reset();
-  self.material_map.reset();
-  self.scene_map.reset();
-  self.audio_map.reset();
-  self.terrain_edits_map.reset();
-  self.particle_system_map.reset();
-  self.cinematic_map.reset();
 
   return {};
 }
@@ -204,6 +204,12 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
 
 auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
+
+  // a holder that let go this frame left its unload for the commit, and a parent still loaded until then
+  // still holds its children, so deleting right after a teardown would find them all referenced
+  if (JobManager::is_main_thread()) {
+    self.flush_unloads();
+  }
 
   auto is_loaded = false;
   auto ref_count = 0_u64;
@@ -474,9 +480,27 @@ auto AssetManager::publish_staged(this AssetManager& self, const UUID& uuid, con
   return true;
 }
 
+auto AssetManager::retire(this AssetManager& self, std::shared_ptr<const void> payload) -> void {
+  if (payload == nullptr) {
+    return;
+  }
+
+  auto lock = std::unique_lock(self.retired_payloads_mutex);
+  self.retired_payloads.push_back(std::move(payload));
+}
+
 auto AssetManager::commit(this AssetManager& self) -> void {
   ZoneScoped;
   OX_ASSERT(JobManager::is_main_thread());
+
+  // retired during the frame that just ended, so no reader of it is left. What this commit retires
+  // waits for the next one
+  auto expired = std::vector<std::shared_ptr<const void>>{};
+  {
+    auto lock = std::unique_lock(self.retired_payloads_mutex);
+    std::swap(expired, self.retired_payloads);
+  }
+  OX_DEFER(&) { expired.clear(); };
 
   auto staged = std::vector<StagedPayload>{};
   {
@@ -500,6 +524,13 @@ auto AssetManager::commit(this AssetManager& self) -> void {
       self.unload_asset_impl(payload.type, payload.payload_id);
     }
   }
+
+  self.flush_unloads();
+}
+
+auto AssetManager::flush_unloads(this AssetManager& self) -> void {
+  ZoneScoped;
+  OX_ASSERT(JobManager::is_main_thread());
 
   // unloading gives back the children it held, which can queue those in turn, so this runs until a
   // pass queues nothing
@@ -912,8 +943,7 @@ auto AssetManager::load_texture(this AssetManager& self, const std::filesystem::
     return TextureID::Invalid;
   }
 
-  auto write_lock = std::unique_lock(self.textures_mutex);
-  return self.texture_map.create_slot(std::move(texture));
+  return self.texture_storage.create(std::make_shared<const Texture>(std::move(texture)));
 }
 
 auto AssetManager::load_texture(this AssetManager& self, const TextureData& data, const TextureLoadInfo& info)
@@ -925,22 +955,19 @@ auto AssetManager::load_texture(this AssetManager& self, const TextureData& data
     return TextureID::Invalid;
   }
 
-  auto write_lock = std::unique_lock(self.textures_mutex);
-  return self.texture_map.create_slot(std::move(texture));
+  return self.texture_storage.create(std::make_shared<const Texture>(std::move(texture)));
 }
 
 auto AssetManager::unload_texture(this AssetManager& self, const TextureID texture_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.textures_mutex);
-  auto* texture = self.texture_map.slot(texture_id);
-  if (!texture) {
+  // ~Texture retires the image through the render context when the commit destroys the payload
+  auto texture = self.texture_storage.destroy(texture_id);
+  if (texture == nullptr) {
     return false;
   }
 
-  texture->destroy();
-  self.texture_map.destroy_slot(texture_id);
-
+  self.retire(std::move(texture));
   return true;
 }
 
@@ -955,11 +982,7 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
     }
   }
 
-  auto write_lock = std::unique_lock(self.materials_mutex);
-  auto material_id = self.material_map.create_slot(Material(info));
-
-  write_lock.unlock();
-
+  const auto material_id = self.material_storage.create(std::make_shared<const Material>(info));
   self.set_material_dirty(material_id);
 
   return material_id;
@@ -968,8 +991,8 @@ auto AssetManager::load_material(this AssetManager& self, const std::filesystem:
 auto AssetManager::unload_material(this AssetManager& self, const MaterialID material_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.materials_mutex);
-  self.material_map.destroy_slot(material_id);
+  self.retire(self.material_storage.destroy(material_id));
+  auto lock = std::unique_lock(self.dirty_materials_mutex);
   std::erase(self.dirty_materials, material_id);
   ++std::atomic_ref(self.materials_revision);
 
@@ -986,24 +1009,14 @@ auto AssetManager::load_scene(this AssetManager& self, const std::filesystem::pa
     return SceneID::Invalid;
   }
 
-  auto write_lock = std::unique_lock(self.scenes_mutex);
-  return self.scene_map.create_slot(std::move(scene));
+  return self.scene_storage.create(std::shared_ptr<const Scene>(std::move(scene)));
 }
 
 auto AssetManager::unload_scene(this AssetManager& self, const SceneID scene_id) -> bool {
   ZoneScoped;
 
-  // destroy_slot leaves the value in place, which would keep the scene alive until deinit, after RmlUI is gone. It
-  // dies outside the lock since its destructor releases its own assets
-  auto scene = std::unique_ptr<Scene>();
-  {
-    auto write_lock = std::unique_lock(self.scenes_mutex);
-    if (auto* slot = self.scene_map.slot(scene_id)) {
-      scene = std::move(*slot);
-    }
-
-    self.scene_map.destroy_slot(scene_id);
-  }
+  // destroyed at the next commit, on the main thread, where its destructor releases its own assets
+  self.retire(self.scene_storage.destroy(scene_id));
 
   return true;
 }
@@ -1016,20 +1029,14 @@ auto AssetManager::load_audio(this AssetManager& self, const std::filesystem::pa
     return AudioID::Invalid;
   }
 
-  auto write_lock = std::unique_lock(self.audio_mutex);
-  return self.audio_map.create_slot(std::move(audio));
+  return self.audio_storage.create(std::make_shared<const AudioSource>(std::move(audio)));
 }
 
 auto AssetManager::unload_audio(this AssetManager& self, const AudioID audio_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.audio_mutex);
-  auto* audio = self.audio_map.slot(audio_id);
-  if (audio) {
-    audio->unload();
-  }
-
-  self.audio_map.destroy_slot(audio_id);
+  // the sound stops when the retired payload is destroyed at the next commit
+  self.retire(self.audio_storage.destroy(audio_id));
 
   return true;
 }
@@ -1053,22 +1060,19 @@ auto AssetManager::load_particle_system(this AssetManager& self, const std::file
     self.load_asset(payload.render.mesh, {}, false);
   }
 
-  auto write_lock = std::unique_lock(self.particle_systems_mutex);
-  return self.particle_system_map.create_slot(std::move(payload));
+  return self.particle_system_storage.create(std::make_shared<const ParticleSystem>(std::move(payload)));
 }
 
 auto AssetManager::unload_particle_system(this AssetManager& self, const ParticleSystemID particle_system_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.particle_systems_mutex);
-  auto* system = self.particle_system_map.slot(particle_system_id);
-  if (!system) {
+  // its curve atlas goes with the last version holding it, when the commit destroys the payload
+  auto system = self.particle_system_storage.destroy(particle_system_id);
+  if (system == nullptr) {
     return false;
   }
 
-  system->destroy();
-  self.particle_system_map.destroy_slot(particle_system_id);
-
+  self.retire(std::move(system));
   return true;
 }
 
@@ -1078,20 +1082,18 @@ auto AssetManager::load_cinematic(this AssetManager& self, const std::filesystem
   auto cinematic = Cinematic::read(path);
   auto payload = cinematic ? std::move(*cinematic) : Cinematic::make_default();
 
-  auto write_lock = std::unique_lock(self.cinematics_mutex);
-  return self.cinematic_map.create_slot(std::move(payload));
+  return self.cinematic_storage.create(std::make_shared<const Cinematic>(std::move(payload)));
 }
 
 auto AssetManager::unload_cinematic(this AssetManager& self, const CinematicID cinematic_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.cinematics_mutex);
-  if (!self.cinematic_map.slot(cinematic_id)) {
+  auto cinematic = self.cinematic_storage.destroy(cinematic_id);
+  if (cinematic == nullptr) {
     return false;
   }
 
-  self.cinematic_map.destroy_slot(cinematic_id);
-
+  self.retire(std::move(cinematic));
   return true;
 }
 
@@ -1100,15 +1102,13 @@ auto AssetManager::load_terrain_edits(this AssetManager& self, const std::filesy
 
   auto edits = TerrainEdits::read(path).value_or(TerrainEdits{});
 
-  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
-  return self.terrain_edits_map.create_slot(std::move(edits));
+  return self.terrain_edits_storage.create(std::make_shared<const TerrainEdits>(std::move(edits)));
 }
 
 auto AssetManager::unload_terrain_edits(this AssetManager& self, const TerrainEditsID terrain_edits_id) -> bool {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
-  self.terrain_edits_map.destroy_slot(terrain_edits_id);
+  self.retire(self.terrain_edits_storage.destroy(terrain_edits_id));
 
   return true;
 }
@@ -1133,7 +1133,7 @@ auto AssetManager::get_asset(this AssetManager& self, const UUID& uuid) -> ReadG
   return ReadGuard<Asset>(self.registry_mutex, it->second.get(), adopt_lock);
 }
 
-auto AssetManager::get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model> {
+auto AssetManager::get_model(this AssetManager& self, const UUID& uuid) -> AssetView<Model> {
   ZoneScoped;
 
   ModelID model_id;
@@ -1146,18 +1146,8 @@ auto AssetManager::get_model(this AssetManager& self, const UUID& uuid) -> ReadG
   return self.get_model(model_id);
 }
 
-auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) -> ReadGuard<Model> {
-  ZoneScoped;
-
-  if (model_id == ModelID::Invalid)
-    return {};
-  self.models_mutex.lock_shared();
-  auto* model = self.model_map.slot(model_id);
-  if (!model) {
-    self.models_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Model>(self.models_mutex, model, adopt_lock);
+auto AssetManager::get_model(this AssetManager& self, const ModelID model_id) -> AssetView<Model> {
+  return {self.model_storage.get(model_id)};
 }
 
 auto AssetManager::wait_until_model_loaded(this AssetManager& self, const ModelID model_id) -> void {
@@ -1180,7 +1170,7 @@ auto AssetManager::notify_model_loaded(this AssetManager& self) -> void {
   self.model_load_cv.notify_all();
 }
 
-auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> ReadGuard<Texture> {
+auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> AssetView<Texture> {
   ZoneScoped;
 
   TextureID texture_id;
@@ -1193,25 +1183,15 @@ auto AssetManager::get_texture(this AssetManager& self, const UUID& uuid) -> Rea
   return self.get_texture(texture_id);
 }
 
-auto AssetManager::get_texture(this AssetManager& self, const TextureID texture_id) -> ReadGuard<Texture> {
-  ZoneScoped;
-
-  if (texture_id == TextureID::Invalid)
-    return {};
-  self.textures_mutex.lock_shared();
-  auto* texture = self.texture_map.slot(texture_id);
-  if (!texture) {
-    self.textures_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Texture>(self.textures_mutex, texture, adopt_lock);
+auto AssetManager::get_texture(this AssetManager& self, const TextureID texture_id) -> AssetView<Texture> {
+  return {self.texture_storage.get(texture_id)};
 }
 
 auto AssetManager::get_null_material(this AssetManager& self) -> ReadGuard<Asset> {
   return self.get_asset(self.null_material);
 }
 
-auto AssetManager::get_material(this AssetManager& self, const UUID& uuid) -> ReadGuard<Material> {
+auto AssetManager::get_material(this AssetManager& self, const UUID& uuid) -> AssetView<Material> {
   ZoneScoped;
 
   MaterialID material_id;
@@ -1224,18 +1204,8 @@ auto AssetManager::get_material(this AssetManager& self, const UUID& uuid) -> Re
   return self.get_material(material_id);
 }
 
-auto AssetManager::get_material(this AssetManager& self, const MaterialID material_id) -> ReadGuard<Material> {
-  ZoneScoped;
-
-  if (material_id == MaterialID::Invalid)
-    return {};
-  self.materials_mutex.lock_shared();
-  auto* material = self.material_map.slot(material_id);
-  if (!material) {
-    self.materials_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Material>(self.materials_mutex, material, adopt_lock);
+auto AssetManager::get_material(this AssetManager& self, const MaterialID material_id) -> AssetView<Material> {
+  return {self.material_storage.get(material_id)};
 }
 
 // acquiring a material walks its textures once, so a material held by n owners holds n references on each of them, and
@@ -1262,16 +1232,12 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
     }
   }
 
-  {
-    auto write_lock = std::unique_lock(self.materials_mutex);
-    auto* payload = self.material_map.slot(material_id);
-    if (!payload) {
-      return false;
-    }
-
-    *payload = material;
+  auto previous = self.material_storage.replace(material_id, std::make_shared<const Material>(material));
+  if (previous == nullptr) {
+    return false;
   }
 
+  self.retire(std::move(previous));
   self.set_material_dirty(material_id);
   self.hold_children(uuid);
 
@@ -1281,7 +1247,7 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
 auto AssetManager::set_material_dirty(this AssetManager& self, MaterialID material_id) -> void {
   ZoneScoped;
 
-  auto lock = std::unique_lock(self.materials_mutex);
+  auto lock = std::unique_lock(self.dirty_materials_mutex);
   ++std::atomic_ref(self.materials_revision);
   if (std::ranges::find(self.dirty_materials, material_id) != self.dirty_materials.end()) {
     return;
@@ -1322,7 +1288,7 @@ auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
 auto AssetManager::get_dirty_material_ids(this AssetManager& self) -> std::vector<MaterialID> {
   ZoneScoped;
 
-  auto write_lock = std::unique_lock(self.materials_mutex);
+  auto write_lock = std::unique_lock(self.dirty_materials_mutex);
   auto dirty_copy = std::vector(self.dirty_materials);
   self.dirty_materials.clear();
 
@@ -1333,7 +1299,7 @@ auto AssetManager::get_materials_revision(this AssetManager& self) -> u32 {
   return std::atomic_ref(self.materials_revision).load();
 }
 
-auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> ReadGuard<Scene> {
+auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> AssetView<Scene> {
   ZoneScoped;
 
   SceneID scene_id;
@@ -1346,21 +1312,11 @@ auto AssetManager::get_scene(this AssetManager& self, const UUID& uuid) -> ReadG
   return self.get_scene(scene_id);
 }
 
-auto AssetManager::get_scene(this AssetManager& self, const SceneID scene_id) -> ReadGuard<Scene> {
-  ZoneScoped;
-
-  if (scene_id == SceneID::Invalid)
-    return {};
-  self.scenes_mutex.lock_shared();
-  auto* scene = self.scene_map.slot(scene_id);
-  if (!scene) {
-    self.scenes_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Scene>(self.scenes_mutex, scene->get(), adopt_lock);
+auto AssetManager::get_scene(this AssetManager& self, const SceneID scene_id) -> AssetView<Scene> {
+  return {self.scene_storage.get(scene_id)};
 }
 
-auto AssetManager::get_audio(this AssetManager& self, const UUID& uuid) -> ReadGuard<AudioSource> {
+auto AssetManager::get_audio(this AssetManager& self, const UUID& uuid) -> AssetView<AudioSource> {
   ZoneScoped;
 
   AudioID audio_id;
@@ -1373,21 +1329,11 @@ auto AssetManager::get_audio(this AssetManager& self, const UUID& uuid) -> ReadG
   return self.get_audio(audio_id);
 }
 
-auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) -> ReadGuard<AudioSource> {
-  ZoneScoped;
-
-  if (audio_id == AudioID::Invalid)
-    return {};
-  self.audio_mutex.lock_shared();
-  auto* audio = self.audio_map.slot(audio_id);
-  if (!audio) {
-    self.audio_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<AudioSource>(self.audio_mutex, audio, adopt_lock);
+auto AssetManager::get_audio(this AssetManager& self, const AudioID audio_id) -> AssetView<AudioSource> {
+  return {self.audio_storage.get(audio_id)};
 }
 
-auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) -> ReadGuard<TerrainEdits> {
+auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) -> AssetView<TerrainEdits> {
   ZoneScoped;
 
   TerrainEditsID terrain_edits_id;
@@ -1401,18 +1347,8 @@ auto AssetManager::get_terrain_edits(this AssetManager& self, const UUID& uuid) 
 }
 
 auto AssetManager::get_terrain_edits(this AssetManager& self, const TerrainEditsID terrain_edits_id)
-  -> ReadGuard<TerrainEdits> {
-  ZoneScoped;
-
-  if (terrain_edits_id == TerrainEditsID::Invalid)
-    return {};
-  self.terrain_edits_mutex.lock_shared();
-  auto* edits = self.terrain_edits_map.slot(terrain_edits_id);
-  if (!edits) {
-    self.terrain_edits_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<TerrainEdits>(self.terrain_edits_mutex, edits, adopt_lock);
+  -> AssetView<TerrainEdits> {
+  return {self.terrain_edits_storage.get(terrain_edits_id)};
 }
 
 auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, TerrainEdits&& edits) -> void {
@@ -1426,10 +1362,9 @@ auto AssetManager::set_terrain_edits(this AssetManager& self, const UUID& uuid, 
     terrain_edits_id = guard->terrain_edits_id;
   }
 
-  auto write_lock = std::unique_lock(self.terrain_edits_mutex);
-  if (auto* slot = self.terrain_edits_map.slot(terrain_edits_id)) {
-    *slot = std::move(edits);
-  }
+  self.retire(
+    self.terrain_edits_storage.replace(terrain_edits_id, std::make_shared<const TerrainEdits>(std::move(edits)))
+  );
 }
 
 auto AssetManager::source_model_uuid(this AssetManager& self, const std::filesystem::path& path) -> UUID {
@@ -1467,11 +1402,7 @@ auto AssetManager::publish_skeleton(this AssetManager& self, const UUID& uuid, S
 auto AssetManager::publish_texture(this AssetManager& self, const UUID& uuid, Texture&& texture) -> bool {
   ZoneScoped;
 
-  auto texture_id = TextureID::Invalid;
-  {
-    auto write_lock = std::unique_lock(self.textures_mutex);
-    texture_id = self.texture_map.create_slot(std::move(texture));
-  }
+  const auto texture_id = self.texture_storage.create(std::make_shared<const Texture>(std::move(texture)));
 
   if (self.publish_payload(uuid, AssetType::Texture, std::to_underlying(texture_id)) == PublishResult::Rejected) {
     self.unload_texture(texture_id);
@@ -1484,11 +1415,7 @@ auto AssetManager::publish_texture(this AssetManager& self, const UUID& uuid, Te
 auto AssetManager::publish_model(this AssetManager& self, const UUID& uuid, Model&& model) -> bool {
   ZoneScoped;
 
-  auto model_id = ModelID::Invalid;
-  {
-    auto write_lock = std::unique_lock(self.models_mutex);
-    model_id = self.model_map.create_slot(std::move(model));
-  }
+  const auto model_id = self.model_storage.create(model_payload(std::move(model)));
 
   if (self.publish_payload(uuid, AssetType::Model, std::to_underlying(model_id)) == PublishResult::Rejected) {
     self.unload_model(model_id);
@@ -1532,7 +1459,7 @@ auto AssetManager::publish_animation(this AssetManager& self, const UUID& uuid, 
   return true;
 }
 
-auto AssetManager::get_skeleton(this AssetManager& self, const UUID& uuid) -> ReadGuard<Skeleton> {
+auto AssetManager::get_skeleton(this AssetManager& self, const UUID& uuid) -> AssetView<Skeleton> {
   ZoneScoped;
 
   SkeletonID skeleton_id;
@@ -1545,21 +1472,11 @@ auto AssetManager::get_skeleton(this AssetManager& self, const UUID& uuid) -> Re
   return self.get_skeleton(skeleton_id);
 }
 
-auto AssetManager::get_skeleton(this AssetManager& self, const SkeletonID skeleton_id) -> ReadGuard<Skeleton> {
-  ZoneScoped;
-
-  if (skeleton_id == SkeletonID::Invalid)
-    return {};
-  self.skeletons_mutex.lock_shared();
-  auto* skeleton = self.skeleton_map.slot(skeleton_id);
-  if (!skeleton) {
-    self.skeletons_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Skeleton>(self.skeletons_mutex, skeleton, adopt_lock);
+auto AssetManager::get_skeleton(this AssetManager& self, const SkeletonID skeleton_id) -> AssetView<Skeleton> {
+  return {self.skeleton_storage.get(skeleton_id)};
 }
 
-auto AssetManager::get_animation(this AssetManager& self, const UUID& uuid) -> ReadGuard<AnimationClip> {
+auto AssetManager::get_animation(this AssetManager& self, const UUID& uuid) -> AssetView<AnimationClip> {
   ZoneScoped;
 
   AnimationID animation_id;
@@ -1572,32 +1489,20 @@ auto AssetManager::get_animation(this AssetManager& self, const UUID& uuid) -> R
   return self.get_animation(animation_id);
 }
 
-auto AssetManager::get_animation(this AssetManager& self, const AnimationID animation_id) -> ReadGuard<AnimationClip> {
-  ZoneScoped;
-
-  if (animation_id == AnimationID::Invalid)
-    return {};
-  self.animations_mutex.lock_shared();
-  auto* clip = self.animation_map.slot(animation_id);
-  if (!clip) {
-    self.animations_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<AnimationClip>(self.animations_mutex, clip, adopt_lock);
+auto AssetManager::get_animation(this AssetManager& self, const AnimationID animation_id) -> AssetView<AnimationClip> {
+  return {self.animation_storage.get(animation_id)};
 }
 
 auto AssetManager::load_skeleton(this AssetManager& self, Skeleton&& skeleton) -> SkeletonID {
   ZoneScoped;
 
-  auto lock = std::unique_lock(self.skeletons_mutex);
-  return self.skeleton_map.create_slot(std::move(skeleton));
+  return self.skeleton_storage.create(std::make_shared<const Skeleton>(std::move(skeleton)));
 }
 
 auto AssetManager::unload_skeleton(this AssetManager& self, const SkeletonID skeleton_id) -> bool {
   ZoneScoped;
 
-  auto lock = std::unique_lock(self.skeletons_mutex);
-  self.skeleton_map.destroy_slot(skeleton_id);
+  self.retire(self.skeleton_storage.destroy(skeleton_id));
 
   return true;
 }
@@ -1605,20 +1510,18 @@ auto AssetManager::unload_skeleton(this AssetManager& self, const SkeletonID ske
 auto AssetManager::load_animation(this AssetManager& self, AnimationClip&& clip) -> AnimationID {
   ZoneScoped;
 
-  auto lock = std::unique_lock(self.animations_mutex);
-  return self.animation_map.create_slot(std::move(clip));
+  return self.animation_storage.create(std::make_shared<const AnimationClip>(std::move(clip)));
 }
 
 auto AssetManager::unload_animation(this AssetManager& self, const AnimationID animation_id) -> bool {
   ZoneScoped;
 
-  auto lock = std::unique_lock(self.animations_mutex);
-  self.animation_map.destroy_slot(animation_id);
+  self.retire(self.animation_storage.destroy(animation_id));
 
   return true;
 }
 
-auto AssetManager::get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem> {
+auto AssetManager::get_particle_system(this AssetManager& self, const UUID& uuid) -> AssetView<ParticleSystem> {
   ZoneScoped;
 
   ParticleSystemID particle_system_id;
@@ -1632,18 +1535,8 @@ auto AssetManager::get_particle_system(this AssetManager& self, const UUID& uuid
 }
 
 auto AssetManager::get_particle_system(this AssetManager& self, const ParticleSystemID particle_system_id)
-  -> ReadGuard<ParticleSystem> {
-  ZoneScoped;
-
-  if (particle_system_id == ParticleSystemID::Invalid)
-    return {};
-  self.particle_systems_mutex.lock_shared();
-  auto* system = self.particle_system_map.slot(particle_system_id);
-  if (!system) {
-    self.particle_systems_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<ParticleSystem>(self.particle_systems_mutex, system, adopt_lock);
+  -> AssetView<ParticleSystem> {
+  return {self.particle_system_storage.get(particle_system_id)};
 }
 
 auto AssetManager::edit_particle_system(
@@ -1659,20 +1552,22 @@ auto AssetManager::edit_particle_system(
     particle_system_id = guard->particle_system_id;
   }
 
-  auto children = std::array<UUID, 2>{};
-  {
-    auto write_lock = std::unique_lock(self.particle_systems_mutex);
-    auto* slot = self.particle_system_map.slot(particle_system_id);
-    if (!slot) {
-      return;
-    }
-
-    mutate(*slot);
-    if (recompile) {
-      slot->recompile();
-    }
-    children = {slot->render.material, slot->render.mesh};
+  // the edit goes into a copy that replaces the payload, so readers of this frame keep the old one
+  const auto* current = self.particle_system_storage.get(particle_system_id);
+  if (current == nullptr) {
+    return;
   }
+
+  auto next = current->clone();
+  mutate(next);
+  if (recompile) {
+    next.recompile();
+  }
+
+  const auto children = std::array<UUID, 2>{next.render.material, next.render.mesh};
+  self.retire(
+    self.particle_system_storage.replace(particle_system_id, std::make_shared<const ParticleSystem>(std::move(next)))
+  );
 
   // loaded without a reference, the system takes its own below
   for (const auto& child : children) {
@@ -1684,7 +1579,7 @@ auto AssetManager::edit_particle_system(
   self.hold_children(uuid);
 }
 
-auto AssetManager::get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic> {
+auto AssetManager::get_cinematic(this AssetManager& self, const UUID& uuid) -> AssetView<Cinematic> {
   ZoneScoped;
 
   CinematicID cinematic_id;
@@ -1697,18 +1592,8 @@ auto AssetManager::get_cinematic(this AssetManager& self, const UUID& uuid) -> R
   return self.get_cinematic(cinematic_id);
 }
 
-auto AssetManager::get_cinematic(this AssetManager& self, const CinematicID cinematic_id) -> ReadGuard<Cinematic> {
-  ZoneScoped;
-
-  if (cinematic_id == CinematicID::Invalid)
-    return {};
-  self.cinematics_mutex.lock_shared();
-  auto* cinematic = self.cinematic_map.slot(cinematic_id);
-  if (!cinematic) {
-    self.cinematics_mutex.unlock_shared();
-    return {};
-  }
-  return ReadGuard<Cinematic>(self.cinematics_mutex, cinematic, adopt_lock);
+auto AssetManager::get_cinematic(this AssetManager& self, const CinematicID cinematic_id) -> AssetView<Cinematic> {
+  return {self.cinematic_storage.get(cinematic_id)};
 }
 
 auto AssetManager::edit_cinematic(
@@ -1724,26 +1609,19 @@ auto AssetManager::edit_cinematic(
     cinematic_id = guard->cinematic_id;
   }
 
-  auto write_lock = std::unique_lock(self.cinematics_mutex);
-  if (auto* slot = self.cinematic_map.slot(cinematic_id)) {
-    mutate(*slot);
+  const auto* current = self.cinematic_storage.get(cinematic_id);
+  if (current == nullptr) {
+    return;
   }
+
+  auto next = current->clone();
+  mutate(next);
+  self.retire(self.cinematic_storage.replace(cinematic_id, std::make_shared<const Cinematic>(std::move(next))));
 }
 
 auto AssetManager::set_particle_system_dirty(this AssetManager& self, const UUID& uuid) -> void {
   ZoneScoped;
 
-  ParticleSystemID particle_system_id;
-  {
-    auto guard = self.get_asset(uuid);
-    if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
-      return;
-    particle_system_id = guard->particle_system_id;
-  }
-
-  auto write_lock = std::unique_lock(self.particle_systems_mutex);
-  if (auto* slot = self.particle_system_map.slot(particle_system_id)) {
-    slot->recompile();
-  }
+  self.edit_particle_system(uuid, [](ParticleSystem&) {}, true);
 }
 } // namespace ox

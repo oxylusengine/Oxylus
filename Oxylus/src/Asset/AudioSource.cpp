@@ -121,5 +121,5 @@ auto AudioSource::unload(this AudioSource& self) -> void {
   self.sound = nullptr;
 }
 
-auto AudioSource::get_source(this AudioSource& self) -> ma_sound* { return self.sound; }
+auto AudioSource::get_source(this const AudioSource& self) -> ma_sound* { return self.sound; }
 } // namespace ox

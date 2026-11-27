@@ -161,7 +161,15 @@ struct RenderQueue2D {
     previous_offset = num_sprites;
   }
 
-  void add(u16 render_flags, f32 position_y, u32 transform_id, u32 material_id, f32 distance) {
+  void add(
+    u16 render_flags,
+    f32 position_y,
+    u32 transform_id,
+    u32 material_id,
+    f32 distance,
+    glm::vec2 frame_uv_size = {1.0f, 1.0f},
+    glm::vec2 frame_uv_offset = {0.0f, 0.0f}
+  ) {
     const u32 flags_and_distance = math::pack_u16(render_flags, glm::packHalf1x16(distance));
     const u32 materialid_and_ypos = math::pack_u16(static_cast<u16>(material_id), glm::packHalf1x16(position_y));
 
@@ -170,6 +178,8 @@ struct RenderQueue2D {
         .material_id16_ypos16 = materialid_and_ypos,
         .flags16_distance16 = flags_and_distance,
         .transform_id = transform_id,
+        .frame_uv_size16x2 = glm::packHalf2x16(frame_uv_size),
+        .frame_uv_offset16x2 = glm::packHalf2x16(frame_uv_offset),
       }
     );
 

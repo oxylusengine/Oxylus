@@ -110,9 +110,9 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
           snapshot.update_count = system->programs.update_count;
           snapshot.curve_row_count = system->curve_row_count();
           snapshot.atlas_row_count = system->atlas_row_count();
-          if (system->curve_atlas) {
-            snapshot.curve_atlas_index = system->curve_atlas.get_view_index();
-            snapshot.curve_sampler_index = system->curve_atlas.get_sampler_index();
+          if (system->curve_atlas != nullptr && *system->curve_atlas) {
+            snapshot.curve_atlas_index = system->curve_atlas->get_view_index();
+            snapshot.curve_sampler_index = system->curve_atlas->get_sampler_index();
           }
 
           snapshot.emitter_instructions = system->programs.emitter_instructions;
@@ -242,8 +242,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         {
           auto model = asset_man.get_model(snapshot.render.mesh);
           if (
-            model && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() &&
-            model->gpu_mesh_buffers[0] != BufferID::Invalid && model->is_mesh_ready(0)
+            model && model->is_mesh_ready(0) && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() &&
+            model->gpu_mesh_buffers[0] != BufferID::Invalid
           ) {
             const auto& range = model->lod0_index_ranges[0];
             const auto buffer = render_context.buffer(model->gpu_mesh_buffers[0]);

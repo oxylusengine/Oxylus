@@ -554,8 +554,8 @@ private:
     AABB aabb = {};
   };
 
-  auto spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity;
-  auto resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+  auto spawn_model_hierarchy(this Scene& self, const Model& model, PendingModelSpawn& spawn) -> flecs::entity;
+  auto resolve_mesh_spawn(this Scene& self, const Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
     -> MeshSpawnInfo;
   auto spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void;
   auto update_pending_model_spawns(this Scene& self) -> void;

@@ -43,23 +43,11 @@ constexpr auto SlotMap_decode_id(ID id) -> SlotMapIDUnpacked {
   return {.version = version, .index = index};
 }
 
-// `External` is for a map whose owner already holds its own lock around every call, which would make
-// the map's lock a second one taken for nothing
-enum class SlotMapSync : u8 { Internal, External };
-
-struct SlotMapNoMutex {
-  auto lock(this SlotMapNoMutex&) -> void {}
-  auto unlock(this SlotMapNoMutex&) -> void {}
-  auto lock_shared(this SlotMapNoMutex&) -> void {}
-  auto unlock_shared(this SlotMapNoMutex&) -> void {}
-};
-
 // Modified version of:
 //     https://github.com/Sunset-Flock/Timberdoodle/blob/398b6e27442a763668ecf75b6a0c3a29c7a13884/src/slot_map.hpp#L10
-template <typename T, SlotMapID ID, SlotMapSync SYNC = SlotMapSync::Internal>
+template <typename T, SlotMapID ID>
 struct SlotMap {
-  using Self = SlotMap<T, ID, SYNC>;
-  using Mutex = std::conditional_t<SYNC == SlotMapSync::Internal, std::shared_mutex, SlotMapNoMutex>;
+  using Self = SlotMap<T, ID>;
 
 private:
   std::vector<T> slots = {};
@@ -68,7 +56,7 @@ private:
   std::vector<u32> versions = {};
 
   std::vector<usize> free_indices = {};
-  mutable Mutex mutex = {};
+  mutable std::shared_mutex mutex = {};
 
   auto is_valid_unlocked(this const Self& self, ID id) -> bool {
     auto [version, index] = SlotMap_decode_id(id);
@@ -222,7 +210,7 @@ public:
     }
   }
 
-  auto get_mutex(this Self& self) -> Mutex& {
+  auto get_mutex(this Self& self) -> std::shared_mutex& {
     ZoneScoped;
 
     return self.mutex;

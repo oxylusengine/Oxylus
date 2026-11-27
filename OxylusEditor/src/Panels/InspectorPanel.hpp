@@ -26,8 +26,9 @@ public:
 
   auto handle_editor_context(this InspectorPanel& self) -> void;
 
+  // edits `material`, a copy of the payload the caller commits with AssetManager::set_material
   static auto draw_material_properties(
-    ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
+    Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
   ) -> bool;
 
   auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
@@ -49,7 +50,7 @@ public:
   // selected in the content browser.
   auto draw_asset_contents(this InspectorPanel& self, const UUID& uuid) -> void;
 
-  auto draw_audio_asset(this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio)
+  auto draw_audio_asset(this InspectorPanel& self, const std::filesystem::path& path, AssetView<AudioSource> audio)
     -> void;
 
 private:

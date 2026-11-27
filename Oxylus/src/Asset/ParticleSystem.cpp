@@ -323,31 +323,39 @@ auto ParticleSystem::recompile(this ParticleSystem& self) -> void {
     }
   }
 
-  if (self.curve_atlas && self.curve_atlas.get_extent().height != row_count) {
-    self.curve_atlas.destroy();
-    self.curve_atlas = {};
-  }
-
-  if (!self.curve_atlas) {
-    self.curve_atlas = Texture::create({
+  const auto is_reusable = self.curve_atlas != nullptr && self.curve_atlas.use_count() == 1 &&
+                           self.curve_atlas->get_extent().height == row_count;
+  if (!is_reusable) {
+    self.curve_atlas = std::make_shared<Texture>(Texture::create({
       .format = vir::Format::RGBA16Sfloat,
       .extent = {CURVE_ATLAS_WIDTH, row_count, 1},
       .usage = vir::ImageUsageFlags::Sampled | vir::ImageUsageFlags::TransferDst,
       .sampler_info = {.mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST},
-    });
+    }));
   }
 
-  self.curve_atlas.upload(
+  self.curve_atlas->upload(
     std::span(reinterpret_cast<const u8*>(texels.data()), texels.size() * sizeof(glm::u16vec4)),
     vir::Access::FragmentSampled
   );
 }
 
-auto ParticleSystem::destroy(this ParticleSystem& self) -> void {
-  if (self.curve_atlas) {
-    self.curve_atlas.destroy();
-    self.curve_atlas = {};
-  }
+auto ParticleSystem::destroy(this ParticleSystem& self) -> void { self.curve_atlas.reset(); }
+
+auto ParticleSystem::clone(this const ParticleSystem& self) -> ParticleSystem {
+  auto copy = ParticleSystem{};
+  copy.emitter = self.emitter;
+  copy.render = self.render;
+  copy.emitter_graph = self.emitter_graph;
+  copy.spawn_graph = self.spawn_graph;
+  copy.update_graph = self.update_graph;
+  copy.curves = self.curves;
+  copy.gradients = self.gradients;
+  copy.parameters = self.parameters;
+  copy.programs = self.programs;
+  copy.compile_error = self.compile_error;
+  copy.curve_atlas = self.curve_atlas;
+  return copy;
 }
 
 auto ParticleSystem::find_parameter(this const ParticleSystem& self, const std::string_view name) -> option<u32> {
