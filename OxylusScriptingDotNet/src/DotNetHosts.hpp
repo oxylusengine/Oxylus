@@ -62,6 +62,8 @@ auto set_ui_context(ecs_world_t* world, Rml::Context* context) -> void;
 // drops the listeners and data models the scripts made, in one world or in all of them
 auto release_ui(ecs_world_t* world) -> void;
 auto release_ui() -> void;
+// frees the elements scripts removed during the last frame's events
+auto collect_removed_ui() -> void;
 
 // forwards the app's WindowResizeEvent to the scripts, a no-op without an App. Released with the scripts
 auto subscribe_window_events() -> void;

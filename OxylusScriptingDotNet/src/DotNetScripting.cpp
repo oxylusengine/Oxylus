@@ -48,8 +48,8 @@ static auto is_complete(const OxManagedApi& api) -> bool {
          api.list_script_types && api.script_create && api.script_destroy && api.script_fields && api.behaviour_add &&
          api.behaviour_remove && api.world_start && api.world_stop && api.world_update && api.world_fixed_update &&
          api.world_render && api.world_contacts && api.world_body_activation && api.ui_event && api.ui_model_get &&
-         api.ui_model_set && api.ui_model_event && api.net_rpc && api.net_event && api.net_snapshot &&
-         api.window_resized;
+         api.ui_model_set && api.ui_model_event && api.ui_model_list_size && api.ui_model_list_get && api.net_rpc &&
+         api.net_event && api.net_snapshot && api.window_resized;
 }
 
 static auto create_scene_script(const OxManagedApi& managed_api, ecs_world_t* world, ManagedSceneScript& script)
@@ -118,6 +118,7 @@ auto DotNetScripting::update(this DotNetScripting&, const Timestep& timestep) ->
   time.frame++;
 
   tick_network(timestep);
+  collect_removed_ui();
 }
 
 auto DotNetScripting::load(this DotNetScripting& self, const DotNetLoadInfo& info, const OxNativeApi& native_api)

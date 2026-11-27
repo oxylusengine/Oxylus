@@ -14,6 +14,8 @@ internal static unsafe class Callbacks
         managed->UiModelGet = &UiModelGet;
         managed->UiModelSet = &UiModelSet;
         managed->UiModelEvent = &UiModelEvent;
+        managed->UiModelListSize = &UiModelListSize;
+        managed->UiModelListGet = &UiModelListGet;
         managed->NetRpc = &NetRpc;
         managed->NetEvent = &NetEventCallback;
         managed->NetSnapshot = &NetSnapshotCallback;
@@ -104,6 +106,42 @@ internal static unsafe class Callbacks
         catch (Exception e)
         {
             Log.Error($"A data model event threw: {e}");
+        }
+    }
+
+    [UnmanagedCallersOnly]
+    static int UiModelListSize(ulong model, int binding)
+    {
+        try
+        {
+            if (Ui.Models.TryGetValue(model, out var found))
+            {
+                return found.ListSize(binding);
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Error($"A data model list getter threw: {e}");
+        }
+
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    static void UiModelListGet(ulong model, int binding, int index, int field, Value* value)
+    {
+        *value = default;
+        try
+        {
+            if (Ui.Models.TryGetValue(model, out var found))
+            {
+                found.ListGet(binding, index, field, value);
+            }
+        }
+        catch (Exception e)
+        {
+            *value = default;
+            Log.Error($"A data model list getter threw: {e}");
         }
     }
 

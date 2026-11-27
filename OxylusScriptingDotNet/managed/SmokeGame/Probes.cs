@@ -487,6 +487,8 @@ public struct UiProbe
     public int Phase;
     public int Score;
     public int ListenerHits;
+    public int Command;
+    public int Count;
 }
 
 // what Aabb and Mathx are given and what they give back, TestDotNetApi compares it with glm and ox::AABB. The matrix
@@ -581,10 +583,17 @@ public struct NetProbe
     public int Port;
 }
 
-// drives a document and a data model in whatever RmlUi context the world has, TestDotNetUi gives it one
+public readonly record struct Fruit(string Name, int Count);
+
+// drives a document and a data model in whatever RmlUi context the world has, TestDotNetUi gives it one. A nonzero
+// UiProbe.Command runs once on the next update
 public static class UiProbes
 {
     static UiDataModel? model;
+    static UiDocument document;
+    static UiElement doomed;
+    static List<Fruit> fruits = [];
+    static List<string> names = [];
     static int score;
     static int listenerHits;
 
@@ -596,6 +605,8 @@ public static class UiProbes
             probe.Phase = 1;
             score = 0;
             listenerHits = 0;
+            fruits = [new Fruit("apple", 3), new Fruit("pear", 5)];
+            names = ["red", "green"];
 
             var world = entity.World;
             model = Ui.CreateDataModel(world, "probe");
@@ -608,8 +619,12 @@ public static class UiProbes
                 model.Dirty("label");
                 Log.Info($"ui add {args.GetInteger(0)} from {e.Type}");
             });
+            model.BindList("items", () => fruits, fields => fields
+                .Add("name", fruit => fruit.Name)
+                .Add("count", fruit => fruit.Count));
+            model.BindList("names", () => names);
 
-            var document = Ui.LoadDocument(world, "UI/probe.rml");
+            document = Ui.LoadDocument(world, "UI/probe.rml");
             document.Show();
             document.GetElementById("title").SetInnerRml("Hello");
             document.GetElementById("title").SetClass("lit", true);
@@ -618,10 +633,147 @@ public static class UiProbes
                 listenerHits++;
                 Log.Info($"ui listener {e.Type} on {e.Current.GetAttribute("id")}");
             });
+
+            document.GetElementById("outer").AddEventListener("keydown", e => Log.Info($"ui outer keydown from {e.Target.GetAttribute("id")}"));
+            document.GetElementById("outer").AddEventListener("click", e => Log.Info($"ui outer click from {e.Target.GetAttribute("id")}"));
+
+            var keyed = document.GetElementById("keyed");
+            keyed.AddEventListener("keydown", e =>
+            {
+                Log.Info($"ui key {e.Key} ctrl {e.Ctrl} shift {e.Shift} alt {e.Alt} meta {e.Meta} " +
+                         $"raw {e.GetInteger("key_identifier")} fallback {e.GetInteger("nope", 7)} text {e.GetString("nope", "none")}");
+                if (e.Ctrl)
+                {
+                    e.StopPropagation();
+                }
+            });
+            keyed.AddEventListener("keydown", e =>
+            {
+                Log.Info("ui field second");
+                if (e.Shift)
+                {
+                    e.StopImmediatePropagation();
+                }
+            });
+            keyed.AddEventListener("keydown", e => Log.Info("ui field late"));
+
+            var box = document.GetElementById("box");
+            box.AddEventListener("mousedown", e => Log.Info($"ui mousedown button {e.Button} bool {e.GetBool("button")}"));
+            box.AddEventListener("mousescroll", e =>
+                Log.Info($"ui wheel {e.Wheel.X.ToString(CultureInfo.InvariantCulture)} {e.Wheel.Y.ToString(CultureInfo.InvariantCulture)} " +
+                         $"number {e.GetNumber("wheel_delta_y").ToString(CultureInfo.InvariantCulture)}"));
+
+            doomed = document.GetElementById("doomed");
+            doomed.AddEventListener("click", e =>
+            {
+                Log.Info("ui doomed click");
+                e.Current.Remove();
+                Log.Info($"ui doomed removed, still {e.Current.GetAttribute("id")}");
+            });
+        }
+        else if (probe.Command != 0)
+        {
+            Run(probe.Command, ref probe);
+            probe.Command = 0;
         }
 
         probe.Score = score;
         probe.ListenerHits = listenerHits;
+    }
+
+    static void Run(int command, ref UiProbe probe)
+    {
+        var outer = document.GetElementById("outer");
+        var field = document.GetElementById("field");
+        var box = document.GetElementById("box");
+        switch (command)
+        {
+            case 1:
+                fruits.Add(new Fruit("fig", 9));
+                names.Add("blue");
+                model!.Dirty("items");
+                model.Dirty("names");
+                break;
+            case 2:
+                fruits.RemoveAt(0);
+                names.Clear();
+                model!.DirtyAll();
+                break;
+            case 3:
+                var made = outer.AppendChild("div");
+                made.SetAttribute("id", "made");
+                made.SetClass("fresh", true);
+                made.SetInnerRml("made it");
+                Log.Info($"ui appended {made.IsValid} parent {made.Parent.Equals(outer)}");
+                break;
+            case 4:
+                var bulk = document.GetElementById("bulk");
+                for (var i = 0; i < 12; i++)
+                {
+                    bulk.AppendChild("div").SetClass("bulk", true);
+                }
+
+                var found = bulk.QueryAll(".bulk");
+                var isAllParented = found.All(element => element.Parent.Equals(bulk));
+                probe.Count = found.Length;
+                Log.Info($"ui queryall {found.Length} parented {isAllParented} none {document.Root.QueryAll(".none").Length} one {document.Root.QueryAll("#field").Length}");
+                break;
+            case 5:
+                Log.Info($"ui focus {field.Focus()}");
+                break;
+            case 6:
+                field.Blur();
+                Log.Info("ui blur");
+                break;
+            case 7:
+                Log.Info($"ui parent field {field.Parent.Equals(outer)} outer {outer.Parent.IsValid} root {document.Root.Parent.IsValid}");
+                Log.Info($"ui property width {box.GetProperty("width")} display {box.GetProperty("display")}");
+                Log.Info($"ui hasclass {box.HasClass("boxed")} {box.HasClass("nope")}");
+                Log.Info($"ui property missing {Throws(() => box.GetProperty("not_a_property"))}");
+                break;
+            case 8:
+                Log.Info($"ui root remove {Throws(() => document.Root.Remove())}");
+                break;
+            case 9:
+                Log.Info($"ui stale {Throws(() => doomed.GetAttribute("id"))} {Throws(() => doomed.Remove())} {Throws(() => _ = doomed.Parent)} " +
+                         $"{Throws(() => doomed.AppendChild("div"))} {Throws(() => doomed.QueryAll("*"))} {Throws(() => doomed.HasClass("x"))} " +
+                         $"{Throws(() => doomed.Focus())} {Throws(() => doomed.Click())}");
+                break;
+            case 10:
+                document.GetElementById("button").Click();
+                break;
+            case 11:
+                box.ScrollIntoView();
+                Log.Info("ui scrolled");
+                break;
+            case 12:
+                Log.Info($"ui bad list {Throws(() => model!.BindList("bad", () => new List<Vector2>()))} " +
+                         $"field {Throws(() => model!.BindList("bad", () => fruits, fields => fields.Add("v", fruit => new Vector2(fruit.Count))))}");
+                break;
+            case 13:
+                Log.Info($"ui focus {document.GetElementById("inert").Focus()}");
+                break;
+            case 14:
+                outer.Query("#made").Remove();
+                break;
+        }
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+        catch (NotSupportedException)
+        {
+            return true;
+        }
     }
 }
 

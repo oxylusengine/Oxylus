@@ -3,7 +3,7 @@
 #include "Core/Types.hpp"
 
 // mirrored field for field by managed/Oxylus.Scripting/Interop/Abi.cs, bump the version on any change to either side
-#define OX_DOTNET_ABI_VERSION 20u
+#define OX_DOTNET_ABI_VERSION 21u
 
 struct ecs_world_t;
 
@@ -394,12 +394,22 @@ enum class OxUiDocumentCommand : i32 {
   Close = 2,
 };
 
+enum class OxUiElementCommand : i32 {
+  Focus = 0,
+  Blur = 1,
+  Click = 2,
+  ScrollIntoView = 3,
+  Remove = 4,
+};
+
 struct OxUiEvent {
   OxStringView type = {};
   u64 target = 0;
   u64 current = 0;
   f32 mouse_x = 0.0f;
   f32 mouse_y = 0.0f;
+  // the Rml::Event, valid for the call
+  void* event = nullptr;
 };
 
 enum class OxNetEvent : i32 {
@@ -678,6 +688,24 @@ struct OxNativeApi {
 
   auto (*ui_clear_style_sheet_cache)() -> void = nullptr;
   auto (*ui_clear_template_cache)() -> void = nullptr;
+  // Focus is InvalidArgument when RmlUi refuses it. Remove is InvalidArgument for a document, which closes through
+  // ui_document, and for an element without a parent
+  auto (*ui_element_command)(u64 element, OxUiElementCommand command) -> OxStatus = nullptr;
+  auto (*ui_append_child)(u64 parent, OxStringView tag, u64* child) -> OxStatus = nullptr;
+  // writes up to `capacity` handles and the full count to `count`, so a short buffer can be retried
+  auto (*ui_query_all)(u64 element, OxStringView selector, u64* found, i32 capacity, i32* count) -> OxStatus = nullptr;
+  // 0 when there is none
+  auto (*ui_parent)(u64 element, u64* parent) -> OxStatus = nullptr;
+  // InvalidArgument when the element has no such property
+  auto (*ui_get_property)(u64 element, OxStringView name, c8* out, u32 capacity, u32* length) -> OxStatus = nullptr;
+  auto (*ui_has_class)(u64 element, OxStringView name, bool* is_set) -> OxStatus = nullptr;
+  // NotFound when the event has no such parameter. A string stays valid until the next call
+  auto (*ui_event_parameter)(void* event, OxStringView name, OxValue* value) -> OxStatus = nullptr;
+  auto (*ui_event_stop)(void* event, bool is_immediate) -> void = nullptr;
+  // a list is read-only, `fields` name what each item exposes and none makes it a list of single values. Its size and
+  // items reach ui_model_list_size and ui_model_list_get with `binding`
+  auto (*ui_model_bind_list)(u64 model, OxStringView name, i32 binding, const OxStringView* fields, i32 field_count)
+    -> OxStatus = nullptr;
 
   auto (*window_size)(OxWindowSize* size) -> void = nullptr;
   // the app's frame limit in milliseconds, negative for none. All three do nothing without an App
@@ -735,6 +763,9 @@ struct OxManagedApi {
   auto (*ui_model_set)(u64 model, i32 binding, const OxValue* value) -> void = nullptr;
   auto (*ui_model_event)(u64 model, i32 binding, const OxUiEvent* event, const OxValue* args, i32 count)
     -> void = nullptr;
+  auto (*ui_model_list_size)(u64 model, i32 binding) -> i32 = nullptr;
+  // `field` is -1 for the item itself
+  auto (*ui_model_list_get)(u64 model, i32 binding, i32 index, i32 field, OxValue* value) -> void = nullptr;
   auto (*net_rpc)(u64 endpoint, i32 binding, u64 sender, const OxValue* args, i32 count) -> void = nullptr;
   auto (*net_event)(u64 endpoint, OxNetEvent event, u64 peer, u32 reason) -> void = nullptr;
   // a client got a scene snapshot. The entity ids are valid for the call
