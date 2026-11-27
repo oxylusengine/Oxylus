@@ -174,6 +174,26 @@ public:
 
   auto get_animation(this AssetManager& self, const UUID& uuid) -> ReadGuard<AnimationClip>;
   auto get_animation(this AssetManager& self, AnimationID animation_id) -> ReadGuard<AnimationClip>;
+  // both clips under one read lock, for a crossfade that samples them together. Two guards on the
+  // same mutex from one thread deadlock once a load queues for the write lock between them. `func`
+  // gets null for a clip that is not loaded, and must not call back into the asset manager
+  template <typename Func>
+  auto with_animations(this AssetManager& self, const UUID& first, const UUID& second, Func&& func) -> void {
+    const auto animation_id_of = [&self](const UUID& uuid) -> AnimationID {
+      if (!uuid) {
+        return AnimationID::Invalid;
+      }
+
+      const auto asset = self.get_asset(uuid);
+      return asset && asset->type == AssetType::Animation ? asset->animation_id : AnimationID::Invalid;
+    };
+
+    // looked up before the lock, so the registry's lock is never held under this one
+    const auto first_id = animation_id_of(first);
+    const auto second_id = animation_id_of(second);
+    auto lock = std::shared_lock(self.animations_mutex);
+    func(self.animation_map.slot(first_id), self.animation_map.slot(second_id));
+  }
 
   auto get_particle_system(this AssetManager& self, const UUID& uuid) -> ReadGuard<ParticleSystem>;
   auto get_particle_system(this AssetManager& self, ParticleSystemID particle_system_id) -> ReadGuard<ParticleSystem>;

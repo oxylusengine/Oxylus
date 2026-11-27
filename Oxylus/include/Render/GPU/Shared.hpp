@@ -221,12 +221,22 @@ struct SkinningTransform {
   f32x4 translation_scale = f32x4(0.0f, 0.0f, 0.0f, 1.0f);
 };
 
+OX_CONST u32 SKIN_GROUP_SIZE = 64;
+
 struct SkinJob {
   u32 mesh_instance_index = 0;
   u32 vertex_offset = 0;
   u32 bone_offset = 0;
   u32 vertex_count = 0;
   u32 bone_count = 0;
+  // every job's workgroups follow the previous job's in the one skinning dispatch
+  u32 first_group = 0;
+};
+
+struct SkinPush {
+  u32 job_count = 0;
+  // the dispatch wraps into rows past the per-dimension workgroup limit
+  u32 groups_x = 0;
 };
 
 enum class MeshInstanceFlag : u32 {

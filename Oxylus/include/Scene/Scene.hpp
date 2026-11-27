@@ -97,6 +97,19 @@ auto define_component(
 ) -> flecs::entity;
 
 // kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
+// everything a pose is computed from, so an instance whose inputs did not change keeps last frame's pose
+struct AnimationEvaluation {
+  f32 current_time = 0.0f;
+  f32 fade_from_time = 0.0f;
+  f32 fade_weight = 0.0f;
+  f32 influence_radius = 0.0f;
+  u32 bone_offset = 0;
+  bool has_clip = false;
+  bool has_fade = false;
+
+  auto operator==(const AnimationEvaluation&) const -> bool = default;
+};
+
 struct AnimationInstance {
   UUID skeleton_uuid = {};
   UUID clip_uuid = {};
@@ -122,6 +135,8 @@ struct AnimationInstance {
   // the clip is not running
   bool pose_dirty = true;
   bool was_advancing = false;
+  AnimationEvaluation evaluation = {};
+  bool is_evaluated = false;
 };
 
 // one per property track, resolved once so a per-frame write is a memcpy at a known offset rather
@@ -207,6 +222,8 @@ public:
   SlotMap<AnimationInstance, AnimationInstanceID> animation_instances = {};
   ankerl::unordered_dense::map<flecs::entity, AnimationInstanceID> entity_to_animation_instance_map = {};
   std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  // the instances whose pose changes this frame, kept to reuse its storage
+  std::vector<AnimationInstance*> animation_evaluation_queue = {};
   u32 skinned_vertex_total = 0;
 
   // rebuilt only when `meshes_dirty`, though skinned entries are patched in place every frame

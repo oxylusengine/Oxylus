@@ -356,6 +356,7 @@ static auto reset_frame_data(FrameData& data) -> void {
   auto blas_addresses = std::move(data.blas_addresses);
   auto skinned_blas_addresses = std::move(data.skinned_blas_addresses);
   auto skinning_transforms = std::move(data.skinning_transforms);
+  auto skinning_transform_runs = std::move(data.skinning_transform_runs);
   auto lights = std::move(data.lights);
   auto dirty_mesh_instances = std::move(data.dirty_mesh_instances);
   auto removed_mesh_bounds = std::move(data.removed_mesh_bounds);
@@ -378,6 +379,7 @@ static auto reset_frame_data(FrameData& data) -> void {
   restore(data.blas_addresses, blas_addresses);
   restore(data.skinned_blas_addresses, skinned_blas_addresses);
   restore(data.skinning_transforms, skinning_transforms);
+  restore(data.skinning_transform_runs, skinning_transform_runs);
   restore(data.lights, lights);
   restore(data.dirty_mesh_instances, dirty_mesh_instances);
   restore(data.removed_mesh_bounds, removed_mesh_bounds);
@@ -1076,6 +1078,7 @@ auto RendererInstance::render(
 
   self.bind_frame(program->program, program->prepared);
   const auto ticket = render_context.execute(program->program);
+  self.is_skinning_synced = ticket.has_value();
   if (ticket && shape.has_atmosphere) {
     self.atmosphere_luts_dirty = false;
   }
@@ -1485,12 +1488,23 @@ auto RendererInstance::bind_frame(
     host_bytes(data.skinned_blas_addresses),
     "skinned blas addresses upload"
   );
-  self.bind_upload(
-    program,
-    prepared.skinning_transforms_upload,
-    host_bytes(data.skinning_transforms),
-    "skinning transforms upload"
-  );
+  if (program.has_variable(prepared.skinning_transforms_staging)) {
+    auto staging = render_context.upload_frame_buffer(
+      host_bytes(data.skinning_transforms),
+      "skinning transforms upload"
+    );
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "skinning transforms upload");
+    }
+    program.set(prepared.skinning_transforms_staging, staging.value_or(vir::Buffer{}));
+  }
+  if (program.has_variable(prepared.skin_jobs)) {
+    auto staging = render_context.upload_frame_buffer(host_bytes(data.skin_jobs), "skin jobs");
+    if (!staging) {
+      OX_LOG_ERROR("failed to stage {}", "skin jobs");
+    }
+    program.set(prepared.skin_jobs, staging.value_or(vir::Buffer{}));
+  }
   self.bind_upload(program, prepared.lights_upload, host_bytes(data.lights), "lights upload");
   program.set(prepared.is_meshlet_visibility_reset, data.is_meshlet_visibility_reset);
   program.set(prepared.is_terrain_visibility_reset, data.is_terrain_visibility_reset);
@@ -1940,12 +1954,13 @@ auto RendererInstance::record_frame(
     "mesh instances upload",
     prepared.mesh_instances
   );
-  values.skinning_transforms = record_upload(
-    module,
-    "skinning transforms upload",
-    prepared.skinning_transforms,
-    prepared.skinning_transforms_upload
-  );
+  std::tie(values.skinning_transforms, prepared.skinning_transforms_staging) =
+    record_run_upload<GPU::SkinningTransform>(
+      module,
+      data.skinning_transform_runs,
+      "skinning transforms upload",
+      prepared.skinning_transforms
+    );
   values.lights = record_upload(module, "lights upload", prepared.lights, prepared.lights_upload);
 
   // both decode passes push the decal address, so a frame without decals points them at a stand in
@@ -1992,6 +2007,7 @@ auto RendererInstance::record_frame(
   prepared.atmosphere = module.declare_buffer_var("atmosphere", vir::Access::None);
   prepared.dirty_mesh_instances = module.declare_buffer_var("dirty mesh instances", vir::Access::None);
   prepared.removed_mesh_bounds = module.declare_buffer_var("removed mesh bounds", vir::Access::None);
+  prepared.skin_jobs = module.declare_buffer_var("skin jobs", vir::Access::None);
   prepared.meshlet_instances = module.declare_buffer_var("meshlet instances", vir::Access::None);
   if (shape.has_blend_meshes || shape.has_refractors) {
     prepared.transparent_meshlet_instances = module.declare_buffer_var(
@@ -2008,6 +2024,7 @@ auto RendererInstance::record_frame(
   values.atmosphere = prepared.atmosphere;
   values.dirty_mesh_instances = prepared.dirty_mesh_instances;
   values.removed_mesh_bounds = prepared.removed_mesh_bounds;
+  values.skin_jobs = prepared.skin_jobs;
   values.meshlet_instances = prepared.meshlet_instances;
   values.transparent_meshlet_instances = prepared.transparent_meshlet_instances;
   values.visible_meshlet_instances_indices = prepared.visible_meshlet_instances_indices;
@@ -3906,7 +3923,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
   {
     const auto positions_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(glm::u16vec4);
     const auto normals_bytes = static_cast<usize>(info.skinned_vertex_total) * sizeof(u32);
-    ensure_buffer(render_context, self.skinned_vertices_buffer, positions_bytes + normals_bytes, "skinned vertices");
+    const auto is_arena_reallocated = ensure_buffer(
+      render_context,
+      self.skinned_vertices_buffer,
+      positions_bytes + normals_bytes,
+      "skinned vertices"
+    );
 
     const auto arena_address = render_context.buffer(self.skinned_vertices_buffer).device_address;
     for (const auto& skinned : info.skinned_mesh_instances) {
@@ -3927,18 +3949,64 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
       gpu_mesh_instance.skinned_vertex_normals = arena_address + positions_bytes + skinned.vertex_offset * sizeof(u32);
     }
 
-    ensure_buffer(
+    const auto is_skinning_reallocated = ensure_buffer(
       render_context,
       self.skinning_transforms_buffer,
       info.skinning_transforms.size_bytes(),
       "skinning transforms"
     );
-    data.skinning_transforms.assign(info.skinning_transforms.begin(), info.skinning_transforms.end());
+
+    // both buffers persist between frames, so only what moved is uploaded and skinned again. A fresh
+    // buffer holds nothing and a rebuilt instance array may have moved every slice, so those redo it all
+    const auto is_full_skinning = info.meshes_dirty || is_arena_reallocated || is_skinning_reallocated ||
+                                  !self.is_skinning_synced;
+    self.is_skinning_synced = false;
+    if (is_full_skinning) {
+      data.skinning_transforms.assign(info.skinning_transforms.begin(), info.skinning_transforms.end());
+      if (!data.skinning_transforms.empty()) {
+        data.skinning_transform_runs.push_back(
+          {.src = 0, .dst = 0, .count = static_cast<u32>(data.skinning_transforms.size())}
+        );
+      }
+    } else {
+      memory::ScopedStack stack;
+      // meshes under one animator share its bones, so their ranges repeat and are merged here
+      auto ranges = stack.alloc<UploadRun>(info.skinned_mesh_instances.size());
+      auto range_count = 0_sz;
+      for (const auto& skinned : info.skinned_mesh_instances) {
+        const auto is_in_range = static_cast<usize>(skinned.bone_offset) + skinned.bone_count <=
+                                 info.skinning_transforms.size();
+        if (skinned.pose_advanced && skinned.bone_count > 0 && is_in_range) {
+          ranges[range_count++] = {.src = 0, .dst = skinned.bone_offset, .count = skinned.bone_count};
+        }
+      }
+
+      ranges = ranges.first(range_count);
+      std::ranges::sort(ranges, {}, &UploadRun::dst);
+      for (auto i = 0_sz; i < ranges.size();) {
+        const auto start = ranges[i].dst;
+        auto end = start + ranges[i].count;
+        while (++i < ranges.size() && ranges[i].dst <= end) {
+          end = std::max(end, ranges[i].dst + ranges[i].count);
+        }
+
+        const auto bones = info.skinning_transforms.subspan(start, end - start);
+        data.skinning_transform_runs.push_back(
+          {.src = static_cast<u32>(data.skinning_transforms.size()), .dst = start, .count = end - start}
+        );
+        data.skinning_transforms.insert(data.skinning_transforms.end(), bones.begin(), bones.end());
+      }
+    }
 
     data.skin_jobs.clear();
     data.skin_jobs.reserve(info.skinned_mesh_instances.size());
+    auto skin_group_count = 0_u32;
     for (const auto& skinned : info.skinned_mesh_instances) {
       if (skinned.vertex_count == 0 || skinned.bone_count == 0) {
+        continue;
+      }
+
+      if (!is_full_skinning && !skinned.needs_skinning) {
         continue;
       }
 
@@ -3949,9 +4017,13 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
           .bone_offset = skinned.bone_offset,
           .vertex_count = skinned.vertex_count,
           .bone_count = skinned.bone_count,
+          .first_group = skin_group_count,
         }
       );
+      skin_group_count += (skinned.vertex_count + GPU::SKIN_GROUP_SIZE - 1) / GPU::SKIN_GROUP_SIZE;
     }
+
+    data.skin_group_count = skin_group_count;
 
     // after the arena is final, because an entry's structure is built straight out of its slice.
     // Same answer the frame shape keys on, so the pool holds no memory while nothing traces

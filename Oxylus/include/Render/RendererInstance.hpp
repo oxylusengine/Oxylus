@@ -242,7 +242,9 @@ struct FrameData {
 
   u32 skinned_instance_count = 0;
   u32 skinned_vertex_total = 0;
+  // only the instances whose skinned vertices change this frame, one dispatch covers all of them
   std::vector<GPU::SkinJob> skin_jobs = {};
+  u32 skin_group_count = 0;
   std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> skinned_blas_builds = {};
   std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> tlas_builds = {};
 
@@ -261,7 +263,9 @@ struct FrameData {
   // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
   // outlive a scene dirty flag that never fires
   std::vector<u64> skinned_blas_addresses = {};
+  // packed per run like transforms, only the bones of poses that moved
   std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  std::vector<UploadRun> skinning_transform_runs = {};
   std::vector<GPU::Light> lights = {};
   std::vector<u32> dirty_mesh_instances = {};
   std::vector<GPU::MeshBounds> removed_mesh_bounds = {};
@@ -398,6 +402,7 @@ struct FrameValues {
   vir::ValueID exposure = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID skin_jobs = vir::ValueID::Invalid;
   vir::ValueID terrain_patch_visibility_mask = vir::ValueID::Invalid;
   vir::ValueID tlas = vir::ValueID::Invalid;
 };
@@ -1096,7 +1101,7 @@ struct PreparedFrame {
   UploadVariables blas_addresses_upload = {};
   UploadVariables skinned_blas_addresses_upload = {};
   vir::ValueID mesh_instances_staging = vir::ValueID::Invalid;
-  UploadVariables skinning_transforms_upload = {};
+  vir::ValueID skinning_transforms_staging = vir::ValueID::Invalid;
   UploadVariables lights_upload = {};
   vir::ValueID is_meshlet_visibility_reset = vir::ValueID::Invalid;
   vir::ValueID is_terrain_visibility_reset = vir::ValueID::Invalid;
@@ -1106,6 +1111,7 @@ struct PreparedFrame {
   vir::ValueID atmosphere = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID skin_jobs = vir::ValueID::Invalid;
   vir::ValueID probe_volumes = vir::ValueID::Invalid;
   vir::ValueID decals = vir::ValueID::Invalid;
   vir::ValueID decal_count = vir::ValueID::Invalid;
@@ -1617,6 +1623,9 @@ private:
   BufferID transforms_previous_buffer = BufferID::Invalid;
   BufferID mesh_instances_buffer = BufferID::Invalid;
   BufferID skinning_transforms_buffer = BufferID::Invalid;
+  // false from `update` until that frame submits, so a frame that never ran makes the next one
+  // upload and skin everything instead of only what moved
+  bool is_skinning_synced = false;
   // in the same quantized format as the bind pose, so every downstream consumer works by pointer
   // swap alone
   BufferID skinned_vertices_buffer = BufferID::Invalid;

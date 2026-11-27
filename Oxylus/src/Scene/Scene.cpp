@@ -39,6 +39,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/Option.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
@@ -140,6 +141,116 @@ auto wrap_clip_time(const f32 time, const f32 duration, const bool loop) -> f32 
 
   // two fmods so a negative playback speed wraps to the tail rather than to a negative time
   return std::fmod(std::fmod(time, duration) + duration, duration);
+}
+
+// samples, blends and skins one instance from the inputs `update_animations` settled on. Touches
+// nothing but the instance and its own slice of `skinning_transforms`, so instances run in parallel
+static auto evaluate_animation_instance(
+  AnimationInstance& instance, std::span<GPU::SkinningTransform> skinning_transforms
+) -> void {
+  ZoneScoped;
+
+  auto& asset_man = App::mod<AssetManager>();
+  auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+  if (!skeleton || !skeleton->is_valid()) {
+    return;
+  }
+
+  instance.pose.skeleton = skeleton.value;
+  auto& task_system = instance.task_system;
+  task_system.reset();
+
+  // sampled inside the callback: the task system holds raw AnimationClip pointers into the slot
+  // map, so the read lock has to stay taken until the sampling is done
+  const auto& evaluation = instance.evaluation;
+  auto is_sampled = false;
+  asset_man.with_animations(
+    evaluation.has_clip ? instance.clip_uuid : UUID(nullptr),
+    evaluation.has_fade ? instance.fade_from_clip_uuid : UUID(nullptr),
+    [&](const AnimationClip* clip, const AnimationClip* fade_from) -> void {
+      if (clip == nullptr || clip->skeleton_uuid != instance.skeleton_uuid) {
+        return;
+      }
+
+      auto task = task_system.register_sample(clip, evaluation.current_time);
+      if (fade_from != nullptr && fade_from->skeleton_uuid == instance.skeleton_uuid) {
+        const auto fade_task = task_system.register_sample(fade_from, evaluation.fade_from_time);
+        // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
+        task = task_system.register_blend(fade_task, task, evaluation.fade_weight);
+      }
+
+      if (task != INVALID_POSE_TASK) {
+        task_system.execute(*skeleton.value, instance.pose);
+        is_sampled = true;
+      }
+    }
+  );
+
+  if (!is_sampled) {
+    // not playing, no clip yet, or it failed to load, so fall back to the reference pose because
+    // leaving the skinning transforms untouched would collapse every vertex onto the origin
+    instance.pose.parent_space_transforms = skeleton->parent_space_reference_pose;
+    instance.pose.clear_model_space_transforms();
+    instance.pose.state = Pose::State::ReferencePose;
+  }
+
+  instance.pose.calculate_model_space_transforms();
+
+  // bone positions inflated by the model's widest bone influence: tight enough to cull with,
+  // loose enough to cover every pose the clip can reach
+  auto bounds_min = glm::vec3(std::numeric_limits<f32>::max());
+  auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
+  for (const auto& bone : instance.pose.model_space_transforms) {
+    bounds_min = glm::min(bounds_min, bone.translation());
+    bounds_max = glm::max(bounds_max, bone.translation());
+  }
+
+  // GPU::MeshBounds::aabb_extent is the full box size, not a half-extent (AABB::from_bounds
+  // halves it), so the influence radius contributes twice, once on each side
+  instance.bounds.aabb_center = (bounds_min + bounds_max) * 0.5f;
+  instance.bounds.aabb_extent = (bounds_max - bounds_min) + glm::vec3(2.0f * instance.influence_radius);
+
+  const auto writable = skinning_transforms.subspan(instance.bone_offset, instance.bone_count);
+  for (auto i = 0_u32; i < instance.bone_count; ++i) {
+    const auto skinning = instance.pose.model_space_transforms[i] * skeleton->inverse_bind_pose[i];
+    writable[i].rotation = {skinning.rotation.x, skinning.rotation.y, skinning.rotation.z, skinning.rotation.w};
+    writable[i].translation_scale = skinning.translation_scale;
+  }
+
+  instance.pose.skeleton = nullptr;
+}
+
+// shared by the main thread and the helper jobs. Held through an Arc, because a helper the pool
+// starts late only finds the chunks gone and never touches `instances`, which may be gone by then
+struct AnimationEvaluationBatch : ManagedObj {
+  std::span<AnimationInstance* const> instances = {};
+  std::span<GPU::SkinningTransform> skinning_transforms = {};
+  u32 chunk_size = 1;
+  u32 chunk_count = 0;
+  std::atomic<u32> next_chunk = 0;
+  std::atomic<u32> done_chunks = 0;
+};
+
+static auto run_animation_chunks(AnimationEvaluationBatch& batch) -> void {
+  ZoneScoped;
+
+  while (true) {
+    // relaxed is enough to hand out indices, `done_chunks` is what publishes the results
+    const auto chunk = batch.next_chunk.fetch_add(1, std::memory_order_relaxed);
+    if (chunk >= batch.chunk_count) {
+      return;
+    }
+
+    const auto first = static_cast<usize>(chunk) * batch.chunk_size;
+    const auto count = std::min<usize>(batch.chunk_size, batch.instances.size() - first);
+    for (auto* instance : batch.instances.subspan(first, count)) {
+      evaluate_animation_instance(*instance, batch.skinning_transforms);
+    }
+
+    if (batch.done_chunks.fetch_add(1, std::memory_order_acq_rel) + 1 == batch.chunk_count) {
+      batch.done_chunks.notify_all();
+    }
+  }
 }
 
 // the first skin under `node`, stopping at nested animators the same way relink_skinned_meshes_under
@@ -1787,6 +1898,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       auto cached_model = ReadGuard<Model>();
       for (auto& skinned : self.skinned_mesh_instances) {
         skinned.pose_advanced = false;
+        skinned.needs_skinning = false;
 
         const auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id);
         if (animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size()) {
@@ -1806,16 +1918,19 @@ auto Scene::prepare_render(this Scene& self) -> void {
           cached_model_id = skinned.model_id;
         }
 
+        const auto is_mesh_ready = cached_model && cached_model->is_mesh_ready(skinned.mesh_node_index);
         skinned.index_address = 0;
         skinned.index_count = 0;
-        if (
-          cached_model && skinned.mesh_node_index < cached_model->lod0_index_ranges.size() &&
-          cached_model->is_mesh_ready(skinned.mesh_node_index)
-        ) {
+        if (is_mesh_ready && skinned.mesh_node_index < cached_model->lod0_index_ranges.size()) {
           const auto& range = cached_model->lod0_index_ranges[skinned.mesh_node_index];
           skinned.index_address = range.device_address;
           skinned.index_count = range.count;
         }
+
+        // a still pose keeps its skinned vertices, except that the first frame its mesh is ready
+        // skins once more, because every earlier run may have read vertices still uploading
+        skinned.needs_skinning = skinned.pose_advanced || !skinned.is_skinned_from_ready_mesh;
+        skinned.is_skinned_from_ready_mesh = is_mesh_ready;
 
         if (animation_instance->advanced) {
           any_skinned_advanced = true;
@@ -2876,6 +2991,10 @@ auto Scene::relink_skinned_meshes_under(this Scene& self, flecs::entity animator
 auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
   ZoneScoped;
 
+  // below this many changed poses a helper job's wake-up costs more than it saves
+  constexpr auto PARALLEL_MIN_INSTANCES = 8_sz;
+  constexpr auto CHUNK_SIZE = 4_u32;
+
   if (self.animation_instances.size() == 0) {
     self.skinning_transforms.clear();
     return;
@@ -2891,10 +3010,16 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
     bone_offset += instance.bone_count;
   });
 
-  if (self.skinning_transforms.size() != bone_offset) {
+  // a resize wipes every slice, so every instance has to write its own again
+  const auto is_skinning_reset = self.skinning_transforms.size() != bone_offset;
+  if (is_skinning_reset) {
     self.skinning_transforms.assign(bone_offset, GPU::SkinningTransform{});
   }
 
+  // the clocks, fades and asset lookups stay on this thread because they reach the flecs world and
+  // release asset refs. Only the sampling and skinning, the expensive part, fans out
+  auto& queue = self.animation_evaluation_queue;
+  queue.clear();
   for (const auto& [entity, instance_id] : self.entity_to_animation_instance_map) {
     auto* instance_ptr = self.animation_instances.slot(instance_id);
     if (instance_ptr == nullptr) {
@@ -2909,9 +3034,18 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
       continue;
     }
 
-    auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
-    if (!skeleton || !skeleton->is_valid()) {
-      continue;
+    {
+      auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+      if (!skeleton || !skeleton->is_valid()) {
+        continue;
+      }
+
+      // reset only on a real shape change
+      if (instance.pose.bone_count() != instance.bone_count) {
+        instance.pose.reset(skeleton.value, Pose::State::ReferencePose);
+        instance.pose.skeleton = nullptr;
+        instance.pose_dirty = true;
+      }
     }
 
     const auto* animator = self.world.entity(entity_id).try_get<AnimatorComponent>();
@@ -2919,24 +3053,12 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
       continue;
     }
 
-    // reset only on a real shape change, though the pointer is refreshed under the guard every
-    // frame because the slot map can move the skeleton out from under a stale one
-    if (instance.pose.bone_count() != instance.bone_count) {
-      instance.pose.reset(skeleton.value, Pose::State::ReferencePose);
-      instance.pose_dirty = true;
-    }
-    instance.pose.skeleton = skeleton.value;
-
-    auto& task_system = instance.task_system;
-    task_system.reset();
-    auto task = INVALID_POSE_TASK;
-
     // clips only play while the scene runs, so outside play mode an animated entity sits in its
     // bind pose rather than on the first frame of whatever clip it references, because editing a
     // character should not deform it
-    const auto advancing = self.running && animator->playing;
-    if (advancing != instance.was_advancing) {
-      instance.was_advancing = advancing;
+    const auto is_advancing = self.running && animator->playing;
+    if (is_advancing != instance.was_advancing) {
+      instance.was_advancing = is_advancing;
       instance.pose_dirty = true;
     }
 
@@ -2951,89 +3073,108 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
       self.end_animation_fade(instance);
     }
 
-    // both guards outlive `execute`: the task system holds raw AnimationClip pointers into the
-    // slot map, so the read locks have to stay taken until the sampling is done
-    auto clip = self.running ? asset_man.get_animation(instance.clip_uuid) : ReadGuard<AnimationClip>();
-    if (clip && clip->skeleton_uuid != instance.skeleton_uuid) {
-      clip.reset();
-    }
-    auto fade_from = ReadGuard<AnimationClip>();
+    auto evaluation = AnimationEvaluation{
+      .influence_radius = instance.influence_radius,
+      .bone_offset = instance.bone_offset,
+    };
 
-    if (clip) {
+    // durations are copied out so no two animation read locks are held at once on this thread
+    auto clip_duration = option<f32>();
+    if (self.running) {
+      if (const auto clip = asset_man.get_animation(instance.clip_uuid)) {
+        if (clip->skeleton_uuid == instance.skeleton_uuid) {
+          clip_duration = clip->duration;
+        }
+      }
+    }
+
+    if (clip_duration.has_value()) {
+      evaluation.has_clip = true;
       if (animator->playing) {
         instance.current_time = wrap_clip_time(
           instance.current_time + delta_time * animator->speed,
-          clip->duration,
+          *clip_duration,
           animator->loop
         );
       }
-
-      task = task_system.register_sample(clip.value, instance.current_time);
 
       if (instance.fade_from_clip_uuid && instance.fade_duration > 0.0f) {
         instance.fade_elapsed += delta_time;
 
         if (instance.fade_elapsed >= instance.fade_duration) {
           self.end_animation_fade(instance);
-        } else if (
-          (fade_from = asset_man.get_animation(instance.fade_from_clip_uuid)) &&
-          fade_from->skeleton_uuid == instance.skeleton_uuid
-        ) {
-          // the outgoing clip keeps running underneath, so the blend does not freeze mid-stride
-          if (animator->playing) {
-            instance.fade_from_time = wrap_clip_time(
-              instance.fade_from_time + delta_time * animator->speed,
-              fade_from->duration,
-              animator->loop
-            );
+        } else {
+          auto fade_duration = option<f32>();
+          if (const auto fade_from = asset_man.get_animation(instance.fade_from_clip_uuid)) {
+            if (fade_from->skeleton_uuid == instance.skeleton_uuid) {
+              fade_duration = fade_from->duration;
+            }
           }
 
-          const auto weight = glm::clamp(instance.fade_elapsed / instance.fade_duration, 0.0f, 1.0f);
-          const auto fade_task = task_system.register_sample(fade_from.value, instance.fade_from_time);
-          // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
-          task = task_system.register_blend(fade_task, task, weight);
+          if (fade_duration.has_value()) {
+            // the outgoing clip keeps running underneath, so the blend does not freeze mid-stride
+            if (animator->playing) {
+              instance.fade_from_time = wrap_clip_time(
+                instance.fade_from_time + delta_time * animator->speed,
+                *fade_duration,
+                animator->loop
+              );
+            }
+
+            evaluation.has_fade = true;
+            evaluation.fade_weight = glm::clamp(instance.fade_elapsed / instance.fade_duration, 0.0f, 1.0f);
+          }
         }
       }
     }
 
-    if (task == INVALID_POSE_TASK) {
-      // not playing, no clip yet, or it failed to load, so fall back to the reference pose because
-      // leaving the skinning transforms untouched would collapse every vertex onto the origin
-      instance.pose.parent_space_transforms = skeleton->parent_space_reference_pose;
-      instance.pose.clear_model_space_transforms();
-      instance.pose.state = Pose::State::ReferencePose;
-    } else {
-      task_system.execute(*skeleton.value, instance.pose);
-    }
+    evaluation.current_time = instance.current_time;
+    evaluation.fade_from_time = evaluation.has_fade ? instance.fade_from_time : 0.0f;
 
-    instance.pose.calculate_model_space_transforms();
-
-    // bone positions inflated by the model's widest bone influence: tight enough to cull with,
-    // loose enough to cover every pose the clip can reach
-    auto bounds_min = glm::vec3(std::numeric_limits<f32>::max());
-    auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
-    for (const auto& bone : instance.pose.model_space_transforms) {
-      bounds_min = glm::min(bounds_min, bone.translation());
-      bounds_max = glm::max(bounds_max, bone.translation());
-    }
-
-    // GPU::MeshBounds::aabb_extent is the full box size, not a half-extent (AABB::from_bounds
-    // halves it), so the influence radius contributes twice, once on each side
-    instance.bounds.aabb_center = (bounds_min + bounds_max) * 0.5f;
-    instance.bounds.aabb_extent = (bounds_max - bounds_min) + glm::vec3(2.0f * instance.influence_radius);
-
-    const auto writable = std::span(self.skinning_transforms).subspan(instance.bone_offset, instance.bone_count);
-    for (auto i = 0_u32; i < instance.bone_count; ++i) {
-      const auto skinning = instance.pose.model_space_transforms[i] * skeleton->inverse_bind_pose[i];
-      writable[i].rotation = {skinning.rotation.x, skinning.rotation.y, skinning.rotation.z, skinning.rotation.w};
-      writable[i].translation_scale = skinning.translation_scale;
-    }
-
-    instance.pose.skeleton = nullptr;
-    // a pose that is not moving must not keep marking itself dirty, which would re-upload the
-    // instance and invalidate its cached shadow pages every frame for a character standing still
-    instance.advanced = advancing || instance.pose_dirty;
+    // a pose whose inputs did not move keeps last frame's skinning, otherwise a character standing
+    // still would be re-sampled, re-uploaded and would invalidate its cached shadow pages every frame
+    const auto is_changed = !instance.is_evaluated || instance.pose_dirty || is_skinning_reset ||
+                            evaluation != instance.evaluation;
     instance.pose_dirty = false;
+    if (!is_changed) {
+      continue;
+    }
+
+    instance.evaluation = evaluation;
+    instance.is_evaluated = true;
+    instance.advanced = true;
+    queue.push_back(&instance);
+  }
+
+  const auto skinning_transforms = std::span(self.skinning_transforms);
+  auto& job_man = App::get_job_manager();
+  const auto worker_count = job_man.get_thread_count();
+  if (queue.size() < PARALLEL_MIN_INSTANCES || worker_count == 0) {
+    for (auto* instance : queue) {
+      evaluate_animation_instance(*instance, skinning_transforms);
+    }
+
+    return;
+  }
+
+  auto batch = Arc<AnimationEvaluationBatch>::create();
+  batch->instances = queue;
+  batch->skinning_transforms = skinning_transforms;
+  batch->chunk_size = CHUNK_SIZE;
+  batch->chunk_count = static_cast<u32>((queue.size() + CHUNK_SIZE - 1) / CHUNK_SIZE);
+
+  // this thread works through the chunks too, so a pool busy with long loads only costs the help it
+  // would have given rather than stalling the frame behind them
+  const auto helper_count = std::min(worker_count, batch->chunk_count - 1);
+  for (auto i = 0_u32; i < helper_count; i++) {
+    job_man.submit(Job::create([batch] { run_animation_chunks(*batch); }), true);
+  }
+
+  run_animation_chunks(*batch);
+  auto done = batch->done_chunks.load(std::memory_order_acquire);
+  while (done != batch->chunk_count) {
+    batch->done_chunks.wait(done, std::memory_order_acquire);
+    done = batch->done_chunks.load(std::memory_order_acquire);
   }
 }
 
