@@ -306,6 +306,11 @@ auto App::with_assets_directory(this App& self, const std::filesystem::path& dir
   return self;
 }
 
+auto App::with_render_context(this App& self, std::unique_ptr<RenderContext> context) -> App& {
+  self.render_context = std::move(context);
+  return self;
+}
+
 auto App::with_scripts(this App& self, const std::filesystem::path& path) -> App& {
   self.scripts_path = path;
   return self;

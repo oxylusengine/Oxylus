@@ -31,7 +31,7 @@ static_assert(sizeof(OxVehicleState) == 16 && sizeof(OxWheelState) == 12);
 static_assert(sizeof(OxCharacterState) == 40 && offsetof(OxCharacterState, ground_normal) == 28);
 static_assert(sizeof(OxAssetId) == 16 && sizeof(OxAssetInfo) == 16 && sizeof(OxAudioState) == 16);
 static_assert(sizeof(OxValue) == 40 && offsetof(OxValue, text) == 24);
-static_assert(sizeof(OxUiEvent) == 40 && offsetof(OxUiEvent, mouse_x) == 32);
+static_assert(sizeof(OxUiEvent) == 48 && offsetof(OxUiEvent, mouse_x) == 32 && offsetof(OxUiEvent, event) == 40);
 static_assert(sizeof(OxNetClientState) == 32 && offsetof(OxNetClientState, rtt) == 16);
 static_assert(sizeof(OxVec4) == 16 && sizeof(OxCinematicState) == 8 && sizeof(OxWindowSize) == 16);
 static_assert(sizeof(OxMaterialData) == 256 && offsetof(OxMaterialData, alpha_mode) == 60);

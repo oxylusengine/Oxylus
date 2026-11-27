@@ -47,29 +47,40 @@ RmlView::~RmlView() {
 auto RmlView::update(this RmlView& self, glm::ivec2 surface_size_) -> void {
   ZoneScoped;
 
-  if (!self.rml_context || surface_size_.x <= 0 || surface_size_.y <= 0) {
+  if (!self.rml_context) {
     return;
   }
 
-  self.surface_size = surface_size_;
-  self.sync_dpi_ratio();
+  // a scene that ticks without rendering has no surface yet, its documents still update
+  const auto is_drawn = surface_size_.x > 0 && surface_size_.y > 0;
+  if (is_drawn) {
+    self.surface_size = surface_size_;
+    self.sync_dpi_ratio();
+    self.renderer->begin_frame(surface_size_);
+    self.rml_context->SetDimensions(Rml::Vector2i(surface_size_.x, surface_size_.y));
+  }
 
-  self.renderer->begin_frame();
-  self.rml_context->SetDimensions(Rml::Vector2i(surface_size_.x, surface_size_.y));
   self.rml_context->Update();
-  self.rml_context->Render();
+  if (is_drawn) {
+    self.rml_context->Render();
+  }
 }
 
-auto RmlView::upload(this RmlView& self, RenderContext& context) -> void {
+auto RmlView::render(this RmlView& self, RenderContext& context) -> void {
   ZoneScoped;
 
   if (self.rml_context) {
-    self.renderer->upload(context);
+    self.renderer->render(context);
   }
 }
 
 auto RmlView::record(
-  this RmlView& self, vir::Module& module, RenderContext& render_context, vir::ValueID target, vir::Extent3D extent
+  this RmlView& self,
+  vir::Module& module,
+  RenderContext& render_context,
+  vir::ValueID target,
+  vir::Extent3D extent,
+  RmlCompositeVariables& variables
 ) -> vir::ValueID {
   ZoneScoped;
 
@@ -77,13 +88,20 @@ auto RmlView::record(
     return target;
   }
 
-  return self.renderer->record(module, render_context, target, extent);
+  return RmlRenderer::record_composite(module, render_context, target, extent, variables);
+}
+
+auto RmlView::bind(this const RmlView& self, vir::Program& program, const RmlCompositeVariables& variables) -> void {
+  if (self.rml_context) {
+    self.renderer->bind_composite(program, variables);
+  }
 }
 
 auto RmlView::set_viewport(this RmlView& self, glm::ivec2 origin, glm::ivec2 size, bool keyboard_focused_) -> void {
   self.viewport_origin = {static_cast<f32>(origin.x), static_cast<f32>(origin.y)};
   self.viewport_size = {static_cast<f32>(size.x), static_cast<f32>(size.y)};
   self.keyboard_focused = keyboard_focused_;
+  self.frames_unplaced = 0;
   self.sync_dpi_ratio();
 }
 

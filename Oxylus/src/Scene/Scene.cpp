@@ -50,6 +50,7 @@
 #include "Render/Camera.hpp"
 #include "Render/DebugRenderer.hpp"
 #include "Scene/EntitySerializer.hpp"
+#include "UI/RmlRenderer.hpp"
 #include "UI/RmlUI.hpp"
 #include "UI/RmlView.hpp"
 #include "Utils/JsonWriter.hpp"
@@ -1581,10 +1582,6 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 
   self.run_deferred_functions();
   self.update_pending_model_spawns();
-
-  if (auto* rml_context = self.get_rml_context()) {
-    rml_context->Update();
-  }
 
   auto pre_update_phase_enabled = !self.world.entity(flecs::PreUpdate).has(flecs::Disabled);
   auto on_update_phase_enabled = !self.world.entity(flecs::OnUpdate).has(flecs::Disabled);
@@ -4063,18 +4060,33 @@ auto Scene::render(
   self.prepare_render();
 
   if (self.rml_view) {
-    self.rml_view->upload(App::get_rendercontext());
-    ri->add_stage_after(RenderStage::FinalOutput, "rmlui", [view = self.rml_view.get()](RenderStageContext& ctx) {
-      ctx.set_image_resource(
-        "result_attachment",
-        view->record(
-          ctx.module,
-          ctx.render_context,
-          ctx.get_image_resource("result_attachment"),
-          {ctx.display_size.x, ctx.display_size.y, 1}
-        )
-      );
-    });
+    self.rml_view->render(App::get_rendercontext());
+    // registered whether or not there is UI this frame, the program skips the composite when there isn't
+    ri->add_stage_after(
+      RenderStage::FinalOutput,
+      "rmlui",
+      [view = self.rml_view.get()](RenderStageContext& ctx) {
+        auto variables = RmlCompositeVariables{};
+        ctx.set_image_resource(
+          "result_attachment",
+          view->record(
+            ctx.module,
+            ctx.render_context,
+            ctx.get_image_resource("result_attachment"),
+            {ctx.display_size.x, ctx.display_size.y, 1},
+            variables
+          )
+        );
+        ctx.variables["rmlui output"] = variables.image;
+        ctx.variables["rmlui visible"] = variables.is_visible;
+      },
+      [view = self.rml_view.get()](vir::Program& program, const StageVariables& variables) {
+        view->bind(
+          program,
+          {.image = variables.at("rmlui output"), .is_visible = variables.at("rmlui visible")}
+        );
+      }
+    );
   }
 
   const auto ticket = ri->render(target, viewport_origin, viewport_size, surface_size, self.renderer_cvar);
@@ -4095,6 +4107,12 @@ auto Scene::get_rml_context_name(this const Scene& self) -> std::string_view {
   ZoneScoped;
 
   return self.rml_view ? self.rml_view->name() : std::string_view{};
+}
+
+auto Scene::set_rml_accepts_mouse(this const Scene& self, bool accepts_mouse) -> void {
+  if (self.rml_view) {
+    self.rml_view->accepts_mouse = accepts_mouse;
+  }
 }
 
 auto Scene::set_rml_dpi_ratio(this const Scene& self, f32 ratio) -> void {

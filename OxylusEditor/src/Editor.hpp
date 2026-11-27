@@ -16,6 +16,7 @@
 #include "Utils/EditorContext.hpp"
 #include "Utils/EditorTheme.hpp"
 #include "Utils/Notification.hpp"
+#include "Utils/RmlLiveReload.hpp"
 #include "Utils/SceneManager.hpp"
 #include "Utils/ThumbnailManager.hpp"
 
@@ -70,6 +71,7 @@ public:
   std::unique_ptr<UndoRedoSystem> undo_redo_system = nullptr;
 
   NotificationSystem notification_system = {};
+  RmlLiveReload rml_live_reload = {};
 
 #ifdef OX_DOTNET
   CSharpScripts csharp_scripts;

@@ -75,19 +75,19 @@ public static unsafe class Ui
         }
     }
 
-    // inner RML when `name` is null, otherwise that attribute
-    internal static string ReadText(ulong element, string? name)
+    // inner RML for `TextKind.InnerRml`, otherwise the named attribute or property
+    internal static string ReadText(ulong element, TextKind kind, string name = "")
     {
-        var nameBytes = name is null ? [] : Encoding.UTF8.GetBytes(name);
+        var nameBytes = Encoding.UTF8.GetBytes(name);
+        var message = kind == TextKind.Property ? "The element is gone or has no such property" : "The element is gone";
         fixed (byte* nameData = nameBytes)
         {
             var view = new StringView(nameData, nameBytes.Length);
-            var isInnerRml = name is null;
             Span<byte> buffer = stackalloc byte[256];
             uint length;
             fixed (byte* data = buffer)
             {
-                Check(Read(element, isInnerRml, view, data, (uint)buffer.Length, &length), "The element is gone");
+                Check(Read(element, kind, view, data, (uint)buffer.Length, &length), message);
             }
 
             if (length <= buffer.Length)
@@ -98,17 +98,19 @@ public static unsafe class Ui
             var large = new byte[length];
             fixed (byte* data = large)
             {
-                Check(Read(element, isInnerRml, view, data, length, &length), "The element is gone");
+                Check(Read(element, kind, view, data, length, &length), message);
             }
 
             return Encoding.UTF8.GetString(large);
         }
     }
 
-    static OxStatus Read(ulong element, bool isInnerRml, StringView name, byte* buffer, uint capacity, uint* length) =>
-        isInnerRml
-            ? Runtime.Native.UiGetInnerRml(element, buffer, capacity, length)
-            : Runtime.Native.UiGetAttribute(element, name, buffer, capacity, length);
+    static OxStatus Read(ulong element, TextKind kind, StringView name, byte* buffer, uint capacity, uint* length) => kind switch
+    {
+        TextKind.InnerRml => Runtime.Native.UiGetInnerRml(element, buffer, capacity, length),
+        TextKind.Attribute => Runtime.Native.UiGetAttribute(element, name, buffer, capacity, length),
+        _ => Runtime.Native.UiGetProperty(element, name, buffer, capacity, length),
+    };
 
     internal static void Release()
     {
@@ -120,6 +122,13 @@ public static unsafe class Ui
 
         Models.Clear();
     }
+}
+
+internal enum TextKind
+{
+    InnerRml,
+    Attribute,
+    Property,
 }
 
 public readonly unsafe struct UiElement(ulong handle) : IEquatable<UiElement>
@@ -143,7 +152,7 @@ public readonly unsafe struct UiElement(ulong handle) : IEquatable<UiElement>
 
     public UiElement GetElementById(string id) => Query($"#{id}");
 
-    public string InnerRml => Ui.ReadText(Handle, null);
+    public string InnerRml => Ui.ReadText(Handle, TextKind.InnerRml);
 
     public void SetInnerRml(string rml)
     {
@@ -154,7 +163,22 @@ public readonly unsafe struct UiElement(ulong handle) : IEquatable<UiElement>
         }
     }
 
-    public string GetAttribute(string name) => Ui.ReadText(Handle, name);
+    public string GetAttribute(string name) => Ui.ReadText(Handle, TextKind.Attribute, name);
+
+    // what RmlUi resolved for an RCSS property, "display" gives "block", and throws when the element has none
+    public string GetProperty(string name) => Ui.ReadText(Handle, TextKind.Property, name);
+
+    public bool HasClass(string name)
+    {
+        var bytes = Encoding.UTF8.GetBytes(name);
+        bool isSet;
+        fixed (byte* data = bytes)
+        {
+            Ui.Check(Runtime.Native.UiHasClass(Handle, new StringView(data, bytes.Length), &isSet), "The element is gone");
+        }
+
+        return isSet;
+    }
 
     public void SetAttribute(string name, string value) => Pair(name, value, isProperty: false);
 
@@ -167,6 +191,79 @@ public readonly unsafe struct UiElement(ulong handle) : IEquatable<UiElement>
         fixed (byte* data = bytes)
         {
             Ui.Check(Runtime.Native.UiSetClass(Handle, new StringView(data, bytes.Length), isActive), "The element is gone");
+        }
+    }
+
+    // false when RmlUi won't focus it, an element has to be focusable
+    public bool Focus()
+    {
+        var status = Runtime.Native.UiElementCommand(Handle, UiElementCommand.Focus);
+        if (status == OxStatus.InvalidArgument)
+        {
+            return false;
+        }
+
+        Ui.Check(status, "The element is gone");
+        return true;
+    }
+
+    public void Blur() => Command(UiElementCommand.Blur);
+
+    public void Click() => Command(UiElementCommand.Click);
+
+    public void ScrollIntoView() => Command(UiElementCommand.ScrollIntoView);
+
+    // the element and its children are gone, calls on them throw from then on. A document closes through
+    // UiDocument.Close and has no parent to leave
+    public void Remove() => Command(UiElementCommand.Remove);
+
+    // a new element with the tag, `AppendChild("div")`, at the end of this one's children
+    public UiElement AppendChild(string tag)
+    {
+        var bytes = Encoding.UTF8.GetBytes(tag);
+        ulong child;
+        fixed (byte* data = bytes)
+        {
+            Ui.Check(Runtime.Native.UiAppendChild(Handle, new StringView(data, bytes.Length), &child), $"Couldn't append {tag}, is the element gone?");
+        }
+
+        return new UiElement(child);
+    }
+
+    // every match under this element, empty when nothing matches
+    public UiElement[] QueryAll(string selector)
+    {
+        var bytes = Encoding.UTF8.GetBytes(selector);
+        Span<ulong> first = stackalloc ulong[8];
+        int count;
+        fixed (byte* data = bytes)
+        fixed (ulong* found = first)
+        {
+            var view = new StringView(data, bytes.Length);
+            Ui.Check(Runtime.Native.UiQueryAll(Handle, view, found, first.Length, &count), "The element is gone");
+            if (count <= first.Length)
+            {
+                return Wrap(first[..count]);
+            }
+
+            var large = new ulong[count];
+            fixed (ulong* all = large)
+            {
+                Ui.Check(Runtime.Native.UiQueryAll(Handle, view, all, large.Length, &count), "The element is gone");
+            }
+
+            return Wrap(large.AsSpan(0, Math.Min(count, large.Length)));
+        }
+    }
+
+    // default when this is a document
+    public UiElement Parent
+    {
+        get
+        {
+            ulong parent;
+            Ui.Check(Runtime.Native.UiParent(Handle, &parent), "The element is gone");
+            return new UiElement(parent);
         }
     }
 
@@ -184,6 +281,21 @@ public readonly unsafe struct UiElement(ulong handle) : IEquatable<UiElement>
         Ui.Listeners[listener] = handler;
         return new UiListener(listener);
     }
+
+    static UiElement[] Wrap(ReadOnlySpan<ulong> handles)
+    {
+        var elements = new UiElement[handles.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            elements[i] = new UiElement(handles[i]);
+        }
+
+        return elements;
+    }
+
+    void Command(UiElementCommand command) => Ui.Check(
+        Runtime.Native.UiElementCommand(Handle, command),
+        command == UiElementCommand.Remove ? "The element is gone, a document or has no parent" : "The element is gone");
 
     void Pair(string first, string second, bool isProperty)
     {
@@ -225,10 +337,12 @@ public readonly unsafe struct UiDocument(ulong handle)
 public readonly unsafe ref struct UiEvent
 {
     readonly StringView type;
+    readonly nint native;
 
     internal UiEvent(UiEventData* data)
     {
         type = data->Type;
+        native = data->Event;
         Target = new UiElement(data->Target);
         Current = new UiElement(data->Current);
         Mouse = data->Mouse;
@@ -243,6 +357,65 @@ public readonly unsafe ref struct UiEvent
 
     // `e.Is("click"u8)` compares without making a string
     public bool Is(ReadOnlySpan<byte> utf8) => new ReadOnlySpan<byte>(type.Data, (int)type.Length).SequenceEqual(utf8);
+
+    // RmlUi's event parameters by name, the fallback when the event has no such one
+    public long GetInteger(string name, long fallback = 0) => TryGet(name, out var value) ? UiValues.Integer(value) : fallback;
+
+    public double GetNumber(string name, double fallback = 0) => TryGet(name, out var value) ? UiValues.Number(value) : fallback;
+
+    public bool GetBool(string name) => TryGet(name, out var value) && value.Integer != 0;
+
+    public string GetString(string name, string fallback = "") => TryGet(name, out var value) ? UiValues.Text(value) : fallback;
+
+    // key events
+    public UiKey Key => (UiKey)GetInteger("key_identifier");
+    public bool Ctrl => GetBool("ctrl_key");
+    public bool Shift => GetBool("shift_key");
+    public bool Alt => GetBool("alt_key");
+    public bool Meta => GetBool("meta_key");
+
+    // mouse events, the button's index, 0 for the left one
+    public int Button => (int)GetInteger("button");
+    public Vector2 Wheel => new((float)GetNumber("wheel_delta_x"), (float)GetNumber("wheel_delta_y"));
+
+    // later elements on the path don't see the event, the listeners left on this one still run
+    public void StopPropagation()
+    {
+        if (native != 0)
+        {
+            Runtime.Native.UiEventStop(native, false);
+        }
+    }
+
+    // not even the listeners left on this element see it
+    public void StopImmediatePropagation()
+    {
+        if (native != 0)
+        {
+            Runtime.Native.UiEventStop(native, true);
+        }
+    }
+
+    bool TryGet(string name, out Value value)
+    {
+        value = default;
+        if (native == 0)
+        {
+            return false;
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(name);
+        Value found = default;
+        OxStatus status;
+        fixed (byte* data = bytes)
+        {
+            status = Runtime.Native.UiEventParameter(native, new StringView(data, bytes.Length), &found);
+        }
+
+        // a string is only valid until the next call, so the caller reads it before making one
+        value = found;
+        return status == OxStatus.Ok;
+    }
 }
 
 public readonly unsafe struct UiListener(ulong id) : IDisposable
@@ -261,22 +434,13 @@ public readonly unsafe ref struct UiArgs(Value* values, int count)
 {
     public int Count { get; } = count;
 
-    public long GetInteger(int index) => At(index).Kind is ValueKind.F64 or ValueKind.F32 ? (long)At(index).Number : At(index).Integer;
+    public long GetInteger(int index) => UiValues.Integer(At(index));
 
-    public double GetNumber(int index) => At(index).Kind is ValueKind.F64 or ValueKind.F32 ? At(index).Number : At(index).Integer;
+    public double GetNumber(int index) => UiValues.Number(At(index));
 
     public bool GetBool(int index) => At(index).Integer != 0;
 
-    public string GetString(int index)
-    {
-        ref readonly var value = ref At(index);
-        return value.Kind switch
-        {
-            ValueKind.String => Encoding.UTF8.GetString(value.Text.Data, (int)value.Text.Length),
-            ValueKind.F64 or ValueKind.F32 => value.Number.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            _ => value.Integer.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        };
-    }
+    public string GetString(int index) => UiValues.Text(At(index));
 
     ref readonly Value At(int index)
     {
@@ -297,6 +461,7 @@ public sealed unsafe class UiDataModel : IDisposable
 {
     readonly List<UiBinding> bindings = [];
     readonly List<UiDataEvent> events = [];
+    readonly List<UiList> lists = [];
     // a getter's string, pinned so native code can copy it after the call returns
     byte[] text = GC.AllocateArray<byte>(256, pinned: true);
     ulong handle;
@@ -316,6 +481,66 @@ public sealed unsafe class UiDataModel : IDisposable
         }
 
         bindings.Add(binding);
+    }
+
+    // a list of single values, `data-for="name : names"` then {{name}}
+    public void BindList<T>(string name, Func<IReadOnlyList<T>> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        UiValues.EnsureSupported<T>("A data model list item");
+        AddList(name, new UiList<T>(items, null), []);
+    }
+
+    // a list of records, `data-for="item : items"` then {{item.name}}, and {{items.size}} is its length. The getter
+    // is how the list stays current, call Dirty with its name after it changes
+    public void BindList<T>(string name, Func<IReadOnlyList<T>> items, Action<UiListFields<T>> fields)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentNullException.ThrowIfNull(fields);
+        var declared = new UiListFields<T>();
+        fields(declared);
+        AddList(name, new UiList<T>(items, declared.Writers.ToArray()), declared.Names);
+    }
+
+    void AddList(string name, UiList list, List<string> fieldNames)
+    {
+        var nameBytes = Encoding.UTF8.GetBytes(name);
+        var fieldBytes = new byte[fieldNames.Count][];
+        for (var i = 0; i < fieldBytes.Length; i++)
+        {
+            fieldBytes[i] = Encoding.UTF8.GetBytes(fieldNames[i]);
+        }
+
+        var views = new StringView[fieldBytes.Length];
+        var pins = new GCHandle[fieldBytes.Length];
+        try
+        {
+            for (var i = 0; i < fieldBytes.Length; i++)
+            {
+                pins[i] = GCHandle.Alloc(fieldBytes[i], GCHandleType.Pinned);
+                views[i] = new StringView((byte*)pins[i].AddrOfPinnedObject(), fieldBytes[i].Length);
+            }
+
+            fixed (byte* data = nameBytes)
+            fixed (StringView* fieldViews = views)
+            {
+                Ui.Check(
+                    Runtime.Native.UiModelBindList(Live, new StringView(data, nameBytes.Length), lists.Count, fieldViews, views.Length),
+                    $"Couldn't bind list {name}, is it already bound or the model in use?");
+            }
+        }
+        finally
+        {
+            foreach (var pin in pins)
+            {
+                if (pin.IsAllocated)
+                {
+                    pin.Free();
+                }
+            }
+        }
+
+        lists.Add(list);
     }
 
     public void BindEvent(string name, UiDataEvent handler)
@@ -373,6 +598,16 @@ public sealed unsafe class UiDataModel : IDisposable
         }
     }
 
+    internal int ListSize(int index) => (uint)index < (uint)lists.Count ? lists[index].Size() : 0;
+
+    internal void ListGet(int index, int item, int field, Value* value)
+    {
+        if ((uint)index < (uint)lists.Count)
+        {
+            lists[index].Get(item, field, value, ref text);
+        }
+    }
+
     internal void Event(int index, UiEventData* data, Value* args, int count)
     {
         if ((uint)index < (uint)events.Count)
@@ -382,28 +617,20 @@ public sealed unsafe class UiDataModel : IDisposable
     }
 }
 
-internal abstract unsafe class UiBinding
+internal static unsafe class UiValues
 {
-    public abstract void Get(Value* value, ref byte[] text);
-    public abstract void Set(Value* value);
-
-    public static UiBinding Create<T>(Func<T> get, Action<T>? set)
+    public static void EnsureSupported<T>(string what)
     {
         if (typeof(T) != typeof(bool) && typeof(T) != typeof(int) && typeof(T) != typeof(long) &&
             typeof(T) != typeof(float) && typeof(T) != typeof(double) && typeof(T) != typeof(string))
         {
-            throw new NotSupportedException($"A data model variable is a bool, int, long, float, double or string, not {typeof(T).Name}");
+            throw new NotSupportedException($"{what} is a bool, int, long, float, double or string, not {typeof(T).Name}");
         }
-
-        return new UiBinding<T>(get, set);
     }
-}
 
-internal sealed unsafe class UiBinding<T>(Func<T> get, Action<T>? set) : UiBinding
-{
-    public override void Get(Value* value, ref byte[] text)
+    // a string is copied into `text`, which the native side reads before it calls again
+    public static void Write<T>(T current, Value* value, ref byte[] text)
     {
-        var current = get();
         *value = default;
         if (typeof(T) == typeof(bool))
         {
@@ -444,6 +671,92 @@ internal sealed unsafe class UiBinding<T>(Func<T> get, Action<T>? set) : UiBindi
             value->Text = new StringView((byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(text)), length);
         }
     }
+
+    public static long Integer(in Value value) => value.Kind is ValueKind.F64 or ValueKind.F32 ? (long)value.Number : value.Integer;
+
+    public static double Number(in Value value) => value.Kind is ValueKind.F64 or ValueKind.F32 ? value.Number : value.Integer;
+
+    public static string Text(in Value value) => value.Kind switch
+    {
+        ValueKind.String => Encoding.UTF8.GetString(value.Text.Data, (int)value.Text.Length),
+        ValueKind.F64 or ValueKind.F32 => value.Number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => value.Integer.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
+}
+
+internal unsafe delegate void UiValueWriter<T>(T item, Value* value, ref byte[] text);
+
+public sealed unsafe class UiListFields<T>
+{
+    internal readonly List<string> Names = [];
+    internal readonly List<UiValueWriter<T>> Writers = [];
+
+    internal UiListFields()
+    {
+    }
+
+    // `Add("name", item => item.Name)`, `{{item.name}}` in the document
+    public UiListFields<T> Add<TField>(string name, Func<T, TField> get)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        UiValues.EnsureSupported<TField>($"A data model list field {name}");
+        Names.Add(name);
+        Writers.Add((T item, Value* value, ref byte[] text) => UiValues.Write(get(item), value, ref text));
+        return this;
+    }
+}
+
+internal abstract unsafe class UiList
+{
+    public abstract int Size();
+
+    // `field` is -1 for the item itself
+    public abstract void Get(int index, int field, Value* value, ref byte[] text);
+}
+
+internal sealed unsafe class UiList<T>(Func<IReadOnlyList<T>> items, UiValueWriter<T>[]? fields) : UiList
+{
+    public override int Size() => items()?.Count ?? 0;
+
+    public override void Get(int index, int field, Value* value, ref byte[] text)
+    {
+        var current = items();
+        if (current is null || (uint)index >= (uint)current.Count)
+        {
+            *value = default;
+            return;
+        }
+
+        if (fields is null)
+        {
+            UiValues.Write(current[index], value, ref text);
+        }
+        else if ((uint)field < (uint)fields.Length)
+        {
+            fields[field](current[index], value, ref text);
+        }
+        else
+        {
+            *value = default;
+        }
+    }
+}
+
+internal abstract unsafe class UiBinding
+{
+    public abstract void Get(Value* value, ref byte[] text);
+    public abstract void Set(Value* value);
+
+    public static UiBinding Create<T>(Func<T> get, Action<T>? set)
+    {
+        UiValues.EnsureSupported<T>("A data model variable");
+        return new UiBinding<T>(get, set);
+    }
+}
+
+internal sealed unsafe class UiBinding<T>(Func<T> get, Action<T>? set) : UiBinding
+{
+    public override void Get(Value* value, ref byte[] text) => UiValues.Write(get(), value, ref text);
 
     // a write from the UI, an input box or a slider, which happens at human speed
     public override void Set(Value* value)

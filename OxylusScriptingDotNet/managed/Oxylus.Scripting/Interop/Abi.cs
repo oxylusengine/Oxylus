@@ -7,7 +7,7 @@ namespace Oxylus.Interop;
 // mirrors OxylusScriptingDotNet/include/Scripting/DotNetAbi.hpp
 public static class Abi
 {
-    public const uint Version = 20;
+    public const uint Version = 21;
 }
 
 public enum OxStatus : int
@@ -405,6 +405,15 @@ public enum UiDocumentCommand : int
     Close = 2,
 }
 
+public enum UiElementCommand : int
+{
+    Focus = 0,
+    Blur = 1,
+    Click = 2,
+    ScrollIntoView = 3,
+    Remove = 4,
+}
+
 [StructLayout(LayoutKind.Sequential)]
 public struct UiEventData
 {
@@ -412,6 +421,7 @@ public struct UiEventData
     public ulong Target;
     public ulong Current;
     public Vector2 Mouse;
+    public nint Event;
 }
 
 public enum NetEvent : int
@@ -596,6 +606,15 @@ public unsafe struct NativeApi
     public delegate* unmanaged<ulong, void> UiModelRemove;
     public delegate* unmanaged<void> UiClearStyleSheetCache;
     public delegate* unmanaged<void> UiClearTemplateCache;
+    public delegate* unmanaged<ulong, UiElementCommand, OxStatus> UiElementCommand;
+    public delegate* unmanaged<ulong, StringView, ulong*, OxStatus> UiAppendChild;
+    public delegate* unmanaged<ulong, StringView, ulong*, int, int*, OxStatus> UiQueryAll;
+    public delegate* unmanaged<ulong, ulong*, OxStatus> UiParent;
+    public delegate* unmanaged<ulong, StringView, byte*, uint, uint*, OxStatus> UiGetProperty;
+    public delegate* unmanaged<ulong, StringView, bool*, OxStatus> UiHasClass;
+    public delegate* unmanaged<nint, StringView, Value*, OxStatus> UiEventParameter;
+    public delegate* unmanaged<nint, bool, void> UiEventStop;
+    public delegate* unmanaged<ulong, StringView, int, StringView*, int, OxStatus> UiModelBindList;
 
     public delegate* unmanaged<WindowSizeData*, void> WindowSize;
     public delegate* unmanaged<double> TimeMaxFrameTime;
@@ -643,6 +662,8 @@ public unsafe struct ManagedApi
     public delegate* unmanaged<ulong, int, Value*, void> UiModelGet;
     public delegate* unmanaged<ulong, int, Value*, void> UiModelSet;
     public delegate* unmanaged<ulong, int, UiEventData*, Value*, int, void> UiModelEvent;
+    public delegate* unmanaged<ulong, int, int> UiModelListSize;
+    public delegate* unmanaged<ulong, int, int, int, Value*, void> UiModelListGet;
     public delegate* unmanaged<ulong, int, ulong, Value*, int, void> NetRpc;
     public delegate* unmanaged<ulong, NetEvent, ulong, uint, void> NetEvent;
     public delegate* unmanaged<ulong, byte, ulong*, int, ulong*, int, void> NetSnapshot;

@@ -42,6 +42,8 @@ public:
   auto with_window(this App& self, WindowInfo window_info) -> App&;
   auto with_working_directory(this App& self, const std::filesystem::path& dir) -> App&;
   auto with_assets_directory(this App& self, const std::filesystem::path& dir) -> App&;
+  // for headless tools and tests that bring their own device, `init` makes one for a window
+  auto with_render_context(this App& self, std::unique_ptr<RenderContext> context) -> App&;
   // the game's C# scripts published with NativeAOT, relative to the executable and without the platform's library
   // extension. DotNetScripting loads them at init
   auto with_scripts(this App& self, const std::filesystem::path& path) -> App&;

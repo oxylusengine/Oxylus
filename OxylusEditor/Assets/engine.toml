@@ -14,8 +14,39 @@ entry_points = ["vs_main", "fs_main"]
 requires = ["bindless"]
 
 [[shader_sessions.programs]]
+name = "rmlui_clip"
+path = "passes/rmlui.slang"
+entry_points = ["vs_main", "fs_clip"]
+requires = ["bindless"]
+
+[[shader_sessions.programs]]
 name = "rmlui_composite"
 path = "passes/rmlui_composite.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmlui_passthrough"
+path = "passes/rmlui_passthrough.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmlui_color_matrix"
+path = "passes/rmlui_color_matrix.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmlui_blur"
+path = "passes/rmlui_blur.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmlui_drop_shadow"
+path = "passes/rmlui_drop_shadow.slang"
+entry_points = ["vs_main", "fs_main"]
+
+[[shader_sessions.programs]]
+name = "rmlui_mask"
+path = "passes/rmlui_mask.slang"
 entry_points = ["vs_main", "fs_main"]
 
 [[shader_sessions.programs]]
