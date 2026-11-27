@@ -1900,6 +1900,8 @@ auto Scene::prepare_render(this Scene& self) -> void {
   self.resolve_transforms();
 
   if (self.renderer_instance) {
+    // dies with this scope, and the renderer copies what it keeps out of `update_info`
+    memory::ScopedStack stack;
     auto& asset_man = App::mod<AssetManager>();
     auto& gpu_meshes = self.gpu_meshes;
     // Parallel to `gpu_meshes`, so the TLAS build can look a BLAS up by mesh index.
@@ -2004,12 +2006,15 @@ auto Scene::prepare_render(this Scene& self) -> void {
       self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
     }
 
-    auto dirty_mesh_instance_gpu_indices = std::vector<u32>();
-    dirty_mesh_instance_gpu_indices.reserve(self.dirty_mesh_instances.size() + self.skinned_mesh_instances.size());
+    // every dirty instance, plus at most one entry per skinned instance below
+    auto dirty_mesh_instance_gpu_indices = stack.alloc<u32>(
+      self.dirty_mesh_instances.size() + self.skinned_mesh_instances.size()
+    );
+    auto dirty_mesh_instance_count = 0_sz;
     for (const auto mesh_instance_id : self.dirty_mesh_instances) {
       const auto slot_index = SlotMap_decode_id(mesh_instance_id).index;
       if (slot_index < gpu_index_by_slot.size() && gpu_index_by_slot[slot_index] != ~0_u32) {
-        dirty_mesh_instance_gpu_indices.push_back(gpu_index_by_slot[slot_index]);
+        dirty_mesh_instance_gpu_indices[dirty_mesh_instance_count++] = gpu_index_by_slot[slot_index];
       }
     }
 
@@ -2059,7 +2064,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
         if (animation_instance->advanced) {
           any_skinned_advanced = true;
           if (gpu_mesh_instances[skinned.gpu_instance_index].flags & GPU::MeshInstanceFlag::CastShadows) {
-            dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+            dirty_mesh_instance_gpu_indices[dirty_mesh_instance_count++] = skinned.gpu_instance_index;
           }
         }
       }
@@ -2098,11 +2103,12 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // Upload this frame's dirty transforms plus last frame's: the `previous_world` fix-up below
     // runs after the upload, so a transform's corrected previous matrix only reaches the GPU on the
     // following frame. Duplicates are collapsed inside the uploader.
-    auto transform_upload_ids = self.dirty_transforms;
-    transform_upload_ids.insert(
-      transform_upload_ids.end(),
-      self.previously_dirty_transforms.begin(),
-      self.previously_dirty_transforms.end()
+    auto transform_upload_ids = stack.alloc<GPU::TransformID>(
+      self.dirty_transforms.size() + self.previously_dirty_transforms.size()
+    );
+    std::ranges::copy(
+      self.previously_dirty_transforms,
+      std::ranges::copy(self.dirty_transforms, transform_upload_ids.begin()).out
     );
 
     auto update_info = RendererInstanceUpdateInfo{
@@ -2115,7 +2121,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
-      .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
+      .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices.first(dirty_mesh_instance_count),
       .changed_mesh_instance_indices = self.changed_mesh_instance_indices,
       .is_gpu_meshes_changed = self.is_gpu_meshes_changed,
       .skinned_mesh_instances = self.skinned_mesh_instances,
