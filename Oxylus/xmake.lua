@@ -11,6 +11,17 @@ target("Oxylus")
     add_options("profile")
     add_options("llvmpipe")
 
+    if has_config("profile") then
+        add_defines("TRACY_IMPORTS", { public = true })
+        -- the profiler starts its threads when its dll loads. Loaded with ResourceCompiler.dll they'd run the exe's
+        -- thread-local initializers before the exe's static CRT is up, so it loads on the first profiler call instead
+        if is_plat("windows") then
+            add_ldflags("/DELAYLOAD:TracyClient.dll", { public = true, force = true })
+            add_shflags("/DELAYLOAD:TracyClient.dll", { public = true, force = true })
+            add_syslinks("delayimp", { public = true })
+        end
+    end
+
     if is_plat("windows") then
         add_defines("_UNICODE", { force = true, public = true  })
         add_defines("UNICODE", { force = true, public = true  })

@@ -9,6 +9,7 @@ local svector_version = "v1.0.3"
 local tracy_version = "v0.15.0"
 local tracy_configs = {
   tracy_enable = has_config("profile"),
+  shared = has_config("profile"),
   on_demand = true,
   callstack = true,
   callstack_inlines = false,
