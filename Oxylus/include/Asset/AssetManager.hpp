@@ -68,6 +68,12 @@ struct Asset {
   auto set_payload_id(this Asset& self, u64 id) -> void {
     std::atomic_ref(self.payload_raw).store(id, std::memory_order_release);
   }
+
+  // built by a worker and waiting for the next `AssetManager::commit` to publish it, so readers do not
+  // see it yet. Only touched under the registry's write lock
+  u64 staged_raw = ~0_u64;
+
+  auto is_staged(this const Asset& self) -> bool { return self.staged_raw != ~0_u64; }
 };
 
 // boxed, so a record keeps its address however the map rehashes and an `AssetRef` can point at it
@@ -125,6 +131,11 @@ public:
     -> bool;
 
   auto load_asset_async(this AssetManager& self, const UUID& uuid, LoadInfo explicit_load = {}) -> bool;
+  // publishes what workers loaded since the last commit, in the order they finished, so children land
+  // before the parents that reference them, then unloads whatever dropped to zero references and is
+  // still there. Runs on the main thread once per frame, before any module updates, so asset state
+  // never changes under a frame in progress and a payload read this frame outlives the frame
+  auto commit(this AssetManager& self) -> void;
   auto is_loading(this AssetManager& self, const UUID& uuid) -> bool;
 
   auto unload_asset(this AssetManager& self, const UUID& uuid) -> void;
@@ -230,6 +241,16 @@ private:
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
   ) -> bool;
 
+  enum class PublishResult : u8 { Published, Staged, Rejected };
+  // the one place a payload enters the registry: published straight away on the main thread, staged for
+  // the next commit on any other. `type` None accepts any record type. Rejected means the record is gone,
+  // has another type, or is already loaded or staged, and the caller drops its payload
+  auto publish_payload(this AssetManager& self, const UUID& uuid, AssetType type, u64 payload_id) -> PublishResult;
+  // false when the record no longer stages `payload_id`
+  auto publish_staged(this AssetManager& self, const UUID& uuid, u64 payload_id) -> bool;
+  // unloads at once if the asset is loaded and nothing references it. The commit's path, and
+  // `delete_asset`'s, which cannot wait for one
+  auto unload_now(this AssetManager& self, const UUID& uuid) -> void;
   auto child_uuids(this AssetManager& self, const UUID& uuid) -> ankerl::svector<UUID, 8>;
   auto drop_children(this AssetManager& self, const UUID& uuid) -> void;
   // both under the registry's write lock. Insert hands back null when the uuid is registered already
@@ -298,6 +319,20 @@ private:
   ankerl::unordered_dense::map<UUID, ankerl::svector<AssetRef, 4>> child_refs = {};
   // every section changes the map, there are no readers to share it with
   std::mutex child_refs_mutex = {};
+
+  struct StagedPayload {
+    UUID uuid = {};
+    AssetType type = AssetType::None;
+    u64 payload_id = ~0_u64;
+  };
+  std::vector<StagedPayload> staged_payloads = {};
+  // only pushed to and swapped out, never read in place
+  std::mutex staged_payloads_mutex = {};
+
+  // assets whose count reached zero since the last commit, which unloads the ones still at zero
+  std::vector<UUID> pending_unloads = {};
+  // only pushed to and swapped out, never read in place
+  std::mutex pending_unloads_mutex = {};
   std::shared_mutex models_mutex = {};
   std::shared_mutex textures_mutex = {};
   std::shared_mutex materials_mutex = {};

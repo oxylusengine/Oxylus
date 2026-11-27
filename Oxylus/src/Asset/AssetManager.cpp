@@ -8,6 +8,7 @@
 #include "Asset/AssetManifest.hpp"
 #include "Core/App.hpp"
 #include "Core/Base.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Hasher.hpp"
 #include "Memory/Stack.hpp"
@@ -90,6 +91,9 @@ auto AssetManager::init(this AssetManager& self) -> std::expected<void, std::str
 auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::string> {
   ZoneScoped;
 
+  // the jobs are done by now, so this publishes the last of what they staged and it unloads with the rest
+  self.commit();
+
   self.unload_asset(self.null_material);
   self.null_material = {};
 
@@ -101,6 +105,9 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
       held = std::exchange(self.child_refs, {});
     }
   }
+
+  // the null material and the children above only queued their unloads
+  self.commit();
 
   for (auto& [uuid, asset] : self.asset_registry) {
     if (asset->is_loaded() && asset->ref_count != 0) {
@@ -213,12 +220,13 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
     }
   }
 
+  // the record goes away below, so the payload cannot wait for the commit
   if (is_loaded) {
     {
       auto asset = self.get_asset(uuid);
-      asset->ref_count = ox::min(asset->ref_count, 1_u64);
+      std::atomic_ref(asset->ref_count).store(0);
     }
-    self.unload_asset(uuid);
+    self.unload_now(uuid);
   }
 
   {
@@ -351,7 +359,8 @@ auto AssetManager::clear_pending_load_info(this AssetManager& self, const UUID& 
 auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
 
-  if (!asset || !asset->is_loaded()) {
+  // a staged asset counts too, so a worker can take and give back references across the commit
+  if (!asset || !(asset->is_loaded() || asset->is_staged())) {
     return;
   }
 
@@ -362,41 +371,154 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
 auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void {
   ZoneScoped;
 
-  if (!asset || !asset->is_loaded()) {
+  if (!asset || !(asset->is_loaded() || asset->is_staged())) {
     return;
   }
 
+  // a staged asset is only counted down. It is published at zero like any load nobody took a
+  // reference on, and unloads once a holder that took one gives it back
   const auto uuid = asset->uuid;
+  const auto is_loaded = asset->is_loaded();
   auto should_unload = false;
   if (asset->ref_count > 0) {
-    should_unload = asset->release_ref();
+    should_unload = asset->release_ref() && is_loaded;
   }
 
   asset.reset();
 
+  // left for the commit, so the payload outlives every pointer read from it this frame, and a holder
+  // that takes the asset again before then keeps it
   if (should_unload) {
-    auto removed_type = AssetType::None;
-    auto removed_id = std::to_underlying(ModelID::Invalid);
-    {
-      auto write_lock = std::unique_lock(self.registry_mutex);
-      auto it = self.asset_registry.find(uuid);
-      if (it == self.asset_registry.end() || !it->second->is_loaded() || it->second->ref_count != 0) {
-        return;
-      }
+    auto lock = std::unique_lock(self.pending_unloads_mutex);
+    self.pending_unloads.push_back(uuid);
+  }
+}
 
-      removed_type = it->second->type;
-      removed_id = it->second->payload_id();
+auto AssetManager::unload_now(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
 
-      // unloading drops the payload, not the registration, so the uuid can be loaded again. an
-      // asset with no path was made at runtime and has nothing to reload from
-      it->second->set_payload_id(~0_u64);
-      if (it->second->path.empty()) {
-        self.retire_record(it);
-      }
+  auto removed_type = AssetType::None;
+  auto removed_id = std::to_underlying(ModelID::Invalid);
+  {
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    auto it = self.asset_registry.find(uuid);
+    if (it == self.asset_registry.end() || !it->second->is_loaded() || it->second->ref_count != 0) {
+      return;
     }
 
-    self.unload_asset_impl(removed_type, removed_id);
-    self.drop_children(uuid);
+    removed_type = it->second->type;
+    removed_id = it->second->payload_id();
+
+    // unloading drops the payload, not the registration, so the uuid can be loaded again. an
+    // asset with no path was made at runtime and has nothing to reload from
+    it->second->set_payload_id(~0_u64);
+    if (it->second->path.empty()) {
+      self.retire_record(it);
+    }
+  }
+
+  self.unload_asset_impl(removed_type, removed_id);
+  self.drop_children(uuid);
+}
+
+auto AssetManager::publish_payload(
+  this AssetManager& self, const UUID& uuid, const AssetType type, const u64 payload_id
+) -> PublishResult {
+  ZoneScoped;
+
+  const auto is_staging = !JobManager::is_main_thread();
+  auto record_type = AssetType::None;
+  {
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    const auto it = self.asset_registry.find(uuid);
+    if (
+      it == self.asset_registry.end() || it->second->is_loaded() || it->second->is_staged() ||
+      (type != AssetType::None && it->second->type != type)
+    ) {
+      return PublishResult::Rejected;
+    }
+
+    record_type = it->second->type;
+    if (is_staging) {
+      it->second->staged_raw = payload_id;
+    } else {
+      it->second->set_payload_id(payload_id);
+    }
+  }
+
+  if (!is_staging) {
+    self.hold_children(uuid);
+    return PublishResult::Published;
+  }
+
+  auto lock = std::unique_lock(self.staged_payloads_mutex);
+  self.staged_payloads.push_back({.uuid = uuid, .type = record_type, .payload_id = payload_id});
+  return PublishResult::Staged;
+}
+
+auto AssetManager::publish_staged(this AssetManager& self, const UUID& uuid, const u64 payload_id) -> bool {
+  ZoneScoped;
+
+  {
+    auto write_lock = std::unique_lock(self.registry_mutex);
+    const auto it = self.asset_registry.find(uuid);
+    if (it == self.asset_registry.end() || it->second->staged_raw != payload_id) {
+      return false;
+    }
+
+    it->second->set_payload_id(payload_id);
+    it->second->staged_raw = ~0_u64;
+  }
+
+  self.hold_children(uuid);
+  return true;
+}
+
+auto AssetManager::commit(this AssetManager& self) -> void {
+  ZoneScoped;
+  OX_ASSERT(JobManager::is_main_thread());
+
+  auto staged = std::vector<StagedPayload>{};
+  {
+    auto lock = std::unique_lock(self.staged_payloads_mutex);
+    std::swap(staged, self.staged_payloads);
+  }
+
+  for (const auto& payload : staged) {
+    if (self.publish_staged(payload.uuid, payload.payload_id)) {
+      continue;
+    }
+
+    // a main-thread load already published this one on demand, otherwise its record went away while it
+    // waited and nothing can reach the payload any more
+    auto is_live = false;
+    if (const auto asset = self.get_asset(payload.uuid)) {
+      is_live = asset->payload_id() == payload.payload_id;
+    }
+
+    if (!is_live) {
+      self.unload_asset_impl(payload.type, payload.payload_id);
+    }
+  }
+
+  // unloading gives back the children it held, which can queue those in turn, so this runs until a
+  // pass queues nothing
+  auto unloads = std::vector<UUID>{};
+  while (true) {
+    {
+      auto lock = std::unique_lock(self.pending_unloads_mutex);
+      std::swap(unloads, self.pending_unloads);
+    }
+
+    if (unloads.empty()) {
+      break;
+    }
+
+    for (const auto& uuid : unloads) {
+      self.unload_now(uuid);
+    }
+
+    unloads.clear();
   }
 }
 
@@ -574,8 +696,16 @@ auto AssetManager::load_asset_async(this AssetManager& self, const UUID& uuid, L
 }
 
 auto AssetManager::is_loading(this AssetManager& self, const UUID& uuid) -> bool {
-  auto lock = std::shared_lock(self.loading_mutex);
-  return self.loading_assets.contains(uuid);
+  {
+    auto lock = std::shared_lock(self.loading_mutex);
+    if (self.loading_assets.contains(uuid)) {
+      return true;
+    }
+  }
+
+  // the job is done but the commit has not published its payload yet
+  const auto asset = self.get_asset(uuid);
+  return asset && asset->is_staged();
 }
 
 auto AssetManager::load_asset_impl(
@@ -629,6 +759,23 @@ auto AssetManager::load_asset_impl(
     return true;
   }
 
+  if (asset->is_staged()) {
+    // a worker built it and the commit has not published it yet. The main thread publishes on
+    // demand, a worker just counts on the staged record
+    if (JobManager::is_main_thread()) {
+      const auto staged_id = asset->staged_raw;
+      asset.reset();
+      self.publish_staged(uuid, staged_id);
+      return self.load_asset_impl(uuid, std::move(explicit_load), should_acquire, async);
+    }
+
+    if (should_acquire) {
+      self.acquire_ref(std::move(asset));
+    }
+
+    return true;
+  }
+
   auto asset_type = asset->type;
   auto asset_path = asset_vfs().to_physical(asset->path);
 
@@ -642,7 +789,7 @@ auto AssetManager::load_asset_impl(
     const auto model_loaded = model_uuid && self.load_asset(model_uuid);
 
     auto published = self.get_asset(uuid);
-    const auto materialized = published && published->is_loaded();
+    const auto materialized = published && (published->is_loaded() || published->is_staged());
     published.reset();
 
     // strictly before the model reference goes back: the model owns the skeleton and the clips it
@@ -698,33 +845,14 @@ auto AssetManager::load_asset_impl(
     return false;
   }
 
-  auto published = false;
-  {
-    auto write_lock = std::unique_lock(self.registry_mutex);
-    const auto it = self.asset_registry.find(uuid);
-    if (it != self.asset_registry.end() && !it->second->is_loaded()) {
-      it->second->set_payload_id(asset_id);
-      published = true;
-    }
-  }
-
-  // The registry entry was unregistered, or another thread loaded it first, while this payload was
-  // being built. Nothing references it, so drop it again.
-  if (!published) {
+  // The registry entry was unregistered, or another thread loaded or staged it first, while this
+  // payload was being built. Nothing references it, so it is dropped, and the caller gets whatever
+  // the record holds now through the paths above, reference included
+  if (self.publish_payload(uuid, AssetType::None, asset_id) == PublishResult::Rejected) {
     self.unload_asset_impl(asset_type, asset_id);
-
-    // the caller still asked for a reference, and the other thread's payload is what it gets. Without
-    // one, whoever gives it back later would take a count that belongs to someone else
-    auto asset_now = self.get_asset(uuid);
-    const auto is_loaded_now = asset_now && asset_now->is_loaded();
-    if (should_acquire && is_loaded_now) {
-      self.acquire_ref(std::move(asset_now));
-    }
-
-    return is_loaded_now;
+    return self.load_asset_impl(uuid, LoadInfo{}, should_acquire, async);
   }
 
-  self.hold_children(uuid);
   if (should_acquire) {
     self.acquire_ref(self.get_asset(uuid));
   }
@@ -1328,15 +1456,11 @@ auto AssetManager::publish_skeleton(this AssetManager& self, const UUID& uuid, S
 
   const auto skeleton_id = self.load_skeleton(std::move(skeleton));
 
-  auto write_lock = std::unique_lock(self.registry_mutex);
-  const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second->is_loaded()) {
-    write_lock.unlock();
+  if (self.publish_payload(uuid, AssetType::None, std::to_underlying(skeleton_id)) == PublishResult::Rejected) {
     self.unload_skeleton(skeleton_id);
     return false;
   }
 
-  it->second->set_payload_id(std::to_underlying(skeleton_id));
   return true;
 }
 
@@ -1349,15 +1473,11 @@ auto AssetManager::publish_texture(this AssetManager& self, const UUID& uuid, Te
     texture_id = self.texture_map.create_slot(std::move(texture));
   }
 
-  auto write_lock = std::unique_lock(self.registry_mutex);
-  const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second->type != AssetType::Texture || it->second->is_loaded()) {
-    write_lock.unlock();
+  if (self.publish_payload(uuid, AssetType::Texture, std::to_underlying(texture_id)) == PublishResult::Rejected) {
     self.unload_texture(texture_id);
     return false;
   }
 
-  it->second->set_payload_id(std::to_underlying(texture_id));
   return true;
 }
 
@@ -1370,17 +1490,11 @@ auto AssetManager::publish_model(this AssetManager& self, const UUID& uuid, Mode
     model_id = self.model_map.create_slot(std::move(model));
   }
 
-  auto write_lock = std::unique_lock(self.registry_mutex);
-  const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second->type != AssetType::Model || it->second->is_loaded()) {
-    write_lock.unlock();
+  if (self.publish_payload(uuid, AssetType::Model, std::to_underlying(model_id)) == PublishResult::Rejected) {
     self.unload_model(model_id);
     return false;
   }
 
-  it->second->set_payload_id(std::to_underlying(model_id));
-  write_lock.unlock();
-  self.hold_children(uuid);
   return true;
 }
 
@@ -1410,17 +1524,11 @@ auto AssetManager::publish_animation(this AssetManager& self, const UUID& uuid, 
 
   const auto animation_id = self.load_animation(std::move(clip));
 
-  auto write_lock = std::unique_lock(self.registry_mutex);
-  const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second->is_loaded()) {
-    write_lock.unlock();
+  if (self.publish_payload(uuid, AssetType::None, std::to_underlying(animation_id)) == PublishResult::Rejected) {
     self.unload_animation(animation_id);
     return false;
   }
 
-  it->second->set_payload_id(std::to_underlying(animation_id));
-  write_lock.unlock();
-  self.hold_children(uuid);
   return true;
 }
 
