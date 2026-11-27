@@ -489,14 +489,14 @@ auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path&
     auto edits_path = scene_path;
     edits_path.replace_extension(".oxterrain");
 
-    c.terrain_edits = asset_man.create_asset(AssetType::Terrain, edits_path);
-    // Takes the scene's one ref and loads the (still empty) payload the readback fills in.
-    scene.set_terrain_edits_ref(c.terrain_edits);
+    // loads the still empty payload the readback fills in, and the component holds its reference
+    c.terrain_edits = AssetHandle<TerrainEdits>::acquire(asset_man.create_asset(AssetType::Terrain, edits_path));
+    scene.terrain_edits_ref = c.terrain_edits.uuid();
   }
 
   scene.sync_terrain_edits();
 
-  auto asset = asset_man.get_asset(c.terrain_edits);
+  auto asset = asset_man.get_asset(c.terrain_edits.uuid());
 
   return asset ? App::get_vfs().to_physical(asset->path) : std::filesystem::path{};
 }

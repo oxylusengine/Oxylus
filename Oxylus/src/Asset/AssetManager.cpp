@@ -93,19 +93,29 @@ auto AssetManager::deinit(this AssetManager& self) -> std::expected<void, std::s
   self.unload_asset(self.null_material);
   self.null_material = {};
 
+  // released before the leak report, so it only names assets something outside the manager still holds
+  {
+    auto held = ankerl::unordered_dense::map<UUID, ankerl::svector<AssetRef, 4>>{};
+    {
+      auto lock = std::unique_lock(self.child_refs_mutex);
+      held = std::exchange(self.child_refs, {});
+    }
+  }
+
   for (auto& [uuid, asset] : self.asset_registry) {
-    if (asset.is_loaded() && asset.ref_count != 0) {
+    if (asset->is_loaded() && asset->ref_count != 0) {
       OX_LOG_WARN(
         "A {} asset ({}, {}) with refcount of {} is still alive!",
-        to_asset_type_sv(asset.type),
+        to_asset_type_sv(asset->type),
         uuid.str(),
-        asset.path,
-        asset.ref_count
+        asset->path,
+        asset->ref_count
       );
     }
   }
 
   self.asset_registry.clear();
+  self.retired_records.clear();
   self.source_index.clear();
   self.pending_load_info.clear();
   self.dirty_materials.clear();
@@ -134,7 +144,7 @@ auto AssetManager::get_registry_snapshot(this AssetManager& self) -> std::vector
   auto snapshot = std::vector<Asset>{};
   snapshot.reserve(self.asset_registry.size());
   for (const auto& [uuid, asset] : self.asset_registry) {
-    snapshot.emplace_back(asset);
+    snapshot.emplace_back(*asset);
   }
 
   return snapshot;
@@ -168,13 +178,13 @@ auto AssetManager::create_asset(this AssetManager& self, const AssetType type, c
   const auto uuid = UUID::generate_random();
   const auto virtual_path = asset_vfs().to_virtual(path);
   auto write_lock = std::unique_lock(self.registry_mutex);
-  auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
-  if (!inserted) {
+  auto* record = self.insert_record(uuid);
+  if (record == nullptr) {
     OX_LOG_ERROR("Can't create asset {}!", uuid.str());
     return UUID(nullptr);
   }
 
-  auto& asset = asset_it->second;
+  auto& asset = *record;
   asset.uuid = uuid;
   asset.type = type;
   // created straight from its file, so that file is also its source
@@ -214,8 +224,8 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
   {
     auto write_lock = std::unique_lock(self.registry_mutex);
     if (const auto it = self.asset_registry.find(uuid); it != self.asset_registry.end()) {
-      unindex_source(self.source_index, uuid, it->second.source_path);
-      self.asset_registry.erase(it);
+      unindex_source(self.source_index, uuid, it->second->source_path);
+      self.retire_record(it);
     }
   }
 
@@ -239,12 +249,12 @@ auto AssetManager::register_asset(
 
   auto write_lock = std::unique_lock(self.registry_mutex);
 
-  auto [asset_it, inserted] = self.asset_registry.try_emplace(uuid);
-  if (!inserted) {
+  auto* record = self.insert_record(uuid);
+  if (record == nullptr) {
     return true;
   }
 
-  auto& asset = asset_it->second;
+  auto& asset = *record;
   asset.uuid = uuid;
   asset.path = virtual_path;
   asset.source_path = virtual_source_path;
@@ -271,7 +281,7 @@ auto AssetManager::update_asset_path(
     return false;
   }
 
-  auto& asset = asset_it->second;
+  auto& asset = *asset_it->second;
   unindex_source(self.source_index, uuid, asset.source_path);
   asset.path = virtual_path;
   asset.source_path = virtual_source_path;
@@ -345,63 +355,8 @@ auto AssetManager::acquire_ref(this AssetManager& self, ReadGuard<Asset> asset) 
     return;
   }
 
-  // acquire self first
+  // children are not counted here, the loaded asset holds its own reference on each
   asset->acquire_ref();
-
-  auto children = ankerl::svector<UUID, 8>{};
-  switch (asset->type) {
-    case AssetType::None     :
-    case AssetType::Shader   :
-    case AssetType::Font     :
-    case AssetType::Scene    :
-    case AssetType::Audio    :
-    case AssetType::Texture  :
-    case AssetType::Terrain  :
-    case AssetType::Skeleton :
-    case AssetType::Cinematic:
-    case AssetType::UI       :
-    case AssetType::Script   : break;
-    case AssetType::Animation: {
-      auto clip = self.get_animation(asset->animation_id);
-      if (clip) {
-        children = {clip->skeleton_uuid};
-      }
-    } break;
-    case AssetType::ParticleSystem: {
-      auto particle_system = self.get_particle_system(asset->particle_system_id);
-      if (particle_system) {
-        children = {particle_system->render.material, particle_system->render.mesh};
-      }
-    } break;
-    case AssetType::Model: {
-      auto model = self.get_model(asset->model_id);
-      if (model) {
-        // the skeleton and the clips are minted by this model's import and cannot be rebuilt from
-        // anywhere else, so the model has to keep them alive, otherwise a clip that nothing else
-        // references drops to zero, gets erased from the registry and stops resolving while the
-        // model it belongs to is still loaded and still lists it
-        children.assign(model->materials.begin(), model->materials.end());
-        children.insert(children.end(), model->animations.begin(), model->animations.end());
-        if (model->skeleton_uuid) {
-          children.emplace_back(model->skeleton_uuid);
-        }
-      }
-    } break;
-    case AssetType::Material: {
-      auto material = self.get_material(asset->material_id);
-      if (material) {
-        for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
-          children.push_back(material.value->*slot.member);
-        }
-      }
-    } break;
-  }
-
-  asset.reset();
-
-  for (auto& child : children) {
-    self.acquire_ref(self.get_asset(child));
-  }
 }
 
 auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) -> void {
@@ -412,59 +367,6 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
   }
 
   const auto uuid = asset->uuid;
-  const auto type = asset->type;
-
-  // release children first
-  auto children = ankerl::svector<UUID, 8>{};
-  switch (type) {
-    case AssetType::None     :
-    case AssetType::Shader   :
-    case AssetType::Font     :
-    case AssetType::Scene    :
-    case AssetType::Audio    :
-    case AssetType::Texture  :
-    case AssetType::Terrain  :
-    case AssetType::Skeleton :
-    case AssetType::Cinematic:
-    case AssetType::UI       :
-    case AssetType::Script   : break;
-    case AssetType::Animation: {
-      auto clip = self.get_animation(asset->animation_id);
-      if (clip) {
-        children = {clip->skeleton_uuid};
-      }
-    } break;
-    case AssetType::ParticleSystem: {
-      auto particle_system = self.get_particle_system(asset->particle_system_id);
-      if (particle_system) {
-        children = {particle_system->render.material, particle_system->render.mesh};
-      }
-    } break;
-    case AssetType::Model: {
-      auto model = self.get_model(asset->model_id);
-      if (model) {
-        // the skeleton and the clips are minted by this model's import and cannot be rebuilt from
-        // anywhere else, so the model has to keep them alive, otherwise a clip that nothing else
-        // references drops to zero, gets erased from the registry and stops resolving while the
-        // model it belongs to is still loaded and still lists it
-        children.assign(model->materials.begin(), model->materials.end());
-        children.insert(children.end(), model->animations.begin(), model->animations.end());
-        if (model->skeleton_uuid) {
-          children.emplace_back(model->skeleton_uuid);
-        }
-      }
-    } break;
-    case AssetType::Material: {
-      auto material = self.get_material(asset->material_id);
-      if (material) {
-        for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
-          children.push_back(material.value->*slot.member);
-        }
-      }
-    } break;
-  }
-
-  // then release self
   auto should_unload = false;
   if (asset->ref_count > 0) {
     should_unload = asset->release_ref();
@@ -472,34 +374,140 @@ auto AssetManager::release_ref(this AssetManager& self, ReadGuard<Asset> asset) 
 
   asset.reset();
 
-  for (auto& child : children) {
-    self.release_ref(self.get_asset(child));
-  }
-
   if (should_unload) {
     auto removed_type = AssetType::None;
     auto removed_id = std::to_underlying(ModelID::Invalid);
     {
       auto write_lock = std::unique_lock(self.registry_mutex);
       auto it = self.asset_registry.find(uuid);
-      if (it == self.asset_registry.end() || !it->second.is_loaded() || it->second.ref_count != 0) {
+      if (it == self.asset_registry.end() || !it->second->is_loaded() || it->second->ref_count != 0) {
         return;
       }
 
-      removed_type = it->second.type;
-      removed_id = std::to_underlying(it->second.model_id);
+      removed_type = it->second->type;
+      removed_id = it->second->payload_id();
 
       // unloading drops the payload, not the registration, so the uuid can be loaded again. an
       // asset with no path was made at runtime and has nothing to reload from
-      if (it->second.path.empty()) {
-        self.asset_registry.erase(it);
-      } else {
-        it->second.model_id = ModelID::Invalid;
+      it->second->set_payload_id(~0_u64);
+      if (it->second->path.empty()) {
+        self.retire_record(it);
       }
     }
 
     self.unload_asset_impl(removed_type, removed_id);
+    self.drop_children(uuid);
   }
+}
+
+auto AssetManager::child_uuids(this AssetManager& self, const UUID& uuid) -> ankerl::svector<UUID, 8> {
+  ZoneScoped;
+
+  auto type = AssetType::None;
+  auto payload_id = ~0_u64;
+  {
+    const auto asset = self.get_asset(uuid);
+    if (!asset || !asset->is_loaded()) {
+      return {};
+    }
+
+    type = asset->type;
+    payload_id = asset->payload_id();
+  }
+
+  auto children = ankerl::svector<UUID, 8>{};
+  switch (type) {
+    case AssetType::Animation: {
+      if (const auto clip = self.get_animation(static_cast<AnimationID>(payload_id))) {
+        children.push_back(clip->skeleton_uuid);
+      }
+    } break;
+    case AssetType::ParticleSystem: {
+      if (const auto system = self.get_particle_system(static_cast<ParticleSystemID>(payload_id))) {
+        children.push_back(system->render.material);
+        children.push_back(system->render.mesh);
+      }
+    } break;
+    case AssetType::Model: {
+      // the skeleton and the clips are minted by this model's import and cannot be rebuilt from
+      // anywhere else, so the model keeps them alive for as long as it is loaded and lists them
+      if (const auto model = self.get_model(static_cast<ModelID>(payload_id))) {
+        children.assign(model->materials.begin(), model->materials.end());
+        children.insert(children.end(), model->animations.begin(), model->animations.end());
+        children.push_back(model->skeleton_uuid);
+      }
+    } break;
+    case AssetType::Material: {
+      if (const auto material = self.get_material(static_cast<MaterialID>(payload_id))) {
+        for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
+          children.push_back(material.value->*slot.member);
+        }
+      }
+    } break;
+    default: break;
+  }
+
+  std::erase_if(children, [](const UUID& child) { return !child; });
+  return children;
+}
+
+auto AssetManager::hold_children(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  // from_loaded never loads: a parent's children are loaded before it is published, and loading
+  // here could re-enter the model load that is publishing it
+  auto refs = ankerl::svector<AssetRef, 4>{};
+  for (const auto& child : self.child_uuids(uuid)) {
+    refs.push_back(AssetRef::from_loaded(child));
+  }
+
+  auto previous = ankerl::svector<AssetRef, 4>{};
+  {
+    auto lock = std::unique_lock(self.child_refs_mutex);
+    auto& held = self.child_refs[uuid];
+    previous = std::exchange(held, std::move(refs));
+  }
+
+  // `previous` goes out of scope here, after the new references are in and with no lock held
+}
+
+auto AssetManager::drop_children(this AssetManager& self, const UUID& uuid) -> void {
+  ZoneScoped;
+
+  auto previous = ankerl::svector<AssetRef, 4>{};
+  {
+    auto lock = std::unique_lock(self.child_refs_mutex);
+    if (const auto it = self.child_refs.find(uuid); it != self.child_refs.end()) {
+      previous = std::move(it->second);
+      self.child_refs.erase(it);
+    }
+  }
+
+  // released outside the lock, because giving a child back can unload it and drop its own children
+}
+
+auto AssetManager::insert_record(this AssetManager& self, const UUID& uuid) -> Asset* {
+  if (self.asset_registry.contains(uuid)) {
+    return nullptr;
+  }
+
+  auto record = std::unique_ptr<Asset>();
+  if (auto retired = self.retired_records.find(uuid); retired != self.retired_records.end()) {
+    record = std::move(retired->second);
+    self.retired_records.erase(retired);
+  } else {
+    record = std::make_unique<Asset>();
+  }
+
+  auto* asset = record.get();
+  self.asset_registry.emplace(uuid, std::move(record));
+  return asset;
+}
+
+auto AssetManager::retire_record(this AssetManager& self, AssetRegistry::iterator it) -> void {
+  auto record = std::move(it->second);
+  self.asset_registry.erase(it);
+  self.retired_records.insert_or_assign(record->uuid, std::move(record));
 }
 
 auto AssetManager::unload_asset_impl(this AssetManager& self, const AssetType type, const u64 id) -> bool {
@@ -667,9 +675,9 @@ auto AssetManager::load_asset_impl(
         const auto* info = std::get_if<TextureLoadInfo>(&explicit_load);
         return static_cast<u64>(self.load_texture(asset_path, info ? *info : TextureLoadInfo{}));
       }
-      case AssetType::Scene         : return static_cast<u64>(self.load_scene(asset_path));
-      case AssetType::Audio         : return static_cast<u64>(self.load_audio(asset_path));
-      case AssetType::Script        : {
+      case AssetType::Scene : return static_cast<u64>(self.load_scene(asset_path));
+      case AssetType::Audio : return static_cast<u64>(self.load_audio(asset_path));
+      case AssetType::Script: {
         OX_LOG_WARN("Can't load asset {}, Lua script assets are no longer supported", uuid.str());
         return ~0_u64;
       }
@@ -694,8 +702,8 @@ auto AssetManager::load_asset_impl(
   {
     auto write_lock = std::unique_lock(self.registry_mutex);
     const auto it = self.asset_registry.find(uuid);
-    if (it != self.asset_registry.end() && !it->second.is_loaded()) {
-      it->second.model_id = static_cast<ModelID>(asset_id);
+    if (it != self.asset_registry.end() && !it->second->is_loaded()) {
+      it->second->set_payload_id(asset_id);
       published = true;
     }
   }
@@ -705,9 +713,18 @@ auto AssetManager::load_asset_impl(
   if (!published) {
     self.unload_asset_impl(asset_type, asset_id);
 
-    return true;
+    // the caller still asked for a reference, and the other thread's payload is what it gets. Without
+    // one, whoever gives it back later would take a count that belongs to someone else
+    auto asset_now = self.get_asset(uuid);
+    const auto is_loaded_now = asset_now && asset_now->is_loaded();
+    if (should_acquire && is_loaded_now) {
+      self.acquire_ref(std::move(asset_now));
+    }
+
+    return is_loaded_now;
   }
 
+  self.hold_children(uuid);
   if (should_acquire) {
     self.acquire_ref(self.get_asset(uuid));
   }
@@ -985,7 +1002,7 @@ auto AssetManager::get_asset(this AssetManager& self, const UUID& uuid) -> ReadG
     self.registry_mutex.unlock_shared();
     return {};
   }
-  return ReadGuard<Asset>(self.registry_mutex, &it->second, adopt_lock);
+  return ReadGuard<Asset>(self.registry_mutex, it->second.get(), adopt_lock);
 }
 
 auto AssetManager::get_model(this AssetManager& self, const UUID& uuid) -> ReadGuard<Model> {
@@ -1100,7 +1117,6 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
   ZoneScoped;
 
   auto material_id = MaterialID::Invalid;
-  auto holders = 0_u64;
   {
     const auto asset = self.get_asset(uuid);
     if (!asset || asset->type != AssetType::Material || !asset->is_loaded()) {
@@ -1108,56 +1124,20 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
     }
 
     material_id = asset->material_id;
-    holders = std::atomic_ref(asset->ref_count).load(std::memory_order_relaxed);
   }
 
-  auto previous = Material{};
-  {
-    const auto current = self.get_material(material_id);
-    if (!current) {
-      return false;
-    }
-
-    previous = *current.value;
-  }
-
-  // the new textures first, so one that only moves between slots never reaches zero
-  auto acquired = ankerl::svector<UUID, MATERIAL_TEXTURE_SLOTS.size()>{};
-  const auto rollback = [&]() {
-    for (const auto& texture : acquired) {
-      for (u64 i = 0; i < holders; i++) {
-        self.unload_asset(texture);
-      }
-    }
-  };
-
+  // loaded without a reference, the material takes its own once the payload names them
   for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
     const auto& texture = material.*slot.member;
-    if (!texture || texture == previous.*slot.member) {
-      continue;
+    if (texture && !self.load_asset(texture, TextureLoadInfo{.is_srgb = slot.is_srgb}, false)) {
+      return false;
     }
-
-    for (u64 i = 0; i < std::max(holders, 1_u64); i++) {
-      if (!self.load_asset(texture, TextureLoadInfo{.is_srgb = slot.is_srgb}, holders > 0)) {
-        // the i refs this texture already took aren't in `acquired` yet
-        for (u64 j = 0; j < i; j++) {
-          self.unload_asset(texture);
-        }
-
-        rollback();
-        return false;
-      }
-    }
-
-    acquired.push_back(texture);
   }
 
   {
     auto write_lock = std::unique_lock(self.materials_mutex);
     auto* payload = self.material_map.slot(material_id);
     if (!payload) {
-      write_lock.unlock();
-      rollback();
       return false;
     }
 
@@ -1165,17 +1145,7 @@ auto AssetManager::set_material(this AssetManager& self, const UUID& uuid, const
   }
 
   self.set_material_dirty(material_id);
-
-  for (const auto& slot : MATERIAL_TEXTURE_SLOTS) {
-    const auto& texture = previous.*slot.member;
-    if (!texture || texture == material.*slot.member) {
-      continue;
-    }
-
-    for (u64 i = 0; i < holders; i++) {
-      self.unload_asset(texture);
-    }
-  }
+  self.hold_children(uuid);
 
   return true;
 }
@@ -1210,8 +1180,8 @@ auto AssetManager::set_all_materials_dirty(this AssetManager& self) -> void {
   {
     auto read_lock = std::shared_lock(self.registry_mutex);
     for (const auto& [uuid, asset] : self.asset_registry) {
-      if (asset.type == AssetType::Material && asset.is_loaded()) {
-        material_ids.emplace_back(asset.material_id);
+      if (asset->type == AssetType::Material && asset->is_loaded()) {
+        material_ids.emplace_back(asset->material_id);
       }
     }
   }
@@ -1345,7 +1315,7 @@ auto AssetManager::source_model_uuid(this AssetManager& self, const std::filesys
   // is whichever registry entry shares that path
   auto read_lock = std::shared_lock(self.registry_mutex);
   for (const auto& [uuid, asset] : self.asset_registry) {
-    if (asset.type == AssetType::Model && asset.path == path) {
+    if (asset->type == AssetType::Model && asset->path == path) {
       return uuid;
     }
   }
@@ -1360,13 +1330,13 @@ auto AssetManager::publish_skeleton(this AssetManager& self, const UUID& uuid, S
 
   auto write_lock = std::unique_lock(self.registry_mutex);
   const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second.is_loaded()) {
+  if (it == self.asset_registry.end() || it->second->is_loaded()) {
     write_lock.unlock();
     self.unload_skeleton(skeleton_id);
     return false;
   }
 
-  it->second.skeleton_id = skeleton_id;
+  it->second->set_payload_id(std::to_underlying(skeleton_id));
   return true;
 }
 
@@ -1381,13 +1351,13 @@ auto AssetManager::publish_texture(this AssetManager& self, const UUID& uuid, Te
 
   auto write_lock = std::unique_lock(self.registry_mutex);
   const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second.type != AssetType::Texture || it->second.is_loaded()) {
+  if (it == self.asset_registry.end() || it->second->type != AssetType::Texture || it->second->is_loaded()) {
     write_lock.unlock();
     self.unload_texture(texture_id);
     return false;
   }
 
-  it->second.texture_id = texture_id;
+  it->second->set_payload_id(std::to_underlying(texture_id));
   return true;
 }
 
@@ -1402,13 +1372,15 @@ auto AssetManager::publish_model(this AssetManager& self, const UUID& uuid, Mode
 
   auto write_lock = std::unique_lock(self.registry_mutex);
   const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second.type != AssetType::Model || it->second.is_loaded()) {
+  if (it == self.asset_registry.end() || it->second->type != AssetType::Model || it->second->is_loaded()) {
     write_lock.unlock();
     self.unload_model(model_id);
     return false;
   }
 
-  it->second.model_id = model_id;
+  it->second->set_payload_id(std::to_underlying(model_id));
+  write_lock.unlock();
+  self.hold_children(uuid);
   return true;
 }
 
@@ -1440,13 +1412,15 @@ auto AssetManager::publish_animation(this AssetManager& self, const UUID& uuid, 
 
   auto write_lock = std::unique_lock(self.registry_mutex);
   const auto it = self.asset_registry.find(uuid);
-  if (it == self.asset_registry.end() || it->second.is_loaded()) {
+  if (it == self.asset_registry.end() || it->second->is_loaded()) {
     write_lock.unlock();
     self.unload_animation(animation_id);
     return false;
   }
 
-  it->second.animation_id = animation_id;
+  it->second->set_payload_id(std::to_underlying(animation_id));
+  write_lock.unlock();
+  self.hold_children(uuid);
   return true;
 }
 
@@ -1570,17 +1544,14 @@ auto AssetManager::edit_particle_system(
   ZoneScoped;
 
   ParticleSystemID particle_system_id;
-  auto holder_count = 0_u64;
   {
     auto guard = self.get_asset(uuid);
     if (!guard || guard->type != AssetType::ParticleSystem || guard->particle_system_id == ParticleSystemID::Invalid)
       return;
     particle_system_id = guard->particle_system_id;
-    holder_count = std::atomic_ref(guard->ref_count).load();
   }
 
-  auto previous_children = std::array<UUID, 2>{};
-  auto current_children = std::array<UUID, 2>{};
+  auto children = std::array<UUID, 2>{};
   {
     auto write_lock = std::unique_lock(self.particle_systems_mutex);
     auto* slot = self.particle_system_map.slot(particle_system_id);
@@ -1588,30 +1559,21 @@ auto AssetManager::edit_particle_system(
       return;
     }
 
-    previous_children = {slot->render.material, slot->render.mesh};
     mutate(*slot);
     if (recompile) {
       slot->recompile();
     }
-    current_children = {slot->render.material, slot->render.mesh};
+    children = {slot->render.material, slot->render.mesh};
   }
 
-  // acquire_ref walks into the sub-assets once per holder of this system, so swapping one has to
-  // hand that many refs over, not a single one
-  for (usize i = 0; i < previous_children.size(); i++) {
-    if (previous_children[i] == current_children[i]) {
-      continue;
-    }
-
-    if (current_children[i]) {
-      self.load_asset(current_children[i], {}, false);
-    }
-
-    for (auto ref = 0_u64; ref < holder_count; ref++) {
-      self.acquire_ref(self.get_asset(current_children[i]));
-      self.release_ref(self.get_asset(previous_children[i]));
+  // loaded without a reference, the system takes its own below
+  for (const auto& child : children) {
+    if (child) {
+      self.load_asset(child, {}, false);
     }
   }
+
+  self.hold_children(uuid);
 }
 
 auto AssetManager::get_cinematic(this AssetManager& self, const UUID& uuid) -> ReadGuard<Cinematic> {

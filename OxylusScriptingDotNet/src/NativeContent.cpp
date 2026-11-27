@@ -354,13 +354,15 @@ static auto asset_create_model(const OxMeshSource* meshes, i32 mesh_count, OxAss
     const auto* positions = reinterpret_cast<const glm::vec3*>(mesh.positions);
     const auto* normals = reinterpret_cast<const glm::vec3*>(mesh.normals);
     const auto* texcoords = reinterpret_cast<const glm::vec2*>(mesh.texcoords);
-    sources.push_back(RuntimeMeshSource{
-      .positions = std::span(positions, positions ? mesh.vertex_count : 0),
-      .normals = std::span(normals, normals ? mesh.vertex_count : 0),
-      .texcoords = std::span(texcoords, texcoords ? mesh.vertex_count : 0),
-      .indices = indices,
-      .material = material,
-    });
+    sources.push_back(
+      RuntimeMeshSource{
+        .positions = std::span(positions, positions ? mesh.vertex_count : 0),
+        .normals = std::span(normals, normals ? mesh.vertex_count : 0),
+        .texcoords = std::span(texcoords, texcoords ? mesh.vertex_count : 0),
+        .indices = indices,
+        .material = material,
+      }
+    );
     triangle_count += mesh.index_count / 3;
   }
 
@@ -426,7 +428,7 @@ static auto audio_command(ecs_world_t* world, u64 entity, OxAudioCommand command
   }
 
   // the guard keeps the sound alive for the call and no longer
-  auto clip = assets->get_audio(source->audio_source);
+  auto clip = source->audio_source.get();
   if (!clip || !clip->get_source()) {
     return OxStatus::NotFound;
   }
@@ -451,7 +453,7 @@ static auto audio_state(ecs_world_t* world, u64 entity, OxAudioState* state) -> 
     return OxStatus::NotFound;
   }
 
-  auto clip = assets->get_audio(source->audio_source);
+  auto clip = source->audio_source.get();
   if (!clip || !clip->get_source()) {
     return OxStatus::NotFound;
   }
@@ -475,22 +477,19 @@ static auto audio_set_sound(ecs_world_t* world, u64 entity, const OxAssetId* sou
   }
 
   const auto uuid = to_uuid(*sound);
-  if (uuid == source->audio_source) {
+  if (uuid == source->audio_source.uuid()) {
     return OxStatus::Ok;
   }
 
-  // the component owns a reference on whatever it names, its OnRemove gives back the last one
-  if (uuid && !assets->load_asset(uuid)) {
+  // the handle holds the component's reference, and replacing it gives the old one back
+  auto handle = AssetHandle<AudioSource>::acquire(uuid);
+  if (uuid && !handle.is_loaded()) {
     return OxStatus::NotFound;
   }
 
   auto updated = *source;
-  if (updated.audio_source) {
-    assets->unload_asset(updated.audio_source);
-  }
-
-  updated.audio_source = uuid;
-  flecs::entity(world, entity).set<AudioSourceComponent>(updated);
+  updated.audio_source = std::move(handle);
+  flecs::entity(world, entity).set<AudioSourceComponent>(std::move(updated));
   return OxStatus::Ok;
 }
 
@@ -508,7 +507,7 @@ static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* 
   }
 
   const auto uuid = to_uuid(*material);
-  if (uuid == decal->material) {
+  if (uuid == decal->material.uuid()) {
     return OxStatus::Ok;
   }
 
@@ -526,20 +525,17 @@ static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* 
     if (type != AssetType::Material) {
       return OxStatus::InvalidArgument;
     }
+  }
 
-    // the component owns a reference on whatever it names, its OnRemove gives back the last one
-    if (!assets->load_asset(uuid)) {
-      return OxStatus::NotFound;
-    }
+  // the handle holds the component's reference, and replacing it gives the old one back
+  auto handle = AssetHandle<Material>::acquire(uuid);
+  if (uuid && !handle.is_loaded()) {
+    return OxStatus::NotFound;
   }
 
   auto updated = *decal;
-  if (updated.material) {
-    assets->unload_asset(updated.material);
-  }
-
-  updated.material = uuid;
-  flecs::entity(world, entity).set<DecalComponent>(updated);
+  updated.material = std::move(handle);
+  flecs::entity(world, entity).set<DecalComponent>(std::move(updated));
   return OxStatus::Ok;
 }
 
@@ -572,7 +568,8 @@ static auto scene_spawn(ecs_world_t* world, OxStringView name, u64 parent) -> u6
 
   // safe naming, a script spawning "Bullet" a hundred times gets a hundred entities rather than the first one back.
   // named against the parent's scope too, or a second "Bullet" under the same parent aborts in child_of
-  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent) : flecs::entity();
+  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent)
+                                                                        : flecs::entity();
   const auto requested = name.length == 0 ? std::string("entity") : std::string(to_view(name));
   auto entity = scene->create_entity(scene->safe_entity_name(requested, parent_entity), false);
   if (parent_entity) {
@@ -599,7 +596,8 @@ static auto scene_spawn_model(ecs_world_t* world, const OxAssetId* model, u64 pa
     }
   }
 
-  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent) : flecs::entity();
+  const auto parent_entity = parent != 0 && ecs_is_alive(world, parent) ? flecs::entity(world, parent)
+                                                                        : flecs::entity();
   return scene->create_model_entity(uuid, parent_entity).id();
 }
 

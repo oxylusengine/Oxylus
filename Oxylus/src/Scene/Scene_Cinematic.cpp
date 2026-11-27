@@ -211,7 +211,7 @@ auto Scene::attach_cinematic(this Scene& self, flecs::entity entity) -> bool {
   const auto instance_it = self.entity_to_cinematic_instance_map.find(entity);
   if (instance_it == self.entity_to_cinematic_instance_map.end()) {
     const auto instance_id = self.cinematic_instances.create_slot(
-      CinematicInstance{.cinematic_uuid = player->cinematic_uuid}
+      CinematicInstance{.cinematic_uuid = player->cinematic_uuid.uuid()}
     );
     self.entity_to_cinematic_instance_map.emplace(entity, instance_id);
 
@@ -223,8 +223,8 @@ auto Scene::attach_cinematic(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  if (instance->cinematic_uuid != player->cinematic_uuid) {
-    instance->cinematic_uuid = player->cinematic_uuid;
+  if (instance->cinematic_uuid != player->cinematic_uuid.uuid()) {
+    instance->cinematic_uuid = player->cinematic_uuid.uuid();
     instance->current_time = 0.0f;
     // the old bindings stay until the rebind, which carries their restore values over
     instance->bound = false;
@@ -393,8 +393,8 @@ auto Scene::update_cinematics(this Scene& self, const f32 delta_time) -> void {
       }
 
       // a direct component write bypasses the observer, so the swap is caught here too
-      if (instance->cinematic_uuid != player->cinematic_uuid) {
-        instance->cinematic_uuid = player->cinematic_uuid;
+      if (instance->cinematic_uuid != player->cinematic_uuid.uuid()) {
+        instance->cinematic_uuid = player->cinematic_uuid.uuid();
         instance->current_time = 0.0f;
         instance->bound = false;
       }

@@ -96,7 +96,16 @@ auto define_component(
   flecs::world& world, ComponentDB* component_db, std::string_view name, std::span<const ComponentField> fields
 ) -> flecs::entity;
 
-// kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
+// an asset handle field the scene loader wrote by uuid alone. `load_requested_assets` loads every
+// requested uuid in its own order, models before their skeletons and clips, and then each of these
+// takes over the reference its load took. Entities and components by id, because storage moves
+struct PendingAssetRef {
+  flecs::entity_t entity = 0;
+  flecs::entity_t component = 0;
+  u32 offset = 0;
+  UUID uuid = {};
+};
+
 // everything a pose is computed from, so an instance whose inputs did not change keeps last frame's pose
 struct AnimationEvaluation {
   f32 current_time = 0.0f;
@@ -110,10 +119,12 @@ struct AnimationEvaluation {
   auto operator==(const AnimationEvaluation&) const -> bool = default;
 };
 
+// kept out of AnimatorComponent so the component stays small, serializable and reflection-friendly
 struct AnimationInstance {
-  UUID skeleton_uuid = {};
-  UUID clip_uuid = {};
-  UUID fade_from_clip_uuid = {};
+  AssetHandle<Skeleton> skeleton = {};
+  AssetHandle<AnimationClip> clip = {};
+  // the outgoing clip of a crossfade, held so it stays loaded until the fade ends
+  AssetHandle<AnimationClip> fade_from_clip = {};
 
   f32 current_time = 0.0f;
   f32 fade_from_time = 0.0f;
@@ -247,6 +258,7 @@ public:
   std::unique_ptr<Terrain> terrain = nullptr;
   flecs::entity terrain_entity = {};
   bool terrain_dirty = false;
+  // what the terrain bakes its edits from. The TerrainComponent's handle holds the reference
   UUID terrain_edits_ref = {};
   // runtime state a script sets, never saved with the scene
   std::vector<TerrainWaypoint> terrain_track = {};
@@ -402,7 +414,6 @@ public:
   auto create_terrain_collision(this Scene& self) -> void;
   auto destroy_terrain_collision(this Scene& self) -> void;
   auto sync_terrain_edits(this Scene& self) -> void;
-  auto set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void;
   auto clear_terrain_edits(this Scene& self) -> void;
   // rebakes the terrain with the track pressed in, an empty track takes it back out
   auto set_terrain_track(this Scene& self, std::span<const TerrainWaypoint> waypoints, f32 smoothing) -> void;
@@ -479,6 +490,8 @@ private:
 
   bool running = false;
   bool deserializing_entity = false;
+
+  std::vector<PendingAssetRef> pending_asset_refs = {};
 
   // JsonValue is simdjson::ondemand::value
   template <typename JsonValue>

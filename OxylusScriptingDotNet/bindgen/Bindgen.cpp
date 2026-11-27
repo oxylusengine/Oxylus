@@ -12,6 +12,7 @@
 #include <glm/ext/quaternion_float.hpp>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -22,6 +23,8 @@ namespace ox {
 struct CSharpType {
   std::string name = {};
   bool is_component = false;
+  // asset handles hold a reference, which a plain write from C# would skip, so they change through native setters
+  bool is_readonly = false;
 };
 
 struct Member {
@@ -30,6 +33,7 @@ struct Member {
   std::string type = {};
   u32 offset = 0;
   u32 size = 0;
+  bool is_readonly = false;
 };
 
 struct Mirror {
@@ -107,7 +111,13 @@ static auto write_mirror(std::ostringstream& out, const Mirror& mirror) -> void 
   }
 
   for (const auto& member : mirror.members) {
-    out << fmt::format("    [FieldOffset({})] public {} {};\n", member.offset, member.type, member.csharp_name);
+    out << fmt::format(
+      "    [FieldOffset({})] public {}{} {};\n",
+      member.offset,
+      member.is_readonly ? "readonly " : "",
+      member.type,
+      member.csharp_name
+    );
   }
 
   out << "}\n\n";
@@ -168,6 +178,13 @@ static auto generate(const flecs::world& world, flecs::entity core) -> std::stri
   add_type(world.component<glm::uvec3>(), "global::Oxylus.UInt3");
   add_type(world.component<glm::mat3>(), "global::Oxylus.Matrix3x3");
   add_type(world.component<UUID>(), "global::Oxylus.AssetId");
+  // a handle starts with its uuid, so C# reads it as one
+  auto handle_types = ecs_each_id(world, world.component<AssetRefTag>());
+  while (ecs_each_next(&handle_types)) {
+    for (const auto handle_type : std::span(handle_types.entities, static_cast<usize>(handle_types.count))) {
+      types.emplace(handle_type, CSharpType{.name = "global::Oxylus.AssetId", .is_readonly = true});
+    }
+  }
 
   auto children = std::vector<flecs::entity>{};
   core.children([&children](flecs::entity child) { children.push_back(child); });
@@ -216,6 +233,7 @@ static auto generate(const flecs::world& world, flecs::entity core) -> std::stri
             .type = override_type.empty() ? type->second.name : std::string(override_type),
             .offset = static_cast<u32>(member.offset),
             .size = type_size(world, member.type),
+            .is_readonly = type->second.is_readonly,
           }
         );
       }

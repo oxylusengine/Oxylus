@@ -38,7 +38,9 @@ public:
 
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.
-  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid) -> bool;
+  // `field_id` names the field for the picker when `uuid` is a copy, the field's own address otherwise
+  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid, const void* field_id = nullptr)
+    -> bool;
 
   // switches an animation field between the clips imported from the same model
   auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool;

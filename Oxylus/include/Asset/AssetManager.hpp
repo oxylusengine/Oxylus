@@ -1,13 +1,16 @@
 #pragma once
 
+#include <ankerl/svector.h>
 #include <condition_variable>
 #include <functional>
+#include <mutex>
 #include <tuple>
 #include <variant>
 
 #include "Animation/AnimationClip.hpp"
 #include "Animation/Skeleton.hpp"
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetHandle.hpp"
 #include "Asset/AudioSource.hpp"
 #include "Asset/Material.hpp"
 #include "Asset/Model.hpp"
@@ -44,19 +47,31 @@ struct Asset {
     SkeletonID skeleton_id;
     AnimationID animation_id;
     CinematicID cinematic_id;
+    u64 payload_raw;
   };
 
   // Reference count of loads
   u64 ref_count = 0;
 
-  auto is_loaded() const -> bool { return model_id != ModelID::Invalid; }
+  auto is_loaded(this const Asset& self) -> bool { return self.payload_id() != ~0_u64; }
 
   auto acquire_ref() -> void { ++std::atomic_ref(ref_count); }
 
   auto release_ref() -> bool { return --std::atomic_ref(ref_count) == 0; }
+
+  // written only under the registry's write lock, but an `AssetRef` reads it without the registry
+  // lock, so both sides go through an atomic
+  auto payload_id(this const Asset& self) -> u64 {
+    return std::atomic_ref(const_cast<u64&>(self.payload_raw)).load(std::memory_order_acquire);
+  }
+
+  auto set_payload_id(this Asset& self, u64 id) -> void {
+    std::atomic_ref(self.payload_raw).store(id, std::memory_order_release);
+  }
 };
 
-using AssetRegistry = ankerl::unordered_dense::map<UUID, Asset>;
+// boxed, so a record keeps its address however the map rehashes and an `AssetRef` can point at it
+using AssetRegistry = ankerl::unordered_dense::map<UUID, std::unique_ptr<Asset>>;
 
 class AssetManager {
 public:
@@ -136,6 +151,10 @@ public:
   // references as the material has holders, the ones it stops naming give those back, the way releasing the material
   // would. False when `uuid` isn't a loaded material or a new texture won't load
   auto set_material(this AssetManager& self, const UUID& uuid, const Material& material) -> bool;
+  // takes a reference on every child the payload names now and gives back the ones it held before, in
+  // that order, so a child that stays never drops to zero. Whoever writes a payload's child uuids in
+  // place calls it afterwards. No asset lock may be held
+  auto hold_children(this AssetManager& self, const UUID& uuid) -> void;
   auto set_material_dirty(this AssetManager& self, MaterialID material_id) -> void;
   auto set_material_dirty(this AssetManager& self, const UUID& uuid) -> void;
   auto set_all_materials_dirty(this AssetManager& self) -> void;
@@ -211,6 +230,11 @@ private:
     this AssetManager& self, const UUID& uuid, LoadInfo explicit_load, bool should_acquire, bool async
   ) -> bool;
 
+  auto child_uuids(this AssetManager& self, const UUID& uuid) -> ankerl::svector<UUID, 8>;
+  auto drop_children(this AssetManager& self, const UUID& uuid) -> void;
+  // both under the registry's write lock. Insert hands back null when the uuid is registered already
+  auto insert_record(this AssetManager& self, const UUID& uuid) -> Asset*;
+  auto retire_record(this AssetManager& self, AssetRegistry::iterator it) -> void;
   auto unload_asset_impl(this AssetManager& self, AssetType type, u64 id) -> bool;
 
   // the model whose pack a skeleton or a clip was published from, which is the only thing that can
@@ -261,8 +285,19 @@ private:
   // generic-string keys: native separators differ per platform and would hash apart
   ankerl::unordered_dense::map<std::string, UUID> source_index = {};
 
-  // guards `asset_registry` and `source_index`
+  // records erased from the registry, kept alive because a handle may still point at one. Registering
+  // the uuid again brings its record back, so those handles see the asset again
+  ankerl::unordered_dense::map<UUID, std::unique_ptr<Asset>> retired_records = {};
+
+  // guards `asset_registry`, `retired_records` and `source_index`
   std::shared_mutex registry_mutex = {};
+
+  // what each loaded asset references: a material its textures, a model its materials, skeleton and
+  // clips, a clip its skeleton, a particle system its material and mesh. Taken when the asset is
+  // published and given back when it unloads, one reference each however many hold the parent
+  ankerl::unordered_dense::map<UUID, ankerl::svector<AssetRef, 4>> child_refs = {};
+  // every section changes the map, there are no readers to share it with
+  std::mutex child_refs_mutex = {};
   std::shared_mutex models_mutex = {};
   std::shared_mutex textures_mutex = {};
   std::shared_mutex materials_mutex = {};

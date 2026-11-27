@@ -14,10 +14,10 @@
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
 #include "Core/App.hpp"
-#include "Render/RenderContext.hpp"
 #include "Core/Input.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
+#include "Render/RenderContext.hpp"
 #include "Scene/Components.hpp"
 #include "UI/PayloadData.hpp"
 #include "UI/UI.hpp"
@@ -464,7 +464,6 @@ auto ParticleEditorPanel::ensure_preview_scene(this ParticleEditorPanel& self) -
     .set<SkyComponent>({
       .solid_color = self.preview_background,
       .ambient_color = glm::vec3(0.05f),
-      .texture = UUID(nullptr),
     });
 
   scene.create_entity("preview_camera", true)
@@ -488,22 +487,12 @@ auto ParticleEditorPanel::sync_preview_asset(this ParticleEditorPanel& self) -> 
     return;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  const auto previous = self.preview_asset;
-  if (self.asset_uuid) {
-    asset_man.load_asset(self.asset_uuid);
-  }
-
+  // replacing the component gives the previous asset's reference back
   self.preview_asset = self.asset_uuid;
   self.preview_emitter.set<ParticleSystemComponent>({
-    .particle_system = self.asset_uuid,
+    .particle_system = AssetHandle<ParticleSystem>::acquire(self.asset_uuid),
     .play_on_awake = true,
   });
-
-  // the scene releases this again when the component goes away, so only the swap is ours to undo
-  if (previous) {
-    asset_man.unload_asset(previous);
-  }
 }
 
 auto ParticleEditorPanel::on_update(this ParticleEditorPanel& self) -> void {
@@ -1741,8 +1730,7 @@ auto ParticleEditorPanel::draw_shape_overlay(
   draw_list->PopClipRect();
 }
 
-auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info)
-  -> void {
+auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   self.ensure_preview_scene();
@@ -1796,14 +1784,16 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const Swa
     }
   }
 
-  if (const auto rendered = self.preview_scene->render(
-        preview_image.attachment_info(),
-    glm::ivec2(0),
-    glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
-    glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
-    false
-      );
-      !rendered) {
+  if (
+    const auto rendered = self.preview_scene->render(
+      preview_image.attachment_info(),
+      glm::ivec2(0),
+      glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
+      glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
+      false
+    );
+    !rendered
+  ) {
     OX_LOG_ERROR("failed to render the preview ({})", std::to_underlying(rendered.error()));
   }
 
@@ -1870,8 +1860,7 @@ auto ParticleEditorPanel::draw_preview(this ParticleEditorPanel& self, const Swa
   ImGui::Text("Pool capacity: %u", alive_particles);
 }
 
-auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info)
-  -> void {
+auto ParticleEditorPanel::on_render(this ParticleEditorPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   self.sync_node_editor_scale();

@@ -15,6 +15,7 @@
 
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetHandle.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -771,6 +772,26 @@ struct EntityInspector : IEntitySerializer {
   auto on_opaque_value(
     std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
   ) -> void override {
+    if (flecs::entity(world, field_type).has<AssetRefTag>()) {
+      // every handle type is an AssetRef underneath, and the asset field moves the references itself
+      auto* ref = static_cast<AssetRef*>(field_ptr);
+      auto uuid = ref->uuid();
+
+      UI::end_properties();
+
+      auto is_changed = inspector_panel.draw_asset_field(name, uuid, ref);
+      is_changed |= inspector_panel.draw_animation_clip_selector(uuid);
+      if (is_changed) {
+        ref->take_over(uuid);
+        modified = true;
+      }
+
+      inspector_panel.draw_asset_contents(uuid);
+
+      UI::begin_properties();
+      return;
+    }
+
     if (field_type != world.entity<UUID>()) {
       return;
     }
@@ -1032,13 +1053,10 @@ auto InspectorPanel::draw_material_properties(
         return UUID(nullptr);
       }
 
-      auto& asset_man = App::mod<AssetManager>();
-      if (!asset_man.load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb})) {
+      // loaded without a reference: the material takes its own when the caller hands its new
+      // children over with hold_children, which also gives back the old texture's
+      if (!App::mod<AssetManager>().load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb}, false)) {
         return UUID(nullptr);
-      }
-
-      if (uuid) {
-        asset_man.unload_asset(uuid);
       }
 
       return picked->uuid;
@@ -1298,7 +1316,9 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+auto InspectorPanel::draw_asset_field(
+  this InspectorPanel& self, const std::string_view label, UUID& uuid, const void* field_id
+) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -1324,8 +1344,9 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
                                        : "Models are added to the scene from the content browser, not assigned here";
 
   auto changed = false;
+  const auto* const field = field_id != nullptr ? field_id : &uuid;
 
-  ImGui::PushID(&uuid);
+  ImGui::PushID(field);
   ImGui::SeparatorText(stack.format_char("{} {}", asset_type_icon(picker_type), label));
 
   // Any file dropped here is imported first, so dragging straight from the content browser works
@@ -1396,10 +1417,10 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   ImGui::EndGroup();
 
   if (browse) {
-    self.asset_picker_field = &uuid;
+    self.asset_picker_field = field;
   }
 
-  if (self.asset_picker_field == &uuid) {
+  if (self.asset_picker_field == field) {
     auto open = true;
     const auto picked = self.asset_browser
                           .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
@@ -1593,6 +1614,7 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
       material.reset();
       if (material_dirty) {
         asset_man.set_material_dirty(material_id);
+        asset_man.hold_children(uuid);
         editor.thumbnail_manager.invalidate_material(uuid);
       }
       break;

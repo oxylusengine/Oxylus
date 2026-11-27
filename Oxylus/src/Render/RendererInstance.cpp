@@ -3689,19 +3689,12 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
     ankerl::svector<PendingDecal, 16> pending_decals = {};
     const auto frustum = Camera::get_frustum(cam, cam.position);
     self.queries->decals.each([&](flecs::entity e, const TransformComponent&, const DecalComponent& c) {
-      if (!e.enabled() || !c.material || c.opacity <= 0.0f || c.layer_mask == 0 || !asset_man.is_loaded(c.material)) {
+      // the handle only ever points at a material record, so being loaded means a material is there
+      if (!e.enabled() || c.opacity <= 0.0f || c.layer_mask == 0 || !c.material.is_loaded()) {
         return;
       }
 
-      auto material_index = 0_u32;
-      {
-        const auto asset = asset_man.get_asset(c.material);
-        if (!asset || asset->type != AssetType::Material) {
-          return;
-        }
-
-        material_index = SlotMap_decode_id(asset->material_id).index;
-      }
+      const auto material_index = SlotMap_decode_id(static_cast<MaterialID>(c.material.payload_id())).index;
 
       const auto world = self.scene.get_resolved_world_transform(e);
       if (std::abs(glm::determinant(glm::mat3(world))) < 1e-8f) {
@@ -3768,32 +3761,32 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
   self.render_queue_2d.init();
 
-  self.queries->sprites.each([&asset_man, &s = self.scene, &cam, &rq2d = self.render_queue_2d](
-                               flecs::entity e,
-                               const TransformComponent& tc,
-                               const SpriteComponent& comp
-                             ) {
-    const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
-    if (auto material = asset_man.get_asset(comp.material)) {
-      u16 flags = 0;
-      if (comp.sort_y)
-        flags |= GPU::RENDER_FLAGS_2D_SORT_Y;
-      if (comp.flip_x)
-        flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
+  self.queries->sprites.each(
+    [&s = self.scene,
+     &cam,
+     &rq2d = self.render_queue_2d](flecs::entity e, const TransformComponent& tc, const SpriteComponent& comp) {
+      const auto distance = glm::distance(glm::vec3(0.f, 0.f, cam.position.z), glm::vec3(0.f, 0.f, tc.position.z));
+      if (comp.material.is_loaded()) {
+        u16 flags = 0;
+        if (comp.sort_y)
+          flags |= GPU::RENDER_FLAGS_2D_SORT_Y;
+        if (comp.flip_x)
+          flags |= GPU::RENDER_FLAGS_2D_FLIP_X;
 
-      if (auto transform_id = s.get_entity_transform_id(e)) {
-        rq2d.add(
-          flags,
-          tc.position.y,
-          SlotMap_decode_id(*transform_id).index,
-          SlotMap_decode_id(material->material_id).index,
-          distance
-        );
-      } else {
-        OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
+        if (auto transform_id = s.get_entity_transform_id(e)) {
+          rq2d.add(
+            flags,
+            tc.position.y,
+            SlotMap_decode_id(*transform_id).index,
+            SlotMap_decode_id(static_cast<MaterialID>(comp.material.payload_id())).index,
+            distance
+          );
+        } else {
+          OX_LOG_WARN("No registered transform for sprite entity: {}", e.name().c_str());
+        }
       }
     }
-  });
+  );
 
   self.queries->auto_exposures.each([&self](flecs::entity e, const AutoExposureComponent& c) {
     self.gpu_scene_flags |= GPU::SceneFlags::HasEyeAdaptation;
@@ -3863,7 +3856,7 @@ auto RendererInstance::update(this RendererInstance& self, RendererInstanceUpdat
 
     auto user_lut_view_index = ~0u;
     if (c.lut) {
-      if (const auto texture = asset_man.get_texture(c.lut)) {
+      if (const auto texture = c.lut.get()) {
         user_lut_view_index = texture->get_view_index();
       }
     }

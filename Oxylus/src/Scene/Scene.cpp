@@ -151,7 +151,7 @@ static auto evaluate_animation_instance(
   ZoneScoped;
 
   auto& asset_man = App::mod<AssetManager>();
-  auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+  auto skeleton = instance.skeleton.get();
   if (!skeleton || !skeleton->is_valid()) {
     return;
   }
@@ -165,15 +165,15 @@ static auto evaluate_animation_instance(
   const auto& evaluation = instance.evaluation;
   auto is_sampled = false;
   asset_man.with_animations(
-    evaluation.has_clip ? instance.clip_uuid : UUID(nullptr),
-    evaluation.has_fade ? instance.fade_from_clip_uuid : UUID(nullptr),
+    evaluation.has_clip ? instance.clip.uuid() : UUID(nullptr),
+    evaluation.has_fade ? instance.fade_from_clip.uuid() : UUID(nullptr),
     [&](const AnimationClip* clip, const AnimationClip* fade_from) -> void {
-      if (clip == nullptr || clip->skeleton_uuid != instance.skeleton_uuid) {
+      if (clip == nullptr || clip->skeleton_uuid != instance.skeleton.uuid()) {
         return;
       }
 
       auto task = task_system.register_sample(clip, evaluation.current_time);
-      if (fade_from != nullptr && fade_from->skeleton_uuid == instance.skeleton_uuid) {
+      if (fade_from != nullptr && fade_from->skeleton_uuid == instance.skeleton.uuid()) {
         const auto fade_task = task_system.register_sample(fade_from, evaluation.fade_from_time);
         // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
         task = task_system.register_blend(fade_task, task, evaluation.fade_weight);
@@ -263,7 +263,7 @@ static auto find_skin_skeleton(flecs::entity node) -> UUID {
     }
 
     if (const auto* skinned = child.try_get<SkinnedMeshComponent>(); skinned != nullptr && skinned->skeleton_uuid) {
-      result = skinned->skeleton_uuid;
+      result = skinned->skeleton_uuid.uuid();
       return;
     }
 
@@ -326,6 +326,11 @@ struct JsonEntityDeserializer : IEntitySerializer {
   simdjson::ondemand::value json_value;
   memory::ScopedStack stack;
   std::vector<UUID> requested_assets = {};
+  // where the component being read lives, so a handle field can be found again once its asset loads
+  flecs::entity_t entity_id = 0;
+  flecs::entity_t component_id = 0;
+  const u8* component_data = nullptr;
+  std::vector<PendingAssetRef> pending_asset_refs = {};
 
   JsonEntityDeserializer(flecs::world& world_, simdjson::ondemand::value value_)
       : IEntitySerializer(world_),
@@ -553,6 +558,28 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
+    // loading here would ignore the scene's load order, so the field only names its asset for now
+    if (flecs::entity(world, field_type).has<AssetRefTag>()) {
+      auto result = field_result.get_string();
+      if (result.error()) {
+        return;
+      }
+
+      const auto uuid = UUID::from_string(result.value_unsafe()).value_or(UUID(nullptr));
+      static_cast<AssetRef*>(field_ptr)->set_unresolved(uuid);
+      if (uuid) {
+        requested_assets.push_back(uuid);
+        pending_asset_refs.push_back({
+          .entity = entity_id,
+          .component = component_id,
+          .offset = static_cast<u32>(static_cast<const u8*>(field_ptr) - component_data),
+          .uuid = uuid,
+        });
+      }
+
+      return;
+    }
+
     if (opaque_type == flecs::Bool) {
       auto result = field_result.get_bool();
       if (!result.error() && opaque_info->assign_bool) {
@@ -745,28 +772,19 @@ Scene::~Scene() {
   tearing_down = true;
 
   {
-    auto& asset_man = App::mod<AssetManager>();
-    for (const auto& [entity, emitter_id] : entity_particle_emitters_map) {
-      if (const auto* state = particle_emitters.slot(emitter_id); state && state->asset) {
-        asset_man.unload_asset(state->asset);
-      }
-    }
+    // the components' handles hold the particle systems' references and give them back with the world
     entity_particle_emitters_map.clear();
     particle_emitters.reset();
 
-    // the AnimatorComponent observer skips the instance while tearing down, so the crossfade ref
-    // it may still hold goes back here
-    animation_instances.for_each_active([&asset_man](usize, AnimationInstance& instance) {
-      if (instance.fade_from_clip_uuid) {
-        asset_man.unload_asset(instance.fade_from_clip_uuid);
-      }
-    });
+    // the AnimatorComponent observer skips the instance while tearing down, so the references its
+    // handles hold go back with the reset
     entity_to_animation_instance_map.clear();
     animation_instances.reset();
 
     entity_to_cinematic_instance_map.clear();
     cinematic_instances.reset();
 
+    auto& asset_man = App::mod<AssetManager>();
     for (const auto& spawn : pending_model_spawns) {
       if (spawn.hierarchy_spawned) {
         asset_man.unload_asset(spawn.model_uuid);
@@ -776,7 +794,7 @@ Scene::~Scene() {
   }
 
   destroy_terrain_collision();
-  set_terrain_edits_ref({});
+  terrain_edits_ref = UUID(nullptr);
   terrain.reset();
 
   for (auto& [_, script] : scripts) {
@@ -839,41 +857,28 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
-  // whoever writes the uuid owns the ref, the same way MeshComponent and AudioSourceComponent do:
-  // the spawner acquires, `from_json` acquires every deserialized uuid, and the inspector's asset
-  // field releases the old and takes the new, so only the release is keyed on component lifetime
   self.world.observer<AnimatorComponent>()
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, AnimatorComponent&) { self.attach_animator(it.entity(i)); });
 
   self.world.observer<AnimatorComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, AnimatorComponent& animator) {
+    .each([&self](flecs::iter& it, usize i, AnimatorComponent&) {
       // the instance maps are already destroyed when the world goes down, ~Scene released them
       if (!self.tearing_down) {
         self.detach_animator(it.entity(i));
       }
-
-      if (animator.clip_uuid) {
-        App::mod<AssetManager>().unload_asset(animator.clip_uuid);
-      }
     });
 
-  // same ownership rule as AnimatorComponent: whoever writes the uuid owns the ref, so only the
-  // release is keyed on component lifetime
   self.world.observer<CinematicPlayerComponent>()
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent&) { self.attach_cinematic(it.entity(i)); });
 
   self.world.observer<CinematicPlayerComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent& player) {
+    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent&) {
       if (!self.tearing_down) {
         self.detach_cinematic(it.entity(i));
-      }
-
-      if (player.cinematic_uuid) {
-        App::mod<AssetManager>().unload_asset(player.cinematic_uuid);
       }
     });
 
@@ -902,13 +907,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<SkinnedMeshComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, SkinnedMeshComponent& skinned) {
+    .each([&self](flecs::iter& it, usize i, SkinnedMeshComponent&) {
       if (!self.tearing_down) {
         unlink_skinned_mesh(self, it.entity(i));
-      }
-
-      if (skinned.skeleton_uuid) {
-        App::mod<AssetManager>().unload_asset(skinned.skeleton_uuid);
       }
     });
 
@@ -922,7 +923,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto entity = it.entity(i);
 
       if (mc.model_uuid)
-        self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+        self.attach_mesh(entity, mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
 
       if (auto id = self.get_entity_transform_id(entity)) {
         if (auto* transform = self.get_entity_transform(*id)) {
@@ -938,7 +939,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, LayerComponent&, MeshComponent& mc) {
       if (mc.model_uuid) {
-        self.attach_mesh(it.entity(i), mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+        self.attach_mesh(it.entity(i), mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
       }
     });
 
@@ -1010,7 +1011,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           self.terrain.reset();
           self.terrain_entity = {};
           self.terrain_dirty = false;
-          self.set_terrain_edits_ref({});
+          self.terrain_edits_ref = UUID(nullptr);
         }
         return;
       }
@@ -1026,7 +1027,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       self.terrain_entity = entity;
       self.terrain_dirty = true;
-      self.set_terrain_edits_ref(c.terrain_edits);
+      self.terrain_edits_ref = c.terrain_edits.uuid();
     });
 
   self.world.observer<SpriteComponent>()
@@ -1044,33 +1045,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      auto& asset_man = App::mod<AssetManager>();
-      c.material = asset_man.create_asset(AssetType::Material, {});
-      asset_man.load_asset(c.material);
+      c.material = AssetHandle<Material>::acquire(App::mod<AssetManager>().create_asset(AssetType::Material, {}));
     });
-
-  self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (it.event() == flecs::OnRemove) {
-      // Must not hold a registry read guard across unload_asset(): it takes the registry
-      // write lock (self-deadlock otherwise). unload_asset() no-ops on missing/unloaded.
-      asset_man.unload_asset(c.material);
-    }
-  });
-
-  self.world.observer<ColorGradingComponent>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter&, usize, ColorGradingComponent& c) {
-      if (c.lut) {
-        App::mod<AssetManager>().unload_asset(c.lut);
-      }
-    });
-
-  self.world.observer<DecalComponent>().event(flecs::OnRemove).each([](flecs::iter&, usize, DecalComponent& c) {
-    if (c.material) {
-      App::mod<AssetManager>().unload_asset(c.material);
-    }
-  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -1084,8 +1060,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      auto audio_asset = asset_man.get_audio(c.audio_source);
+      auto audio_asset = c.audio_source.get();
       if (!audio_asset || !audio_asset->get_source())
         return;
 
@@ -1096,19 +1071,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
-
-  self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    asset_man.unload_asset(c.model_uuid);
-    asset_man.unload_asset(c.material_uuid);
-  });
-
-  self.world.observer<AudioSourceComponent>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.audio_source);
-    });
 
   self.world.observer<RigidBodyComponent>()
     .event(flecs::OnSet)
@@ -1176,7 +1138,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([&self](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       ZoneScopedN("Particle system observer");
 
-      auto& asset_man = App::mod<AssetManager>();
       const auto entity = it.entity(i);
 
       if (it.event() == flecs::OnRemove) {
@@ -1189,18 +1150,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           return;
         }
 
-        auto asset = UUID{};
-        if (const auto* state = self.particle_emitters.slot(emitter_it->second)) {
-          asset = state->asset;
-        }
-
         self.particle_emitters.destroy_slot(emitter_it->second);
         self.entity_particle_emitters_map.erase(emitter_it);
-
-        if (asset) {
-          asset_man.unload_asset(asset);
-        }
-
         return;
       }
 
@@ -1214,11 +1165,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      // whoever writes the uuid owns the ref, the same way MeshComponent and AudioSourceComponent
-      // do. acquiring here as well would double count every scene load, since `from_json` already
-      // acquires every deserialized asset uuid
-      if (state->asset != c.particle_system) {
-        state->asset = c.particle_system;
+      // the component's handle holds the reference, the emitter only names the asset
+      if (state->asset != c.particle_system.uuid()) {
+        state->asset = c.particle_system.uuid();
         state->pool_valid = false;
         state->time = 0.0f;
         state->spawn_accumulator = 0.0f;
@@ -1254,8 +1203,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, AudioSourceComponent>("audio_source_update")
     .kind(flecs::PreUpdate)
     .each([](const flecs::entity& e, const TransformComponent&, const AudioSourceComponent& ac) {
-      auto& asset_man = App::mod<AssetManager>();
-      auto audio = asset_man.get_audio(ac.audio_source);
+      auto audio = ac.audio_source.get();
       if (audio && audio->get_source()) {
         apply_audio_source(audio->get_source(), ac, e);
       }
@@ -1487,7 +1435,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .kind(flecs::PostUpdate)
     .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
       auto& asset_manager = App::mod<AssetManager>();
-      auto material = asset_manager.get_material(sprite.material);
+      auto material = sprite.material.get();
 
       if (
         sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
@@ -1654,7 +1602,6 @@ auto Scene::runtime_start(this Scene& self) -> void {
   );
 
   if (App::has_mod<AudioEngine>()) {
-    auto& asset_man = App::mod<AssetManager>();
     auto& audio_engine = App::mod<AudioEngine>();
     self.world.query_builder<const AudioSourceComponent>().build().each(
       [&](flecs::entity e, const AudioSourceComponent& ac) {
@@ -1662,7 +1609,7 @@ auto Scene::runtime_start(this Scene& self) -> void {
           return;
         }
 
-        auto audio = asset_man.get_audio(ac.audio_source);
+        auto audio = ac.audio_source.get();
         if (!audio || !audio->get_source()) {
           return;
         }
@@ -1690,10 +1637,9 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 
   // the play scene shares each asset's sound with the edit scene, so it would keep playing after stop
   if (App::has_mod<AudioEngine>()) {
-    auto& asset_man = App::mod<AssetManager>();
     auto& audio_engine = App::mod<AudioEngine>();
     self.world.query_builder<const AudioSourceComponent>().build().each([&](const AudioSourceComponent& ac) {
-      auto audio = asset_man.get_audio(ac.audio_source);
+      auto audio = ac.audio_source.get();
       if (audio && audio->get_source()) {
         audio_engine.stop_source(audio->get_source());
       }
@@ -2242,15 +2188,9 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
 
   if (model.skeleton_uuid) {
     const auto clip_uuid = model.animations.empty() ? UUID(nullptr) : model.animations.front();
-    if (clip_uuid) {
-      // acquire_ref, not load_asset: the clip was published by the model load this is spawning
-      // from, and load_asset would re-enter load_model while the caller still holds a read guard
-      // on the model
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.acquire_ref(asset_man.get_asset(clip_uuid));
-    }
-
-    root_entity.set<AnimatorComponent>({.clip_uuid = clip_uuid});
+    // from_loaded, not acquire: the clip was published by the model load this is spawning from, and
+    // loading would re-enter load_model while the caller still holds a read guard on the model
+    root_entity.set<AnimatorComponent>({.clip_uuid = AssetHandle<AnimationClip>::from_loaded(clip_uuid)});
   }
 
   emit_group_contents(root_entity, root_node, 0);
@@ -2314,25 +2254,20 @@ auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingMode
 auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
   ZoneScoped;
 
-  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own refs.
-  // the material is the model's own, but the component names it and the inspector swaps it as an
-  // owned ref, so it counts as one here too
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.acquire_ref(asset_man.get_asset(model_uuid));
-  asset_man.acquire_ref(asset_man.get_asset(info.material_uuid));
-
+  // every mesh entity holds its own references. The material is the model's own, but the component
+  // names it and the inspector swaps it, so it holds one too. from_loaded, because both were loaded by
+  // the model this spawns from
   auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
   entity.set<TransformComponent>({});
   // before MeshComponent: attach_mesh reads it to decide which transform the instance follows
   if (info.skeleton_uuid) {
-    asset_man.acquire_ref(asset_man.get_asset(info.skeleton_uuid));
-    entity.set<SkinnedMeshComponent>({.skeleton_uuid = info.skeleton_uuid});
+    entity.set<SkinnedMeshComponent>({.skeleton_uuid = AssetHandle<Skeleton>::from_loaded(info.skeleton_uuid)});
   }
   entity.child_of(info.parent);
   entity.set<MeshComponent>({
-    .model_uuid = model_uuid,
+    .model_uuid = AssetHandle<Model>::from_loaded(model_uuid),
     .mesh_index = static_cast<u32>(info.mesh_index),
-    .material_uuid = info.material_uuid,
+    .material_uuid = AssetHandle<Material>::from_loaded(info.material_uuid),
     .baked_aabb = info.aabb,
   });
   entity.modified<TransformComponent>();
@@ -2423,13 +2358,14 @@ auto Scene::create_particle_system_entity(this Scene& self, const UUID& asset_uu
     }
   }
 
-  if (!asset_man.load_asset(asset_uuid)) {
+  auto particle_system = AssetHandle<ParticleSystem>::acquire(asset_uuid);
+  if (!particle_system.is_loaded()) {
     return {};
   }
 
   auto entity = self.create_entity(name, true);
   entity.set<ParticleSystemComponent>(ParticleSystemComponent{
-    .particle_system = asset_uuid,
+    .particle_system = std::move(particle_system),
   });
 
   return entity;
@@ -2743,13 +2679,12 @@ auto Scene::bake_terrain(this Scene& self) -> void {
     });
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
-    if (!uuid || !asset_man.is_loaded(uuid)) {
+  const auto material_index = [](const AssetHandle<Material>& material) -> u32 {
+    if (!material.is_loaded()) {
       return GPU::TERRAIN_INVALID_LAYER_MATERIAL;
     }
-    const auto asset = asset_man.get_asset(uuid);
-    return asset ? SlotMap_decode_id(asset->material_id).index : GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+
+    return SlotMap_decode_id(static_cast<MaterialID>(material.payload_id())).index;
   };
   terrain->layer_material_indices = {
     material_index(c.layer_grass),
@@ -2792,7 +2727,7 @@ auto Scene::bake_terrain(this Scene& self) -> void {
 
   // `create` only leaves the maps uninitialized when it had to allocate new ones, which is exactly
   // when the strokes have to come back off the asset.
-  self.set_terrain_edits_ref(c.terrain_edits);
+  self.terrain_edits_ref = c.terrain_edits.uuid();
   if (terrain->edits_uninitialized && self.terrain_edits_ref) {
     if (auto edits = App::mod<AssetManager>().get_terrain_edits(self.terrain_edits_ref)) {
       terrain->upload_edits(*edits.value);
@@ -2816,11 +2751,7 @@ auto Scene::find_animator_entity(flecs::entity entity) -> flecs::entity {
 }
 
 auto Scene::end_animation_fade(this Scene& self, AnimationInstance& instance) -> void {
-  if (instance.fade_from_clip_uuid) {
-    App::mod<AssetManager>().unload_asset(instance.fade_from_clip_uuid);
-    instance.fade_from_clip_uuid = UUID(nullptr);
-  }
-
+  instance.fade_from_clip = {};
   instance.fade_duration = 0.0f;
   instance.fade_elapsed = 0.0f;
 }
@@ -2833,13 +2764,9 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-
   auto clip_skeleton_uuid = UUID(nullptr);
-  if (animator->clip_uuid) {
-    if (auto clip = asset_man.get_animation(animator->clip_uuid)) {
-      clip_skeleton_uuid = clip->skeleton_uuid;
-    }
+  if (const auto clip = animator->clip_uuid.get()) {
+    clip_skeleton_uuid = clip->skeleton_uuid;
   }
 
   // the skin is what the joint indices were built against, so it decides the skeleton, and a clip
@@ -2849,7 +2776,7 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     OX_LOG_WARN(
       "Animator '{}' plays clip {} whose skeleton does not match its skinned meshes; the clip is ignored.",
       entity.name().c_str(),
-      animator->clip_uuid.str()
+      animator->clip_uuid.uuid().str()
     );
   }
   const auto skeleton_uuid = skin_skeleton_uuid ? skin_skeleton_uuid : clip_skeleton_uuid;
@@ -2857,7 +2784,7 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
   auto instance_it = self.entity_to_animation_instance_map.find(entity);
   if (instance_it == self.entity_to_animation_instance_map.end()) {
     const auto instance_id = self.animation_instances.create_slot(
-      AnimationInstance{.skeleton_uuid = skeleton_uuid, .clip_uuid = animator->clip_uuid}
+      AnimationInstance{.skeleton = AssetHandle<Skeleton>::from_loaded(skeleton_uuid), .clip = animator->clip_uuid}
     );
     self.entity_to_animation_instance_map.emplace(entity, instance_id);
     self.relink_skinned_meshes(entity);
@@ -2870,27 +2797,31 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  if (instance->clip_uuid != animator->clip_uuid) {
+  if (instance->clip.uuid() != animator->clip_uuid.uuid()) {
     // a second swap mid-fade supersedes the first, so that clip's reference goes back now
     self.end_animation_fade(*instance);
 
     // assigning a different clip is what starts a crossfade, and the outgoing clip keeps its own
-    // clock so it carries on playing underneath, taking its own reference because by the time this
-    // runs the setter may already have released the component's
-    if (instance->clip_uuid && animator->blend_time > 0.0f && asset_man.load_asset(instance->clip_uuid)) {
-      instance->fade_from_clip_uuid = instance->clip_uuid;
+    // clock so it carries on playing underneath. The instance's own handle is what keeps it loaded,
+    // since by the time this runs the setter has already let go of the component's
+    if (instance->clip.is_loaded() && animator->blend_time > 0.0f) {
+      instance->fade_from_clip = std::move(instance->clip);
       instance->fade_from_time = instance->current_time;
       instance->fade_duration = animator->blend_time;
       instance->fade_elapsed = 0.0f;
     }
 
-    instance->clip_uuid = animator->clip_uuid;
+    instance->clip = animator->clip_uuid;
     instance->current_time = 0.0f;
+    instance->pose_dirty = true;
+  } else if (!instance->clip.is_loaded() && animator->clip_uuid.is_loaded()) {
+    // the scene loader hands the component its reference after the instance already copied it empty
+    instance->clip = animator->clip_uuid;
     instance->pose_dirty = true;
   }
 
-  if (skeleton_uuid && instance->skeleton_uuid != skeleton_uuid) {
-    instance->skeleton_uuid = skeleton_uuid;
+  if (skeleton_uuid && (instance->skeleton.uuid() != skeleton_uuid || !instance->skeleton.is_loaded())) {
+    instance->skeleton = AssetHandle<Skeleton>::from_loaded(skeleton_uuid);
     instance->pose_dirty = true;
     self.relink_skinned_meshes(entity);
   }
@@ -2906,8 +2837,9 @@ auto Scene::detach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
+  // a destroyed slot keeps its element until the slot is reused, handles and all, so they go back now
   if (auto* instance = self.animation_instances.slot(instance_it->second)) {
-    self.end_animation_fade(*instance);
+    *instance = AnimationInstance{};
   }
 
   self.animation_instances.destroy_slot(instance_it->second);
@@ -2972,9 +2904,10 @@ auto Scene::relink_skinned_meshes_under(this Scene& self, flecs::entity animator
                 // the skin is what the joint indices index into, so its skeleton wins over the clip's
                 if (
                   const auto* skinned = child.try_get<SkinnedMeshComponent>();
-                  skinned != nullptr && skinned->skeleton_uuid && instance->skeleton_uuid != skinned->skeleton_uuid
+                  skinned != nullptr && skinned->skeleton_uuid &&
+                  instance->skeleton.uuid() != skinned->skeleton_uuid.uuid()
                 ) {
-                  instance->skeleton_uuid = skinned->skeleton_uuid;
+                  instance->skeleton = skinned->skeleton_uuid;
                   instance->pose_dirty = true;
                 }
               }
@@ -3000,11 +2933,9 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
     return;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-
   auto bone_offset = 0_u32;
   self.animation_instances.for_each_active([&](usize, AnimationInstance& instance) {
-    auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+    auto skeleton = instance.skeleton.get();
     instance.bone_count = skeleton ? skeleton->bone_count() : 0_u32;
     instance.bone_offset = bone_offset;
     bone_offset += instance.bone_count;
@@ -3035,7 +2966,7 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
     }
 
     {
-      auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+      auto skeleton = instance.skeleton.get();
       if (!skeleton || !skeleton->is_valid()) {
         continue;
       }
@@ -3081,8 +3012,8 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
     // durations are copied out so no two animation read locks are held at once on this thread
     auto clip_duration = option<f32>();
     if (self.running) {
-      if (const auto clip = asset_man.get_animation(instance.clip_uuid)) {
-        if (clip->skeleton_uuid == instance.skeleton_uuid) {
+      if (const auto clip = instance.clip.get()) {
+        if (clip->skeleton_uuid == instance.skeleton.uuid()) {
           clip_duration = clip->duration;
         }
       }
@@ -3098,15 +3029,15 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
         );
       }
 
-      if (instance.fade_from_clip_uuid && instance.fade_duration > 0.0f) {
+      if (instance.fade_from_clip && instance.fade_duration > 0.0f) {
         instance.fade_elapsed += delta_time;
 
         if (instance.fade_elapsed >= instance.fade_duration) {
           self.end_animation_fade(instance);
         } else {
           auto fade_duration = option<f32>();
-          if (const auto fade_from = asset_man.get_animation(instance.fade_from_clip_uuid)) {
-            if (fade_from->skeleton_uuid == instance.skeleton_uuid) {
+          if (const auto fade_from = instance.fade_from_clip.get()) {
+            if (fade_from->skeleton_uuid == instance.skeleton.uuid()) {
               fade_duration = fade_from->duration;
             }
           }
@@ -3539,7 +3470,7 @@ auto build_mesh_collider_shape(
   auto triangles = JPH::IndexedTriangleList();
   for (const auto mesh_entity : mesh_entities) {
     const auto& mesh_component = mesh_entity.get<MeshComponent>();
-    auto model = asset_man.get_model(mesh_component.model_uuid);
+    auto model = mesh_component.model_uuid.get();
     if (!model) {
       OX_LOG_ERROR("MeshColliderComponent on '{}' has no loaded model.", mesh_entity.name().c_str());
       return {};
@@ -3993,31 +3924,6 @@ auto Scene::set_terrain_stamps(this Scene& self, std::span<const TerrainStampDes
   }
 }
 
-auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
-  ZoneScoped;
-
-  if (self.terrain_edits_ref == uuid) {
-    return;
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  const auto previous = std::exchange(self.terrain_edits_ref, uuid);
-
-  // The scene holds exactly one ref, matched by the release below and by the OnRemove observer.
-  // `from_json` already took it for a UUID that came out of the scene file, so only an asset
-  // nothing has loaded yet is acquired here. is_loaded() takes and drops its own read guard; don't
-  // hold one across load_asset().
-  if (uuid && !asset_man.is_loaded(uuid)) {
-    asset_man.load_asset(uuid);
-  }
-
-  // Released after the acquire so re-pointing at the same underlying asset does not drop it to zero
-  // in between.
-  if (previous) {
-    asset_man.unload_asset(previous);
-  }
-}
-
 void Scene::create_character_controller(flecs::entity entity, CharacterControllerComponent& component) const {
   ZoneScoped;
 
@@ -4339,8 +4245,12 @@ auto Scene::deserialize_component(
   e.add(component);
   auto* data = e.get_mut(component);
   auto deserializer = JsonEntityDeserializer(self.world, std::move(json));
+  deserializer.entity_id = e.id();
+  deserializer.component_id = component.id();
+  deserializer.component_data = static_cast<const u8*>(data);
   deserializer.serialize(component, data);
   requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+  self.pending_asset_refs.insert_range(self.pending_asset_refs.end(), std::move(deserializer.pending_asset_refs));
   self.deserializing_entity = was_deserializing;
   e.modified(component);
 }
@@ -4723,11 +4633,36 @@ auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> reques
     asset_man.load_asset(asset_uuid);
   }
 
+  // each handle field the loader named takes over the reference its uuid's load took above, or the
+  // reference goes back when the field is gone or was written again since
+  const auto pending_asset_refs = std::exchange(self.pending_asset_refs, {});
+  for (usize i = 0; i < pending_asset_refs.size(); i++) {
+    const auto& pending = pending_asset_refs[i];
+    auto entity = flecs::entity(self.world, pending.entity);
+    const auto is_present = entity.is_alive() && entity.has(pending.component);
+    auto* data = is_present ? static_cast<u8*>(entity.get_mut(pending.component)) : nullptr;
+    auto* field = data != nullptr ? reinterpret_cast<AssetRef*>(data + pending.offset) : nullptr;
+    if (field == nullptr || field->uuid() != pending.uuid || field->is_loaded()) {
+      asset_man.unload_asset(pending.uuid);
+    } else {
+      field->take_over(pending.uuid);
+    }
+
+    // observers on the component saw its fields before their assets were in. A component's fields are
+    // queued together, so it is notified once, after the last of them
+    const auto is_last_of_component = i + 1 == pending_asset_refs.size() ||
+                                      pending_asset_refs[i + 1].entity != pending.entity ||
+                                      pending_asset_refs[i + 1].component != pending.component;
+    if (is_present && is_last_of_component) {
+      entity.modified(pending.component);
+    }
+  }
+
   // Assets are only requested after every entity exists, so meshes whose model was still unloaded
   // when their component was set could not be attached. Attach them now that the models are in.
   self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
     if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
-      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+      self.attach_mesh(e, mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
     }
   });
 

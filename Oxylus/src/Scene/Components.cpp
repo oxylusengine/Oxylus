@@ -3,6 +3,23 @@
 #include "Scene/ComponentRegistry.hpp"
 
 namespace ox {
+// an asset field reads and writes as its uuid, and assigning one takes the reference the field then
+// holds. Every handle type carries `AssetRefTag`, which is how the inspector and the C# bindings find them
+template <typename T>
+static auto bind_asset_handle(flecs::world& world, const c8* name) -> void {
+  world.component<AssetHandle<T>>(name).template add<AssetRefTag>();
+  world.component<AssetHandle<T>>()
+    .opaque(flecs::String)
+    .serialize([](const flecs::serializer* s, const AssetHandle<T>* data) {
+      auto str = data->uuid().str();
+      auto* cstr = str.c_str();
+      return s->value(flecs::String, &cstr);
+    })
+    .assign_string([](AssetHandle<T>* data, const char* value) {
+      *data = AssetHandle<T>::acquire(UUID::from_string(std::string_view(value)).value_or(UUID(nullptr)));
+    });
+}
+
 CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
   ZoneScoped;
 
@@ -42,6 +59,17 @@ CoreComponentsModule::CoreComponentsModule(flecs::world& world) {
       return s->value(flecs::String, &cstr);
     })
     .assign_string([](UUID* data, const char* value) { *data = UUID::from_string(std::string_view(value)).value(); });
+
+  world.component<AssetRefTag>("ox::AssetRefTag");
+  bind_asset_handle<AudioSource>(world, "ox::AudioSourceHandle");
+  bind_asset_handle<Skeleton>(world, "ox::SkeletonHandle");
+  bind_asset_handle<AnimationClip>(world, "ox::AnimationClipHandle");
+  bind_asset_handle<Model>(world, "ox::ModelHandle");
+  bind_asset_handle<Material>(world, "ox::MaterialHandle");
+  bind_asset_handle<Texture>(world, "ox::TextureHandle");
+  bind_asset_handle<ParticleSystem>(world, "ox::ParticleSystemHandle");
+  bind_asset_handle<Cinematic>(world, "ox::CinematicHandle");
+  bind_asset_handle<TerrainEdits>(world, "ox::TerrainEditsHandle");
 
   // Enums, bound before the components that use them so flecs registers their constants under these names
   // instead of implicitly deriving a name from the C++ path at first use.

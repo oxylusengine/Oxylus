@@ -158,35 +158,66 @@ for reading and `JsonWriter` for writing.
 
 ### Assets
 
-`AssetManager` is the single owner of loaded resources. Every asset is a `UUID` in an `AssetRegistry`
-map; the `Asset` struct holds a type tag plus a union of typed slot-map ids (`ModelID`, `TextureID`,
-`MaterialID`, `SceneID`, `AudioID`). Payloads live in per-type `SlotMap`s guarded by
-per-type `std::shared_mutex`, and accessors return `ReadGuard<T>` (`Memory/ReadGuard.hpp`) which
-holds the lock — don't store a `ReadGuard` past its use site. Loading is reference-counted
-(`acquire_ref`/`release_ref`, atomic `ref_count`); `load_asset` acquires by default.
+`AssetManager` is the single owner of loaded resources. The registry maps each `UUID` to a boxed `Asset`
+record that never moves: an erased record is kept in `retired_records` until shutdown, and registering
+the UUID again revives it. A record holds a type tag and the loaded payload's slot-map id, written and
+read through `payload_id()`/`set_payload_id()` (atomic, so handles read it without the registry lock).
+Payloads live in per-type `SlotMap`s (`SlotMapSync::External`) guarded by per-type
+`std::shared_mutex`, and the accessors return `ReadGuard<T>` (`Memory/ReadGuard.hpp`), which holds that
+lock. Don't store a guard past its use site, and **never hold two guards of the same asset type on one
+thread**: the second shared lock queues behind a waiting writer and deadlocks. Read both under one lock
+instead (`AssetManager::with_animations`). Where this is heading (a per-frame commit point and lock-free
+reads) is in `docs/systems/asset-ownership.md`.
 
-**Reference counts must balance, and they are transitive.** Every path that starts referencing an
-asset takes exactly one ref — `load_asset` does it for you unless you pass `should_acquire = false`,
-and it still acquires when the asset is already loaded — and every path that stops referencing it
-gives exactly one back (`unload_asset` is just `release_ref`; it destroys the payload and erases the
-registry entry only when the count reaches zero). Component observers are where this usually goes
-wrong: if `OnAdd` loads a UUID then `OnRemove` must unload it, and code that swaps a component's
-asset UUID for another has to release the old one _and_ acquire the new one. Never call the
-payload-level `unload_*` helpers or erase from `asset_registry` to force an unload — that strands
-every other holder on a freed slot.
+**Hold assets with `AssetHandle<T>` (`Asset/AssetHandle.hpp`), not a UUID.** A handle owns one
+reference: copying takes another, moving transfers it, destroying gives it back. Every asset field on
+an engine component is a handle, so flecs' copy, move and destructor hooks do the counting and no
+observer loads or unloads by hand.
 
-**Children count too.** `acquire_ref`/`release_ref` walk the asset's sub-assets: a `Model` refs its
-materials, a `Material` refs its five textures. So acquiring a model transitively acquires every
-texture beneath it, and holders don't ref sub-assets just to keep them alive — the parent already
-does. The one exception is a component field that names a sub-asset's UUID directly, like
-`MeshComponent::material_uuid`: the component owns a ref on whatever UUID it stores, whoever writes
-that field acquires it, and its `OnRemove` releases it (scene loading and the inspector already work
-this way). The count is doubled but balanced, so it still frees once both holders let go. Both
-functions carry their own `switch` over `AssetType`, so **an asset type that references other assets
-must be handled in both**, or its children leak (or get freed out from under it). Keep the existing
-ordering when you do: acquire takes its own ref first and releases collect children before dropping
-self, and both `reset()` the `ReadGuard` before recursing so the registry lock isn't held down the
-chain.
+- `AssetHandle<T>::acquire(uuid)` loads the asset if needed. `from_loaded(uuid)` never loads and holds a
+  reference only if the asset is already loaded; use it where a load could re-enter, such as spawning
+  from a model whose read guard is still held.
+- A handle takes a count only when the asset is loaded, but always keeps its UUID, so a scene still
+  saves a reference that failed to load.
+- `get()` reads the payload through the record, with no registry lookup. `payload_id()` gives the raw
+  slot-map id (a material's slot index is its GPU material index). `uuid()` and `is_loaded()` do what
+  they say.
+- To change a component's asset, assign a new handle; the old reference goes back on assignment. Never
+  `memcpy` a component that contains a handle. In C# handle fields are generated as
+  `readonly AssetId`, and scripts change them through native setters (`Decal.SetMaterial`,
+  `Audio.SetSound`).
+- A new component field that names an asset is an `AssetHandle<T>`, bound with `bind_asset_handle<T>` in
+  `Scene/Components.cpp` if the type is new. That reflects it as a UUID string in scene files, as an
+  asset field in the inspector and as `readonly AssetId` in C#.
+
+**Scene loading defers handle fields.** While a scene is read, a handle field only records its UUID
+(`AssetRef::set_unresolved`) and queues itself in `Scene::pending_asset_refs`. `load_requested_assets`
+loads every requested UUID in its existing order (models before their skeletons and clips, so no model
+loads twice), then each queued field takes over the reference its load took, and each component is
+marked modified once after its last field resolves. Any new path that deserializes components must end
+in `load_requested_assets`, or its handle fields stay empty.
+
+**Bare UUIDs are still counted by hand.** Code that holds an asset by UUID instead of a handle takes
+exactly one reference when it starts (`load_asset` does, unless `should_acquire = false`, even for an
+already loaded asset) and gives exactly one back when it stops (`unload_asset`, which is just
+`release_ref`; the payload is destroyed only at zero). Never call the payload-level `unload_*` helpers
+or erase from `asset_registry` to force an unload; that strands every other holder on a freed slot.
+
+**Children are held by the loaded asset, not counted per holder.** A loaded asset keeps one `AssetRef`
+on each asset its payload names (a material its textures, a model its materials, skeleton and clips, a
+clip its skeleton, a particle system its material and mesh) in `AssetManager::child_refs`.
+`hold_children` takes them when the asset is published (after a load, in `publish_model` and
+`publish_animation`), and `drop_children` gives them back after it unloads, outside every lock.
+`acquire_ref`/`release_ref` count only the asset itself.
+
+- A new asset type that references other assets adds its children to `child_uuids`, the one place that
+  lists them.
+- Code that writes child UUIDs into a loaded payload loads the new children without a reference, then
+  calls `hold_children`, which takes the new set before giving back the old, so a child that stays never
+  drops to zero. `set_material`, `edit_particle_system` and the material inspector work this way.
+- Payload structs keep their child UUIDs as plain data: `Material` and `AnimationClip` double as load
+  info, sidecar contents and ResourceCompiler values, where a handle would take references wherever it
+  is copied (and ResourceCompiler has no `App` to take them from). Don't put handles in payloads.
 
 ### Rendering
 
