@@ -493,8 +493,8 @@ static auto audio_set_sound(ecs_world_t* world, u64 entity, const OxAssetId* sou
   return OxStatus::Ok;
 }
 
-// a component whose `material` handle field scripts can't write, since the handle owns a reference
-template <typename Component>
+// a component's material handle, which scripts can't write themselves, since the handle owns a reference
+template <typename Component, AssetHandle<Material> Component::* field>
 static auto set_component_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
   ZoneScoped;
 
@@ -509,7 +509,7 @@ static auto set_component_material(ecs_world_t* world, u64 entity, const OxAsset
   }
 
   const auto uuid = to_uuid(*material);
-  if (uuid == component->material.uuid()) {
+  if (uuid == (component->*field).uuid()) {
     return OxStatus::Ok;
   }
 
@@ -536,17 +536,21 @@ static auto set_component_material(ecs_world_t* world, u64 entity, const OxAsset
   }
 
   auto updated = *component;
-  updated.material = std::move(handle);
+  updated.*field = std::move(handle);
   flecs::entity(world, entity).set<Component>(std::move(updated));
   return OxStatus::Ok;
 }
 
 static auto decal_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
-  return set_component_material<DecalComponent>(world, entity, material);
+  return set_component_material<DecalComponent, &DecalComponent::material>(world, entity, material);
 }
 
 static auto sprite_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
-  return set_component_material<SpriteComponent>(world, entity, material);
+  return set_component_material<SpriteComponent, &SpriteComponent::material>(world, entity, material);
+}
+
+static auto mesh_set_material(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus {
+  return set_component_material<MeshComponent, &MeshComponent::material_uuid>(world, entity, material);
 }
 
 static auto audio_one_shot(const OxAssetId* sound, f32 volume, const OxVec3* position) -> OxStatus {
@@ -903,6 +907,7 @@ auto fill_content_api(OxNativeApi& api) -> void {
   api.audio_one_shot = audio_one_shot;
   api.decal_set_material = decal_set_material;
   api.sprite_set_material = sprite_set_material;
+  api.mesh_set_material = mesh_set_material;
   api.scene_spawn = scene_spawn;
   api.scene_spawn_model = scene_spawn_model;
   api.scene_spawn_particles = scene_spawn_particles;

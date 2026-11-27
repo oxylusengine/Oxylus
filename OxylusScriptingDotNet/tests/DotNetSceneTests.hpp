@@ -961,6 +961,49 @@ TEST_F(DotNetSceneTest, SetsADecalsMaterialAndKeepsItsReferenceBalanced) {
   assets.unload_asset(paint);
 }
 
+TEST_F(DotNetSceneTest, SetsAMeshsMaterialAndKeepsItsReferenceBalanced) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_content_test";
+  ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
+
+  const auto paint = ox::UUID::generate_random();
+  const auto texture = ox::UUID::generate_random();
+  assets.register_asset(
+    paint,
+    ox::AssetType::Material,
+    root / "Materials/mesh_paint.mat",
+    root / "Materials/mesh_paint.mat"
+  );
+  assets.register_asset(
+    texture,
+    ox::AssetType::Texture,
+    root / "Textures/mesh_not_a_material.png",
+    root / "Textures/mesh_not_a_material.png"
+  );
+  assets.publish_texture(texture, ox::Texture{});
+  assets.set_pending_load_info(paint, ox::Material{});
+  // held by the test as well, so clearing the mesh's reference doesn't free the material out from under the probe
+  ASSERT_TRUE(assets.load_asset(paint));
+  ASSERT_EQ(assets.get_asset(paint)->ref_count, 1);
+
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.MeshMaterialProbe").has_value());
+  scene->runtime_start();
+
+  const auto expect_log = [](std::string_view message) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, message), 1) << message << "\n" << logs_text();
+  };
+  expect_log("mesh defaults material False");
+  expect_log("mesh set True refs 2");
+  expect_log("mesh set again refs 2");
+  expect_log("mesh refused texture True plain True kept True refs 2");
+  expect_log("mesh cleared False refs 1");
+  expect_log("mesh destroyed refs 1");
+
+  scene->runtime_stop();
+  EXPECT_EQ(assets.get_asset(paint)->ref_count, 1);
+  assets.unload_asset(paint);
+}
+
 TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   auto& assets = ox::App::mod<ox::AssetManager>();
   const auto content = material_assets();

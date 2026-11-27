@@ -610,6 +610,8 @@ struct OxNativeApi {
   auto (*decal_set_material)(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus = nullptr;
   // the same for the entity's SpriteComponent
   auto (*sprite_set_material)(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus = nullptr;
+  // the same for the entity's MeshComponent, where a default id goes back to the model's own material
+  auto (*mesh_set_material)(ecs_world_t* world, u64 entity, const OxAssetId* material) -> OxStatus = nullptr;
 
   // a scene's entities, with the TransformComponent and LayerComponent every scene entity has, 0 on failure
   auto (*scene_spawn)(ecs_world_t* world, OxStringView name, u64 parent) -> u64 = nullptr;

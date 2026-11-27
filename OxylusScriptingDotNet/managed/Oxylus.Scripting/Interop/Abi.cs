@@ -554,6 +554,7 @@ public unsafe struct NativeApi
 
     public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> DecalSetMaterial;
     public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> SpriteSetMaterial;
+    public delegate* unmanaged<nint, ulong, AssetId*, OxStatus> MeshSetMaterial;
 
     public delegate* unmanaged<nint, StringView, ulong, ulong> SceneSpawn;
     public delegate* unmanaged<nint, AssetId*, ulong, ulong> SceneSpawnModel;
