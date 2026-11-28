@@ -11,7 +11,7 @@ auto Model::is_mesh_ready(this const Model& self, usize mesh_index) -> bool {
   return self.mesh_ready[mesh_index].test(std::memory_order_acquire);
 }
 
-auto Model::destroy_gpu_resources(this Model& self, RenderContext& render_context) -> void {
+auto Model::destroy_gpu_resources(this const Model& self, RenderContext& render_context) -> void {
   for (const auto blas : self.mesh_blases) {
     if (blas != AccelerationStructureID::Invalid) {
       render_context.destroy_acceleration_structure(blas);
@@ -23,12 +23,9 @@ auto Model::destroy_gpu_resources(this Model& self, RenderContext& render_contex
       render_context.destroy_buffer(buffer);
     }
   }
-
-  self.mesh_blases.clear();
-  self.gpu_mesh_buffers.clear();
 }
 
-auto Model::is_fully_loaded(this Model& self) -> bool {
+auto Model::is_fully_loaded(this const Model& self) -> bool {
   return std::atomic_ref(self.pending_meshes).load(std::memory_order_acquire) == 0;
 }
 

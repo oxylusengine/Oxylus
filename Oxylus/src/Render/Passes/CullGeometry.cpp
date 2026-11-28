@@ -114,46 +114,56 @@ auto RendererInstance::skin_vertices(this RendererInstance& self, vir::Module& m
   auto& values = recording.values;
 
   auto& render_context = *self.renderer.render_context;
-  // jobs and the arena change per frame, so the dispatches go through a callback that reads them.
+  // the jobs and the arena change per frame, so the dispatch goes through a callback that reads them.
   // Positions and normals share one arena, and the shader writes them through two bound subranges
   // so it never has to write through a device address. Where they split moves with the vertex
   // total, which is why the callback binds them rather than the program
   const auto arena = values.skinned_vertices;
   const auto body = module.declare_callback_var("skin vertices", [&self, arena](vir::Recorder& recorder) -> void {
+    // 65535 is the smallest per-dimension workgroup limit Vulkan allows
+    constexpr auto MAX_GROUPS_X = 65535_u32;
+
     const auto& data = self.frame_data;
     const auto positions_bytes = static_cast<u64>(data.skinned_vertex_total) * sizeof(glm::u16vec4);
     const auto normals_bytes = static_cast<u64>(data.skinned_vertex_total) * sizeof(u32);
-    if (positions_bytes == 0) {
+    if (positions_bytes == 0 || data.skin_jobs.empty() || data.skin_group_count == 0) {
       return;
     }
 
     const auto vertices = recorder.buffer(arena);
+    const auto groups_x = std::min(data.skin_group_count, MAX_GROUPS_X);
+    const auto groups_y = (data.skin_group_count + groups_x - 1) / groups_x;
     recorder.bind_buffer(0, 3, vertices, 0, positions_bytes)
-      .bind_buffer(0, 4, vertices, positions_bytes, normals_bytes);
-    for (const auto& job : data.skin_jobs) {
-      recorder.push_constants(job).dispatch((job.vertex_count + 63) / 64, 1, 1);
-    }
+      .bind_buffer(0, 4, vertices, positions_bytes, normals_bytes)
+      .push_constants(GPU::SkinPush{.job_count = static_cast<u32>(data.skin_jobs.size()), .groups_x = groups_x})
+      .dispatch(groups_x, groups_y, 1);
   });
 
-  std::tie(values.meshes, values.mesh_instances, values.skinning_transforms, values.skinned_vertices) = std::tuple_cat(
-    module
-      .begin_compute(
-        {{values.meshes, vir::Access::ComputeRead},
-         // declared as written even though the shader only reads it: every consumer reaches the
-         // skinned vertices through the pointers in here and names only this buffer, so this edge is
-         // what orders them after the skinning
-         {values.mesh_instances, vir::Access::ComputeRW},
-         {values.skinning_transforms, vir::Access::ComputeRead},
-         {values.skinned_vertices, vir::Access::ComputeWrite}}
-      )
-      .with_name("skin vertices")
-      .bind_compute_pipeline(render_context.pipeline("skin_vertices"))
-      .bind_buffer(0, 0, values.meshes)
-      .bind_buffer(0, 1, values.mesh_instances)
-      .bind_buffer(0, 2, values.skinning_transforms)
-      .record_from(body)
-      .end_compute()
-  );
+  std::tie(
+    values.meshes,
+    values.mesh_instances,
+    values.skinning_transforms,
+    values.skin_jobs,
+    values.skinned_vertices
+  ) = std::tuple_cat(module
+                       .begin_compute(
+                         {{values.meshes, vir::Access::ComputeRead},
+                          // declared as written even though the shader only reads it: every consumer reaches the
+                          // skinned vertices through the pointers in here and names only this buffer, so this edge is
+                          // what orders them after the skinning
+                          {values.mesh_instances, vir::Access::ComputeRW},
+                          {values.skinning_transforms, vir::Access::ComputeRead},
+                          {values.skin_jobs, vir::Access::ComputeRead},
+                          {values.skinned_vertices, vir::Access::ComputeWrite}}
+                       )
+                       .with_name("skin vertices")
+                       .bind_compute_pipeline(render_context.pipeline("skin_vertices"))
+                       .bind_buffer(0, 0, values.meshes)
+                       .bind_buffer(0, 1, values.mesh_instances)
+                       .bind_buffer(0, 2, values.skinning_transforms)
+                       .bind_buffer(0, 5, values.skin_jobs)
+                       .record_from(body)
+                       .end_compute());
 }
 
 auto RendererInstance::cull_geometry(

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <icons/IconsMaterialDesignIcons.h>
+#include <imgui.h>
 #include <imgui_internal.h>
 #include <implot.h>
 #include <vir/Program.hpp>
@@ -489,14 +490,14 @@ auto Editor::sync_terrain_edits_asset(Scene& scene, const std::filesystem::path&
     auto edits_path = scene_path;
     edits_path.replace_extension(".oxterrain");
 
-    c.terrain_edits = asset_man.create_asset(AssetType::Terrain, edits_path);
-    // Takes the scene's one ref and loads the (still empty) payload the readback fills in.
-    scene.set_terrain_edits_ref(c.terrain_edits);
+    // loads the still empty payload the readback fills in, and the component holds its reference
+    c.terrain_edits = AssetHandle<TerrainEdits>::acquire(asset_man.create_asset(AssetType::Terrain, edits_path));
+    scene.terrain_edits_ref = c.terrain_edits.uuid();
   }
 
   scene.sync_terrain_edits();
 
-  auto asset = asset_man.get_asset(c.terrain_edits);
+  auto asset = asset_man.get_asset(c.terrain_edits.uuid());
 
   return asset ? App::get_vfs().to_physical(asset->path) : std::filesystem::path{};
 }
@@ -777,9 +778,10 @@ void Editor::draw_menubar(this Editor& self) {
         ImVec2(ImGui::GetMainViewport()->Size.x - UI::scale(10.0f) - ImGui::CalcTextSize(project_name.c_str()).x, 0)
       );
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
       ImGui::Button(project_name.c_str());
-      ImGui::PopStyleColor(2);
+      ImGui::PopStyleColor(3);
     }
 
     ImGui::EndMenuBar();

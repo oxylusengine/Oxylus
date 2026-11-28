@@ -217,6 +217,48 @@ public sealed class ContentProbe : SceneBehaviour
 
 // a model's materials and one material's parameters, against the assets TestDotNetScene registers. It leaves the
 // material pointing at textures a, b and c, and gives them up again when it stops
+// a MeshComponent's material override through Entity.Mesh, against the material and texture TestDotNetScene registers
+// for it. The mesh has no model, so nothing is drawn and only the reference counts move
+public sealed class MeshMaterialProbe : SceneBehaviour
+{
+    public override void OnStart()
+    {
+        var paint = Assets.Find("Materials/mesh_paint.mat");
+        var texture = Assets.Find("Textures/mesh_not_a_material.png");
+        var mesh = World.Spawn("Mesh").Add<MeshComponent>();
+        Log.Info($"mesh defaults material {mesh.Mesh.Material.IsValid}");
+
+        mesh.Mesh.SetMaterial(paint);
+        Log.Info($"mesh set {mesh.Mesh.Material == paint} refs {Assets.Info(paint).RefCount}");
+        mesh.Mesh.SetMaterial(paint);
+        Log.Info($"mesh set again refs {Assets.Info(paint).RefCount}");
+
+        var plain = World.Spawn("Plain");
+        Log.Info($"mesh refused texture {Throws(() => mesh.Mesh.SetMaterial(texture))} plain {Throws(() => plain.Mesh.SetMaterial(paint))} " +
+                 $"kept {mesh.Mesh.Material == paint} refs {Assets.Info(paint).RefCount}");
+
+        mesh.Mesh.SetMaterial(default);
+        Log.Info($"mesh cleared {mesh.Mesh.Material.IsValid} refs {Assets.Info(paint).RefCount}");
+
+        mesh.Mesh.SetMaterial(paint);
+        mesh.Destruct();
+        Log.Info($"mesh destroyed refs {Assets.Info(paint).RefCount}");
+    }
+
+    static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+}
+
 // a DecalComponent's material through Entity.Decal, against the material and texture TestDotNetScene registers for it
 public sealed class DecalProbe : SceneBehaviour
 {
@@ -1042,8 +1084,8 @@ public sealed class SpriteProbe : EntityBehaviour
         var b = second.Get<SpriteComponent>().Material;
         Log.Info($"sprite materials {a} {b} valid {a.IsValid && b.IsValid}");
 
-        first.Get<SpriteComponent>().Material = b;
-        second.Get<SpriteComponent>().Material = a;
+        first.Sprite.SetMaterial(b);
+        second.Sprite.SetMaterial(a);
         Log.Info("sprite swapped");
     }
 }

@@ -211,7 +211,10 @@ auto Scene::attach_cinematic(this Scene& self, flecs::entity entity) -> bool {
   const auto instance_it = self.entity_to_cinematic_instance_map.find(entity);
   if (instance_it == self.entity_to_cinematic_instance_map.end()) {
     const auto instance_id = self.cinematic_instances.create_slot(
-      CinematicInstance{.cinematic_uuid = player->cinematic_uuid}
+      CinematicInstance{
+        .cinematic_uuid = player->cinematic_uuid.uuid(),
+        .cinematic_id = static_cast<CinematicID>(player->cinematic_uuid.payload_id()),
+      }
     );
     self.entity_to_cinematic_instance_map.emplace(entity, instance_id);
 
@@ -223,8 +226,9 @@ auto Scene::attach_cinematic(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  if (instance->cinematic_uuid != player->cinematic_uuid) {
-    instance->cinematic_uuid = player->cinematic_uuid;
+  instance->cinematic_id = static_cast<CinematicID>(player->cinematic_uuid.payload_id());
+  if (instance->cinematic_uuid != player->cinematic_uuid.uuid()) {
+    instance->cinematic_uuid = player->cinematic_uuid.uuid();
     instance->current_time = 0.0f;
     // the old bindings stay until the rebind, which carries their restore values over
     instance->bound = false;
@@ -280,7 +284,7 @@ auto Scene::rebind_cinematic(this Scene& self, flecs::entity entity) -> void {
   instance->arc_luts.clear();
   instance->bound = false;
 
-  auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_uuid);
+  auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_id);
   if (!cinematic) {
     return;
   }
@@ -393,8 +397,9 @@ auto Scene::update_cinematics(this Scene& self, const f32 delta_time) -> void {
       }
 
       // a direct component write bypasses the observer, so the swap is caught here too
-      if (instance->cinematic_uuid != player->cinematic_uuid) {
-        instance->cinematic_uuid = player->cinematic_uuid;
+      instance->cinematic_id = static_cast<CinematicID>(player->cinematic_uuid.payload_id());
+      if (instance->cinematic_uuid != player->cinematic_uuid.uuid()) {
+        instance->cinematic_uuid = player->cinematic_uuid.uuid();
         instance->current_time = 0.0f;
         instance->bound = false;
       }
@@ -409,7 +414,7 @@ auto Scene::update_cinematics(this Scene& self, const f32 delta_time) -> void {
       continue;
     }
 
-    auto cinematic = asset_man.get_cinematic(instance->cinematic_uuid);
+    auto cinematic = asset_man.get_cinematic(instance->cinematic_id);
     if (!cinematic) {
       continue;
     }
@@ -506,7 +511,7 @@ auto Scene::play_cinematic(this Scene& self, flecs::entity entity) -> void {
   if (auto* instance = self.cinematic_instance(entity)) {
     // a one-shot that ran off the end is parked on its last frame, and resuming from there would
     // stop it again on the very next update
-    if (auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_uuid)) {
+    if (auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_id)) {
       if (!player->loop && !cinematic->loop && instance->current_time >= cinematic->duration) {
         instance->current_time = 0.0f;
       }
@@ -588,7 +593,7 @@ auto Scene::cinematic_duration(this Scene& self, flecs::entity entity) -> f32 {
     return 0.0f;
   }
 
-  auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_uuid);
+  auto cinematic = App::mod<AssetManager>().get_cinematic(instance->cinematic_id);
 
   return cinematic ? cinematic->duration : 0.0f;
 }

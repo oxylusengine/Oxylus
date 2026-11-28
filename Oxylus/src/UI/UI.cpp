@@ -237,10 +237,9 @@ bool UI::texture_property(
       const auto* p = PayloadData::from_payload(payload);
       const auto path = p->get_str();
       if (auto new_texture = import_callback ? import_callback(path) : UUID(nullptr)) {
-        if (asset_man.load_asset(new_texture, TextureLoadInfo{.is_srgb = is_srgb})) {
-          if (texture_uuid) {
-            asset_man.unload_asset(texture_uuid);
-          }
+        // loaded without a reference, the material holding the field takes its own, see
+        // AssetManager::hold_children
+        if (asset_man.load_asset(new_texture, TextureLoadInfo{.is_srgb = is_srgb}, false)) {
           texture_uuid = new_texture;
         }
       }

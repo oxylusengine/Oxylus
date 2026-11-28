@@ -39,6 +39,7 @@
 #include "Asset/AssetManager.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/App.hpp"
+#include "Core/JobManager.hpp"
 #include "Core/Option.hpp"
 #include "Core/VFS.hpp"
 #include "Memory/Stack.hpp"
@@ -142,6 +143,109 @@ auto wrap_clip_time(const f32 time, const f32 duration, const bool loop) -> f32 
   return std::fmod(std::fmod(time, duration) + duration, duration);
 }
 
+// samples, blends and skins one instance from the inputs `update_animations` settled on. Touches
+// nothing but the instance and its own slice of `skinning_transforms`, so instances run in parallel
+static auto evaluate_animation_instance(
+  AnimationInstance& instance, std::span<GPU::SkinningTransform> skinning_transforms
+) -> void {
+  ZoneScoped;
+
+  auto skeleton = instance.skeleton.get();
+  if (!skeleton || !skeleton->is_valid()) {
+    return;
+  }
+
+  instance.pose.skeleton = skeleton.value;
+  auto& task_system = instance.task_system;
+  task_system.reset();
+
+  // lock-free reads stay valid until the next commit, which is after the sampling below, so both clips
+  // of a crossfade can be read at once
+  const auto& evaluation = instance.evaluation;
+  auto is_sampled = false;
+  const auto clip = evaluation.has_clip ? instance.clip.get() : AssetView<AnimationClip>{};
+  if (clip && clip->skeleton_uuid == instance.skeleton.uuid()) {
+    auto task = task_system.register_sample(clip.value, evaluation.current_time);
+    const auto fade_from = evaluation.has_fade ? instance.fade_from_clip.get() : AssetView<AnimationClip>{};
+    if (fade_from && fade_from->skeleton_uuid == instance.skeleton.uuid()) {
+      const auto fade_task = task_system.register_sample(fade_from.value, evaluation.fade_from_time);
+      // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
+      task = task_system.register_blend(fade_task, task, evaluation.fade_weight);
+    }
+
+    if (task != INVALID_POSE_TASK) {
+      task_system.execute(*skeleton.value, instance.pose);
+      is_sampled = true;
+    }
+  }
+
+  if (!is_sampled) {
+    // not playing, no clip yet, or it failed to load, so fall back to the reference pose because
+    // leaving the skinning transforms untouched would collapse every vertex onto the origin
+    instance.pose.parent_space_transforms = skeleton->parent_space_reference_pose;
+    instance.pose.clear_model_space_transforms();
+    instance.pose.state = Pose::State::ReferencePose;
+  }
+
+  instance.pose.calculate_model_space_transforms();
+
+  // bone positions inflated by the model's widest bone influence: tight enough to cull with,
+  // loose enough to cover every pose the clip can reach
+  auto bounds_min = glm::vec3(std::numeric_limits<f32>::max());
+  auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
+  for (const auto& bone : instance.pose.model_space_transforms) {
+    bounds_min = glm::min(bounds_min, bone.translation());
+    bounds_max = glm::max(bounds_max, bone.translation());
+  }
+
+  // GPU::MeshBounds::aabb_extent is the full box size, not a half-extent (AABB::from_bounds
+  // halves it), so the influence radius contributes twice, once on each side
+  instance.bounds.aabb_center = (bounds_min + bounds_max) * 0.5f;
+  instance.bounds.aabb_extent = (bounds_max - bounds_min) + glm::vec3(2.0f * instance.influence_radius);
+
+  const auto writable = skinning_transforms.subspan(instance.bone_offset, instance.bone_count);
+  for (auto i = 0_u32; i < instance.bone_count; ++i) {
+    const auto skinning = instance.pose.model_space_transforms[i] * skeleton->inverse_bind_pose[i];
+    writable[i].rotation = {skinning.rotation.x, skinning.rotation.y, skinning.rotation.z, skinning.rotation.w};
+    writable[i].translation_scale = skinning.translation_scale;
+  }
+
+  instance.pose.skeleton = nullptr;
+}
+
+// shared by the main thread and the helper jobs. Held through an Arc, because a helper the pool
+// starts late only finds the chunks gone and never touches `instances`, which may be gone by then
+struct AnimationEvaluationBatch : ManagedObj {
+  std::span<AnimationInstance* const> instances = {};
+  std::span<GPU::SkinningTransform> skinning_transforms = {};
+  u32 chunk_size = 1;
+  u32 chunk_count = 0;
+  std::atomic<u32> next_chunk = 0;
+  std::atomic<u32> done_chunks = 0;
+};
+
+static auto run_animation_chunks(AnimationEvaluationBatch& batch) -> void {
+  ZoneScoped;
+
+  while (true) {
+    // relaxed is enough to hand out indices, `done_chunks` is what publishes the results
+    const auto chunk = batch.next_chunk.fetch_add(1, std::memory_order_relaxed);
+    if (chunk >= batch.chunk_count) {
+      return;
+    }
+
+    const auto first = static_cast<usize>(chunk) * batch.chunk_size;
+    const auto count = std::min<usize>(batch.chunk_size, batch.instances.size() - first);
+    for (auto* instance : batch.instances.subspan(first, count)) {
+      evaluate_animation_instance(*instance, batch.skinning_transforms);
+    }
+
+    if (batch.done_chunks.fetch_add(1, std::memory_order_acq_rel) + 1 == batch.chunk_count) {
+      batch.done_chunks.notify_all();
+    }
+  }
+}
+
 // the first skin under `node`, stopping at nested animators the same way relink_skinned_meshes_under
 // does
 static auto find_skin_skeleton(flecs::entity node) -> UUID {
@@ -152,7 +256,7 @@ static auto find_skin_skeleton(flecs::entity node) -> UUID {
     }
 
     if (const auto* skinned = child.try_get<SkinnedMeshComponent>(); skinned != nullptr && skinned->skeleton_uuid) {
-      result = skinned->skeleton_uuid;
+      result = skinned->skeleton_uuid.uuid();
       return;
     }
 
@@ -182,6 +286,180 @@ static auto unlink_skinned_mesh(Scene& scene, flecs::entity entity) -> void {
     mesh_instance->transform_id = transform_it->second;
   }
   scene.meshes_dirty = true;
+}
+
+// a rebuild covers every change, and a scene that never renders never applies the queue, so neither queues
+static auto is_queueing_mesh_instance_changes(Scene& scene) -> bool {
+  if (scene.get_renderer_instance() == nullptr || scene.meshes_dirty) {
+    return false;
+  }
+
+  // past this a rebuild is cheaper than replaying the changes one by one
+  const auto queued = scene.removed_mesh_instance_slots.size() + scene.added_mesh_instances.size();
+  if (queued > scene.gpu_mesh_instances.size() + 1024) {
+    scene.meshes_dirty = true;
+    scene.removed_mesh_instance_slots.clear();
+    scene.added_mesh_instances.clear();
+    return false;
+  }
+
+  return true;
+}
+
+static auto queue_mesh_instance_removal(Scene& scene, MeshInstanceID instance_id) -> void {
+  if (is_queueing_mesh_instance_changes(scene)) {
+    scene.removed_mesh_instance_slots.push_back(SlotMap_decode_id(instance_id).index);
+  }
+}
+
+static auto queue_mesh_instance_addition(Scene& scene, MeshInstanceID instance_id) -> void {
+  if (is_queueing_mesh_instance_changes(scene)) {
+    scene.added_mesh_instances.push_back(instance_id);
+  }
+}
+
+static auto is_skinned_gpu_mesh_instance(const Scene& scene, u32 gpu_index) -> bool {
+  const auto skinned_index = scene.gpu_mesh_instances[gpu_index].skinned_instance_index;
+  return skinned_index < scene.skinned_mesh_instances.size() &&
+         scene.skinned_mesh_instances[skinned_index].gpu_instance_index == gpu_index;
+}
+
+// the last model and material resolved, because instances of one model usually come one after another.
+// Lives for one `prepare_render`, as long as the view may be held
+struct MeshInstanceLookup {
+  UUID model_uuid = UUID(nullptr);
+  AssetView<Model> model = {};
+  ModelID model_id = ModelID::Invalid;
+  UUID material_uuid = UUID(nullptr);
+  MaterialID material_id = MaterialID::Invalid;
+};
+
+// appends one instance to the GPU tables, adding its mesh's entry on first use. Empty when the model is
+// gone, or when the entry no longer matches it (a reloaded model, or a mesh that finished uploading since),
+// which only a rebuild can fix because the entry's instances reserved their visibility ranges from it
+static auto append_gpu_mesh_instance(
+  Scene& scene, MeshInstanceLookup& lookup, u32 slot_index, const MeshInstance& mesh_instance
+) -> option<u32> {
+  auto& asset_man = App::mod<AssetManager>();
+  if (!lookup.model || lookup.model_uuid != mesh_instance.model_uuid) {
+    lookup.model.reset();
+    lookup.model_id = ModelID::Invalid;
+    {
+      // scoped, because `get_model` re-enters `get_asset` and the registry lock is not recursive
+      const auto model_asset = asset_man.get_asset(mesh_instance.model_uuid);
+      lookup.model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
+    }
+
+    lookup.model = asset_man.get_model(lookup.model_id);
+    lookup.model_uuid = mesh_instance.model_uuid;
+  }
+
+  const auto& model = lookup.model;
+  const auto model_id = lookup.model_id;
+  if (!model) {
+    return nullopt;
+  }
+
+  // a mesh's streamed fields are only written once its upload job sets its ready flag, so one still
+  // uploading reads as empty. Spawning attaches only ready meshes, this is the fallback
+  const auto is_mesh_ready = model->is_mesh_ready(mesh_instance.mesh_node_index);
+  const auto lod0_meshlet_count = is_mesh_ready ? model->lod0_meshlet_counts[mesh_instance.mesh_node_index] : 0_u32;
+  if (lookup.material_id == MaterialID::Invalid || lookup.material_uuid != mesh_instance.material_uuid) {
+    {
+      const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
+      lookup.material_id = material_asset ? material_asset->material_id : MaterialID::Invalid;
+    }
+
+    if (lookup.material_id == MaterialID::Invalid) {
+      lookup.material_id = asset_man.get_null_material()->material_id;
+    }
+
+    lookup.material_uuid = mesh_instance.material_uuid;
+  }
+
+  const auto material_id = lookup.material_id;
+
+  const auto source = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
+  auto mesh_index = 0_u32;
+  if (const auto it = scene.gpu_mesh_index_by_source.find(source); it != scene.gpu_mesh_index_by_source.end()) {
+    mesh_index = it->second;
+    const auto& mesh_source = scene.gpu_mesh_sources[mesh_index];
+    if (mesh_source.model_id != model_id || mesh_source.lod0_meshlet_count != lod0_meshlet_count) {
+      return nullopt;
+    }
+  } else {
+    mesh_index = static_cast<u32>(scene.gpu_meshes.size());
+    scene.gpu_meshes.emplace_back(is_mesh_ready ? model->gpu_meshes[mesh_instance.mesh_node_index] : GPU::Mesh{});
+    scene.gpu_mesh_sources.emplace_back(
+      Scene::GPUMeshSource{
+        .model_id = model_id,
+        .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
+        .lod0_meshlet_count = lod0_meshlet_count,
+      }
+    );
+    scene.gpu_mesh_blas_addresses.emplace_back(0_u64);
+    scene.gpu_mesh_index_by_source.emplace(source, mesh_index);
+    scene.is_gpu_meshes_changed = true;
+  }
+
+  // appended past every range in use, so its bits are still clear from the last reset
+  scene.gpu_mesh_instances.emplace_back(
+    GPU::MeshInstance{
+      .mesh_index = mesh_index,
+      .lod_index = 0,
+      .material_index = SlotMap_decode_id(material_id).index,
+      .transform_index = SlotMap_decode_id(mesh_instance.transform_id).index,
+      .meshlet_instance_visibility_offset = scene.max_meshlet_instance_count,
+      .flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows : GPU::MeshInstanceFlag::None,
+      .layer_mask = mesh_instance.layer_mask,
+    }
+  );
+  scene.max_meshlet_instance_count += lod0_meshlet_count;
+
+  const auto gpu_index = static_cast<u32>(scene.gpu_mesh_instances.size() - 1);
+  auto& index_by_slot = scene.gpu_mesh_instance_index_by_slot;
+  if (slot_index >= index_by_slot.size()) {
+    index_by_slot.resize(slot_index + 1, ~0_u32);
+  }
+
+  index_by_slot[slot_index] = gpu_index;
+  scene.gpu_mesh_instance_slot_by_index.push_back(slot_index);
+  return gpu_index;
+}
+
+// swaps the last entry into the hole. False when only a rebuild can remove it: a skinned entry's index is
+// also held by the skinned tables and its skinning job
+static auto remove_gpu_mesh_instance(Scene& scene, u32 slot_index) -> bool {
+  auto& index_by_slot = scene.gpu_mesh_instance_index_by_slot;
+  if (slot_index >= index_by_slot.size() || index_by_slot[slot_index] == ~0_u32) {
+    return true;
+  }
+
+  const auto hole = index_by_slot[slot_index];
+  if (hole >= scene.gpu_mesh_instances.size()) {
+    return false;
+  }
+
+  const auto last = static_cast<u32>(scene.gpu_mesh_instances.size() - 1);
+  if (is_skinned_gpu_mesh_instance(scene, hole) || is_skinned_gpu_mesh_instance(scene, last)) {
+    return false;
+  }
+
+  const auto mesh_index = scene.gpu_mesh_instances[hole].mesh_index;
+  scene.unused_meshlet_instance_count += scene.gpu_mesh_sources[mesh_index].lod0_meshlet_count;
+  if (hole != last) {
+    // the moved entry keeps its visibility range, so what culling learned about it carries over
+    scene.gpu_mesh_instances[hole] = scene.gpu_mesh_instances[last];
+    const auto moved_slot = scene.gpu_mesh_instance_slot_by_index[last];
+    scene.gpu_mesh_instance_slot_by_index[hole] = moved_slot;
+    index_by_slot[moved_slot] = hole;
+    scene.changed_mesh_instance_indices.push_back(hole);
+  }
+
+  scene.gpu_mesh_instances.pop_back();
+  scene.gpu_mesh_instance_slot_by_index.pop_back();
+  index_by_slot[slot_index] = ~0_u32;
+  return true;
 }
 
 static auto physics_debug_draw_enabled(const Scene& scene) -> bool {
@@ -215,6 +493,11 @@ struct JsonEntityDeserializer : IEntitySerializer {
   simdjson::ondemand::value json_value;
   memory::ScopedStack stack;
   std::vector<UUID> requested_assets = {};
+  // where the component being read lives, so a handle field can be found again once its asset loads
+  flecs::entity_t entity_id = 0;
+  flecs::entity_t component_id = 0;
+  const u8* component_data = nullptr;
+  std::vector<PendingAssetRef> pending_asset_refs = {};
 
   JsonEntityDeserializer(flecs::world& world_, simdjson::ondemand::value value_)
       : IEntitySerializer(world_),
@@ -442,6 +725,28 @@ struct JsonEntityDeserializer : IEntitySerializer {
       return;
     }
 
+    // loading here would ignore the scene's load order, so the field only names its asset for now
+    if (flecs::entity(world, field_type).has<AssetRefTag>()) {
+      auto result = field_result.get_string();
+      if (result.error()) {
+        return;
+      }
+
+      const auto uuid = UUID::from_string(result.value_unsafe()).value_or(UUID(nullptr));
+      static_cast<AssetRef*>(field_ptr)->set_unresolved(uuid);
+      if (uuid) {
+        requested_assets.push_back(uuid);
+        pending_asset_refs.push_back({
+          .entity = entity_id,
+          .component = component_id,
+          .offset = static_cast<u32>(static_cast<const u8*>(field_ptr) - component_data),
+          .uuid = uuid,
+        });
+      }
+
+      return;
+    }
+
     if (opaque_type == flecs::Bool) {
       auto result = field_result.get_bool();
       if (!result.error() && opaque_info->assign_bool) {
@@ -507,6 +812,36 @@ auto world_pose_to_local(flecs::entity entity, glm::vec3& position, glm::quat& r
   auto skew = glm::vec3{};
   auto perspective = glm::vec4{};
   glm::decompose(local, scale, rotation, position, skew, perspective);
+}
+
+// a body at rest blends between two equal poses, and mix/slerp of equal endpoints still drifts by an
+// ulp as alpha changes, so it is taken as is or the transform is re-dirtied every frame
+static auto blend_physics_pose(
+  const glm::vec3& previous_position,
+  const glm::quat& previous_rotation,
+  const glm::vec3& position,
+  const glm::quat& rotation,
+  const f32 alpha
+) -> std::pair<glm::vec3, glm::quat> {
+  if (previous_position == position && previous_rotation == rotation) {
+    return {position, rotation};
+  }
+
+  return {glm::mix(previous_position, position, alpha), glm::slerp(previous_rotation, rotation, alpha)};
+}
+
+// only an actual change is written, `modified` re-uploads the transform, re-dirties every child and
+// invalidates the cached shadow pages of a caster
+static auto write_physics_pose(flecs::entity entity, TransformComponent& tc, glm::vec3 position, glm::quat rotation)
+  -> void {
+  world_pose_to_local(entity, position, rotation);
+  if (position == tc.position && rotation == tc.rotation) {
+    return;
+  }
+
+  tc.position = position;
+  tc.rotation = rotation;
+  entity.modified<TransformComponent>();
 }
 
 auto Scene::safe_entity_name(this const Scene& self, std::string prefix, flecs::entity parent) -> std::string {
@@ -604,28 +939,19 @@ Scene::~Scene() {
   tearing_down = true;
 
   {
-    auto& asset_man = App::mod<AssetManager>();
-    for (const auto& [entity, emitter_id] : entity_particle_emitters_map) {
-      if (const auto* state = particle_emitters.slot(emitter_id); state && state->asset) {
-        asset_man.unload_asset(state->asset);
-      }
-    }
+    // the components' handles hold the particle systems' references and give them back with the world
     entity_particle_emitters_map.clear();
     particle_emitters.reset();
 
-    // the AnimatorComponent observer skips the instance while tearing down, so the crossfade ref
-    // it may still hold goes back here
-    animation_instances.for_each_active([&asset_man](usize, AnimationInstance& instance) {
-      if (instance.fade_from_clip_uuid) {
-        asset_man.unload_asset(instance.fade_from_clip_uuid);
-      }
-    });
+    // the AnimatorComponent observer skips the instance while tearing down, so the references its
+    // handles hold go back with the reset
     entity_to_animation_instance_map.clear();
     animation_instances.reset();
 
     entity_to_cinematic_instance_map.clear();
     cinematic_instances.reset();
 
+    auto& asset_man = App::mod<AssetManager>();
     for (const auto& spawn : pending_model_spawns) {
       if (spawn.hierarchy_spawned) {
         asset_man.unload_asset(spawn.model_uuid);
@@ -635,7 +961,7 @@ Scene::~Scene() {
   }
 
   destroy_terrain_collision();
-  set_terrain_edits_ref({});
+  terrain_edits_ref = UUID(nullptr);
   terrain.reset();
 
   for (auto& [_, script] : scripts) {
@@ -651,6 +977,10 @@ Scene::~Scene() {
   }
 
   rml_view.reset();
+
+  if (renderer_instance) {
+    renderer_instance->release_queries();
+  }
 
   // ecs_fini removes every entity still alive, and the observers that runs reach transforms, mesh_instances and the
   // rest, which are declared after the world and so would already be destroyed by the time its own destructor ran
@@ -694,41 +1024,28 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
-  // whoever writes the uuid owns the ref, the same way MeshComponent and AudioSourceComponent do:
-  // the spawner acquires, `from_json` acquires every deserialized uuid, and the inspector's asset
-  // field releases the old and takes the new, so only the release is keyed on component lifetime
   self.world.observer<AnimatorComponent>()
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, AnimatorComponent&) { self.attach_animator(it.entity(i)); });
 
   self.world.observer<AnimatorComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, AnimatorComponent& animator) {
+    .each([&self](flecs::iter& it, usize i, AnimatorComponent&) {
       // the instance maps are already destroyed when the world goes down, ~Scene released them
       if (!self.tearing_down) {
         self.detach_animator(it.entity(i));
       }
-
-      if (animator.clip_uuid) {
-        App::mod<AssetManager>().unload_asset(animator.clip_uuid);
-      }
     });
 
-  // same ownership rule as AnimatorComponent: whoever writes the uuid owns the ref, so only the
-  // release is keyed on component lifetime
   self.world.observer<CinematicPlayerComponent>()
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent&) { self.attach_cinematic(it.entity(i)); });
 
   self.world.observer<CinematicPlayerComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent& player) {
+    .each([&self](flecs::iter& it, usize i, CinematicPlayerComponent&) {
       if (!self.tearing_down) {
         self.detach_cinematic(it.entity(i));
-      }
-
-      if (player.cinematic_uuid) {
-        App::mod<AssetManager>().unload_asset(player.cinematic_uuid);
       }
     });
 
@@ -757,13 +1074,9 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
   self.world.observer<SkinnedMeshComponent>()
     .event(flecs::OnRemove)
-    .each([&self](flecs::iter& it, usize i, SkinnedMeshComponent& skinned) {
+    .each([&self](flecs::iter& it, usize i, SkinnedMeshComponent&) {
       if (!self.tearing_down) {
         unlink_skinned_mesh(self, it.entity(i));
-      }
-
-      if (skinned.skeleton_uuid) {
-        App::mod<AssetManager>().unload_asset(skinned.skeleton_uuid);
       }
     });
 
@@ -777,7 +1090,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       auto entity = it.entity(i);
 
       if (mc.model_uuid)
-        self.attach_mesh(entity, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+        self.attach_mesh(entity, mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
 
       if (auto id = self.get_entity_transform_id(entity)) {
         if (auto* transform = self.get_entity_transform(*id)) {
@@ -793,22 +1106,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .each([&self](flecs::iter& it, usize i, LayerComponent&, MeshComponent& mc) {
       if (mc.model_uuid) {
-        self.attach_mesh(it.entity(i), mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
-      }
-    });
-
-  // the general TransformComponent observer above owns world-transform propagation, so this one
-  // only refreshes mesh-local derived data, with MeshComponent a filter so mesh edits do not run it
-  self.world.observer<TransformComponent, MeshComponent>()
-    .term_at<MeshComponent>()
-    .filter()
-    .event(flecs::OnSet)
-    .each([&self](flecs::iter& it, usize i, TransformComponent&, MeshComponent& mc) {
-      auto entity = it.entity(i);
-      if (auto id = self.get_entity_transform_id(entity)) {
-        if (auto* transform = self.get_entity_transform(*id)) {
-          mc.world_aabb = mc.baked_aabb.get_transformed(transform->world);
-        }
+        self.attach_mesh(it.entity(i), mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
       }
     });
 
@@ -845,12 +1143,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       }
     });
 
+  // `resolve_transforms` refreshes the rect when the transform moves, so only sprite edits land here
   self.world.observer<TransformComponent, SpriteComponent>()
+    .term_at<TransformComponent>()
+    .filter()
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([&self](flecs::iter& it, usize i, TransformComponent&, SpriteComponent& sprite) {
       auto entity = it.entity(i);
-      // Set sprite rect
       if (auto id = self.get_entity_transform_id(entity)) {
         if (auto* transform = self.get_entity_transform(*id)) {
           sprite.rect = AABB(glm::vec3(-0.5, -0.5, -0.5), glm::vec3(0.5, 0.5, 0.5));
@@ -878,7 +1178,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           self.terrain.reset();
           self.terrain_entity = {};
           self.terrain_dirty = false;
-          self.set_terrain_edits_ref({});
+          self.terrain_edits_ref = UUID(nullptr);
         }
         return;
       }
@@ -894,7 +1194,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
 
       self.terrain_entity = entity;
       self.terrain_dirty = true;
-      self.set_terrain_edits_ref(c.terrain_edits);
+      self.terrain_edits_ref = c.terrain_edits.uuid();
     });
 
   self.world.observer<SpriteComponent>()
@@ -912,33 +1212,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      auto& asset_man = App::mod<AssetManager>();
-      c.material = asset_man.create_asset(AssetType::Material, {});
-      asset_man.load_asset(c.material);
+      c.material = AssetHandle<Material>::acquire(App::mod<AssetManager>().create_asset(AssetType::Material, {}));
     });
-
-  self.world.observer<SpriteComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, SpriteComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    if (it.event() == flecs::OnRemove) {
-      // Must not hold a registry read guard across unload_asset(): it takes the registry
-      // write lock (self-deadlock otherwise). unload_asset() no-ops on missing/unloaded.
-      asset_man.unload_asset(c.material);
-    }
-  });
-
-  self.world.observer<ColorGradingComponent>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter&, usize, ColorGradingComponent& c) {
-      if (c.lut) {
-        App::mod<AssetManager>().unload_asset(c.lut);
-      }
-    });
-
-  self.world.observer<DecalComponent>().event(flecs::OnRemove).each([](flecs::iter&, usize, DecalComponent& c) {
-    if (c.material) {
-      App::mod<AssetManager>().unload_asset(c.material);
-    }
-  });
 
   self.world.observer<AudioListenerComponent>()
     .event(flecs::OnSet)
@@ -952,8 +1227,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      auto audio_asset = asset_man.get_audio(c.audio_source);
+      auto audio_asset = c.audio_source.get();
       if (!audio_asset || !audio_asset->get_source())
         return;
 
@@ -964,19 +1238,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .event(flecs::OnSet)
     .event(flecs::OnAdd)
     .each([](flecs::iter& it, usize i, SpriteAnimationComponent& c) { c.reset(); });
-
-  self.world.observer<MeshComponent>().event(flecs::OnRemove).each([](flecs::iter& it, usize i, MeshComponent& c) {
-    auto& asset_man = App::mod<AssetManager>();
-    asset_man.unload_asset(c.model_uuid);
-    asset_man.unload_asset(c.material_uuid);
-  });
-
-  self.world.observer<AudioSourceComponent>()
-    .event(flecs::OnRemove)
-    .each([](flecs::iter& it, usize i, AudioSourceComponent& c) {
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.unload_asset(c.audio_source);
-    });
 
   self.world.observer<RigidBodyComponent>()
     .event(flecs::OnSet)
@@ -1044,7 +1305,6 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
     .each([&self](flecs::iter& it, usize i, ParticleSystemComponent& c) {
       ZoneScopedN("Particle system observer");
 
-      auto& asset_man = App::mod<AssetManager>();
       const auto entity = it.entity(i);
 
       if (it.event() == flecs::OnRemove) {
@@ -1057,18 +1317,8 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
           return;
         }
 
-        auto asset = UUID{};
-        if (const auto* state = self.particle_emitters.slot(emitter_it->second)) {
-          asset = state->asset;
-        }
-
         self.particle_emitters.destroy_slot(emitter_it->second);
         self.entity_particle_emitters_map.erase(emitter_it);
-
-        if (asset) {
-          asset_man.unload_asset(asset);
-        }
-
         return;
       }
 
@@ -1082,11 +1332,11 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      // whoever writes the uuid owns the ref, the same way MeshComponent and AudioSourceComponent
-      // do. acquiring here as well would double count every scene load, since `from_json` already
-      // acquires every deserialized asset uuid
-      if (state->asset != c.particle_system) {
-        state->asset = c.particle_system;
+      // the component's handle holds the reference, the emitter only names the asset. The id is taken on
+      // every set, the scene loader resolves the handle after the emitter first sees it
+      state->asset_id = static_cast<ParticleSystemID>(c.particle_system.payload_id());
+      if (state->asset != c.particle_system.uuid()) {
+        state->asset = c.particle_system.uuid();
         state->pool_valid = false;
         state->time = 0.0f;
         state->spawn_accumulator = 0.0f;
@@ -1122,8 +1372,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
   self.world.system<const TransformComponent, AudioSourceComponent>("audio_source_update")
     .kind(flecs::PreUpdate)
     .each([](const flecs::entity& e, const TransformComponent&, const AudioSourceComponent& ac) {
-      auto& asset_man = App::mod<AssetManager>();
-      auto audio = asset_man.get_audio(ac.audio_source);
+      auto audio = ac.audio_source.get();
       if (audio && audio->get_source()) {
         apply_audio_source(audio->get_source(), ac, e);
       }
@@ -1236,8 +1485,13 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const auto* body = static_cast<const JPH::Body*>(rb.runtime_body);
       const auto& body_interface = self.physics_system->GetBodyInterface();
 
-      if (!body_interface.IsActive(body->GetID()))
+      // a sleeping body holds its last pose, so the interpolation settles on it instead of blending
+      // between the last two active ticks forever
+      if (!body_interface.IsActive(body->GetID())) {
+        rb.previous_translation = rb.translation;
+        rb.previous_rotation = rb.rotation;
         return;
+      }
 
       const JPH::Vec3 position = body->GetPosition();
       const JPH::Quat rotation = body->GetRotation();
@@ -1260,16 +1514,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       if (!rb.runtime_body)
         return;
 
-      const f32 alpha = physics_alpha();
-
-      auto position = glm::mix(rb.previous_translation, rb.translation, alpha);
-      auto rotation = glm::slerp(rb.previous_rotation, rb.rotation, alpha);
-      world_pose_to_local(e, position, rotation);
-
-      tc.position = position;
-      tc.rotation = rotation;
-
-      e.modified<TransformComponent>();
+      const auto [position, rotation] = blend_physics_pose(
+        rb.previous_translation,
+        rb.previous_rotation,
+        rb.translation,
+        rb.rotation,
+        physics_alpha()
+      );
+      write_physics_pose(e, tc, position, rotation);
     });
 
   self.world.system<TransformComponent, CharacterControllerComponent>("character_controller_update")
@@ -1292,13 +1544,7 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      auto local_position = ch.translation;
-      auto local_rotation = ch.rotation;
-      world_pose_to_local(e, local_position, local_rotation);
-      tc.position = local_position;
-      tc.rotation = local_rotation;
-
-      e.modified<TransformComponent>();
+      write_physics_pose(e, tc, ch.translation, ch.rotation);
     });
 
   // declared after character_controller_update so a tick frame blends from the freshly recorded pair
@@ -1309,15 +1555,14 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         return;
       }
 
-      const f32 alpha = physics_alpha();
-      auto position = glm::mix(ch.previous_translation, ch.translation, alpha);
-      auto rotation = glm::slerp(ch.previous_rotation, ch.rotation, alpha);
-      world_pose_to_local(e, position, rotation);
-
-      tc.position = position;
-      tc.rotation = rotation;
-
-      e.modified<TransformComponent>();
+      const auto [position, rotation] = blend_physics_pose(
+        ch.previous_translation,
+        ch.previous_rotation,
+        ch.translation,
+        ch.rotation,
+        physics_alpha()
+      );
+      write_physics_pose(e, tc, position, rotation);
     });
 
   // -- Renderer Systems ---
@@ -1330,27 +1575,36 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
         Camera::update(cc, tc, ri->get_viewport_size());
     });
 
-  self.world.system<SpriteComponent>("sprite_aabb")
+  // the cvar is checked once per frame rather than per entity, and an iterator left unfinished has to
+  // be finalized or its tables stay locked
+  const auto draw_bounding_boxes = [&self](flecs::iter& it) {
+    if (!self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
+      it.fini();
+      return;
+    }
+
+    while (it.next()) {
+      it.each();
+    }
+  };
+
+  self.world.system<const SpriteComponent>("sprite_aabb")
     .kind(flecs::PostUpdate)
-    .each([&self](const flecs::entity entity, SpriteComponent& sprite) {
-      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
-        self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1, 1, 1, 1.0f));
-      }
+    .run(draw_bounding_boxes, [&self](const SpriteComponent& sprite) {
+      self.debug_renderer.draw_aabb(sprite.rect, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
     });
 
-  self.world.system<MeshComponent>("mesh_aabb")
+  self.world.system<const MeshComponent>("mesh_aabb")
     .kind(flecs::PostUpdate)
-    .each([&self](const flecs::entity entity, MeshComponent& mc) {
-      if (self.renderer_cvar.cvar_draw_bounding_boxes.get()) {
-        self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.f, 1.f, 0.f, 1.0f));
-      }
+    .run(draw_bounding_boxes, [&self](const MeshComponent& mc) {
+      self.debug_renderer.draw_aabb(mc.world_aabb, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
     });
 
   self.world.system<SpriteComponent, SpriteAnimationComponent>("sprite_animation_update")
     .kind(flecs::PostUpdate)
     .each([](flecs::iter& it, size_t, SpriteComponent& sprite, SpriteAnimationComponent& sprite_animation) {
       auto& asset_manager = App::mod<AssetManager>();
-      auto material = asset_manager.get_material(sprite.material);
+      auto material = sprite.material.get();
 
       if (
         sprite_animation.num_frames < 1 || sprite_animation.fps < 1 || sprite_animation.columns < 1 || !material ||
@@ -1387,14 +1641,15 @@ auto Scene::init(this Scene& self, const std::string& name) -> void {
       const u32 frame_y = frame / sprite_animation.columns;
 
       const auto albedo_texture = asset_manager.get_texture(material->albedo_texture);
-      auto& uv_size = material->uv_size;
+      if (!albedo_texture) {
+        return;
+      }
 
-      auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
-      uv_size = {
-        sprite_animation.frame_size[0] * 1.f / texture_size[0],
-        sprite_animation.frame_size[1] * 1.f / texture_size[1]
-      };
-      material->uv_offset = material->uv_offset + glm::vec2{uv_size.x * frame_x, uv_size.y * frame_y};
+      // the frame lives on the sprite, the material is shared and never edited from here
+      const auto texture_size = glm::vec2(albedo_texture->get_extent().width, albedo_texture->get_extent().height);
+      const auto frame_uv_size = sprite_animation.frame_size / texture_size;
+      sprite_animation.frame_uv_size = frame_uv_size;
+      sprite_animation.frame_uv_offset = frame_uv_size * glm::vec2(frame_x, frame_y);
     });
 
   // after every engine system, so systems the runtime registers run after the engine's within a phase
@@ -1517,7 +1772,6 @@ auto Scene::runtime_start(this Scene& self) -> void {
   );
 
   if (App::has_mod<AudioEngine>()) {
-    auto& asset_man = App::mod<AssetManager>();
     auto& audio_engine = App::mod<AudioEngine>();
     self.world.query_builder<const AudioSourceComponent>().build().each(
       [&](flecs::entity e, const AudioSourceComponent& ac) {
@@ -1525,7 +1779,7 @@ auto Scene::runtime_start(this Scene& self) -> void {
           return;
         }
 
-        auto audio = asset_man.get_audio(ac.audio_source);
+        auto audio = ac.audio_source.get();
         if (!audio || !audio->get_source()) {
           return;
         }
@@ -1553,10 +1807,9 @@ auto Scene::runtime_stop(this Scene& self) -> void {
 
   // the play scene shares each asset's sound with the edit scene, so it would keep playing after stop
   if (App::has_mod<AudioEngine>()) {
-    auto& asset_man = App::mod<AssetManager>();
     auto& audio_engine = App::mod<AudioEngine>();
     self.world.query_builder<const AudioSourceComponent>().build().each([&](const AudioSourceComponent& ac) {
-      auto audio = asset_man.get_audio(ac.audio_source);
+      auto audio = ac.audio_source.get();
       if (audio && audio->get_source()) {
         audio_engine.stop_source(audio->get_source());
       }
@@ -1606,6 +1859,9 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
   // clips only play when the scene runs, which `update_animations` decides for itself
   self.update_animations(delta_time.get_seconds());
 
+  // before the terrain bake below, which reads its entity's world matrix
+  self.resolve_transforms();
+
   if (physics_debug_draw_enabled(self)) {
     App::mod<Physics>().debug_renderer->draw(*self.physics_system, self.debug_renderer);
   } else {
@@ -1640,16 +1896,66 @@ auto Scene::runtime_update(this Scene& self, const Timestep& delta_time) -> void
 auto Scene::prepare_render(this Scene& self) -> void {
   ZoneScoped;
 
+  // anything edited since the update, like the editor's inspector and gizmo, is still only queued
+  self.resolve_transforms();
+
   if (self.renderer_instance) {
+    // dies with this scope, and the renderer copies what it keeps out of `update_info`
+    memory::ScopedStack stack;
     auto& asset_man = App::mod<AssetManager>();
-    auto meshlet_instance_visibility_offset = 0_u32;
-    auto max_meshlet_instance_count = 0_u32;
     auto& gpu_meshes = self.gpu_meshes;
     // Parallel to `gpu_meshes`, so the TLAS build can look a BLAS up by mesh index.
     auto& blas_addresses = self.gpu_mesh_blas_addresses;
     auto& mesh_sources = self.gpu_mesh_sources;
     auto& gpu_mesh_instances = self.gpu_mesh_instances;
-    auto mesh_slot_to_gpu_index = ankerl::unordered_dense::map<u32, u32>();
+    auto& gpu_index_by_slot = self.gpu_mesh_instance_index_by_slot;
+
+    // removals first, so an add that reuses a removed instance's slot finds it free
+    if (!self.meshes_dirty) {
+      for (const auto slot_index : self.removed_mesh_instance_slots) {
+        if (!remove_gpu_mesh_instance(self, slot_index)) {
+          self.meshes_dirty = true;
+          break;
+        }
+      }
+
+      // past half, a rebuild is cheaper than carrying a visibility mask that is mostly holes
+      if (self.unused_meshlet_instance_count * 2 > self.max_meshlet_instance_count) {
+        self.meshes_dirty = true;
+      }
+
+      auto lookup = MeshInstanceLookup();
+      for (const auto instance_id : self.added_mesh_instances) {
+        if (self.meshes_dirty) {
+          break;
+        }
+
+        const auto* mesh_instance = self.mesh_instances.slotc(instance_id);
+        if (mesh_instance == nullptr) {
+          continue;
+        }
+
+        const auto slot_index = static_cast<u32>(SlotMap_decode_id(instance_id).index);
+        if (slot_index < gpu_index_by_slot.size() && gpu_index_by_slot[slot_index] != ~0_u32) {
+          continue;
+        }
+
+        const auto gpu_index = mesh_instance->animator_entity == 0
+                                 ? append_gpu_mesh_instance(self, lookup, slot_index, *mesh_instance)
+                                 : nullopt;
+        if (!gpu_index.has_value()) {
+          self.meshes_dirty = true;
+          break;
+        }
+
+        self.changed_mesh_instance_indices.push_back(*gpu_index);
+      }
+
+      self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
+    }
+
+    self.removed_mesh_instance_slots.clear();
+    self.added_mesh_instances.clear();
     const auto meshes_were_dirty = self.meshes_dirty;
 
     if (self.meshes_dirty) {
@@ -1657,97 +1963,58 @@ auto Scene::prepare_render(this Scene& self) -> void {
       blas_addresses.clear();
       mesh_sources.clear();
       gpu_mesh_instances.clear();
+      self.gpu_mesh_index_by_source.clear();
+      self.gpu_mesh_instance_slot_by_index.clear();
+      self.changed_mesh_instance_indices.clear();
       self.skinned_mesh_instances.clear();
       self.skinned_vertex_total = 0;
-      auto mesh_instances = self.mesh_instances.slots_unsafe();
-      auto unique_mesh_to_gpu_mesh = ankerl::unordered_dense::map<std::pair<UUID, usize>, u32>();
+      self.max_meshlet_instance_count = 0;
+      self.unused_meshlet_instance_count = 0;
+      gpu_index_by_slot.assign(self.mesh_instances.capacity(), ~0_u32);
 
+      auto lookup = MeshInstanceLookup();
       self.mesh_instances.for_each_active([&](usize index, const MeshInstance& mesh_instance) {
-        auto model_id = ModelID::Invalid;
-        {
-          // scoped, because `get_model` re-enters `get_asset` and the registry lock is not recursive
-          const auto model_asset = asset_man.get_asset(mesh_instance.model_uuid);
-          model_id = model_asset ? model_asset->model_id : ModelID::Invalid;
+        const auto gpu_index = append_gpu_mesh_instance(self, lookup, static_cast<u32>(index), mesh_instance);
+        if (!gpu_index.has_value()) {
+          return;
         }
-        const auto model = asset_man.get_model(model_id);
-        const auto& mesh = model->gpu_meshes[mesh_instance.mesh_node_index];
-        const auto material_asset = asset_man.get_asset(mesh_instance.material_uuid);
-        const auto material_id = material_asset ? material_asset->material_id
-                                                : asset_man.get_null_material()->material_id;
-
-        auto unique_mesh = std::pair(mesh_instance.model_uuid, mesh_instance.mesh_node_index);
-        auto mesh_index = 0_u32;
-        if (auto it = unique_mesh_to_gpu_mesh.find(unique_mesh); it != unique_mesh_to_gpu_mesh.end()) {
-          mesh_index = it->second;
-        } else {
-          mesh_index = static_cast<u32>(gpu_meshes.size());
-          gpu_meshes.emplace_back(mesh);
-          mesh_sources.emplace_back(
-            GPUMeshSource{
-              .model_id = model_id,
-              .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
-            }
-          );
-          blas_addresses.emplace_back(0_u64);
-          unique_mesh_to_gpu_mesh.emplace(unique_mesh, mesh_index);
-        }
-
-        auto lod0_index = 0;
-        const auto lod0_meshlet_count = model->lod0_meshlet_counts[mesh_instance.mesh_node_index];
-
-        auto& gpu_mesh_instance = gpu_mesh_instances.emplace_back();
-        gpu_mesh_instance.mesh_index = mesh_index;
-        gpu_mesh_instance.lod_index = lod0_index;
-        gpu_mesh_instance.material_index = SlotMap_decode_id(material_id).index;
-        gpu_mesh_instance.transform_index = SlotMap_decode_id(mesh_instance.transform_id).index;
-        gpu_mesh_instance.meshlet_instance_visibility_offset = meshlet_instance_visibility_offset;
-        gpu_mesh_instance.flags = mesh_instance.cast_shadows ? GPU::MeshInstanceFlag::CastShadows
-                                                             : GPU::MeshInstanceFlag::None;
-        gpu_mesh_instance.layer_mask = mesh_instance.layer_mask;
-
-        const auto gpu_index = static_cast<u32>(gpu_mesh_instances.size() - 1);
-        mesh_slot_to_gpu_index[static_cast<u32>(index)] = gpu_index;
 
         const auto animator = self.world.entity(mesh_instance.animator_entity);
         const auto animation_it = mesh_instance.animator_entity != 0
                                     ? self.entity_to_animation_instance_map.find(animator)
                                     : self.entity_to_animation_instance_map.end();
 
+        auto& gpu_mesh_instance = gpu_mesh_instances[*gpu_index];
+        const auto& mesh = gpu_meshes[gpu_mesh_instance.mesh_index];
         if (animation_it != self.entity_to_animation_instance_map.end() && mesh.skin_joint_indices != 0) {
           gpu_mesh_instance.skinned_instance_index = static_cast<u32>(self.skinned_mesh_instances.size());
           self.skinned_mesh_instances.emplace_back(
             SkinnedMeshInstance{
-              .gpu_instance_index = gpu_index,
+              .gpu_instance_index = *gpu_index,
               .vertex_count = mesh.vertex_count,
               .vertex_offset = self.skinned_vertex_total,
               .mesh_instance_slot = static_cast<u32>(index),
-              .model_id = model_id,
+              .model_id = mesh_sources[gpu_mesh_instance.mesh_index].model_id,
               .mesh_node_index = static_cast<u32>(mesh_instance.mesh_node_index),
               .animation_instance_id = animation_it->second,
             }
           );
           self.skinned_vertex_total += mesh.vertex_count;
         }
-
-        meshlet_instance_visibility_offset += lod0_meshlet_count;
-        max_meshlet_instance_count += lod0_meshlet_count;
       });
 
       self.gpu_mesh_instance_count = static_cast<u32>(gpu_mesh_instances.size());
-      self.max_meshlet_instance_count = max_meshlet_instance_count;
-    } else if (!self.dirty_mesh_instances.empty()) {
-      u32 gpu_idx = 0;
-      self.mesh_instances.for_each_active([&](usize slot_index, const MeshInstance&) {
-        mesh_slot_to_gpu_index[static_cast<u32>(slot_index)] = gpu_idx++;
-      });
     }
 
-    auto dirty_mesh_instance_gpu_indices = std::vector<u32>();
-    dirty_mesh_instance_gpu_indices.reserve(self.dirty_mesh_instances.size() + self.skinned_mesh_instances.size());
+    // every dirty instance, plus at most one entry per skinned instance below
+    auto dirty_mesh_instance_gpu_indices = stack.alloc<u32>(
+      self.dirty_mesh_instances.size() + self.skinned_mesh_instances.size()
+    );
+    auto dirty_mesh_instance_count = 0_sz;
     for (const auto mesh_instance_id : self.dirty_mesh_instances) {
       const auto slot_index = SlotMap_decode_id(mesh_instance_id).index;
-      if (const auto it = mesh_slot_to_gpu_index.find(slot_index); it != mesh_slot_to_gpu_index.end()) {
-        dirty_mesh_instance_gpu_indices.push_back(it->second);
+      if (slot_index < gpu_index_by_slot.size() && gpu_index_by_slot[slot_index] != ~0_u32) {
+        dirty_mesh_instance_gpu_indices[dirty_mesh_instance_count++] = gpu_index_by_slot[slot_index];
       }
     }
 
@@ -1757,9 +2024,10 @@ auto Scene::prepare_render(this Scene& self) -> void {
     auto any_skinned_advanced = false;
     {
       auto cached_model_id = ModelID::Invalid;
-      auto cached_model = ReadGuard<Model>();
+      auto cached_model = AssetView<Model>();
       for (auto& skinned : self.skinned_mesh_instances) {
         skinned.pose_advanced = false;
+        skinned.needs_skinning = false;
 
         const auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id);
         if (animation_instance == nullptr || skinned.gpu_instance_index >= gpu_mesh_instances.size()) {
@@ -1779,40 +2047,53 @@ auto Scene::prepare_render(this Scene& self) -> void {
           cached_model_id = skinned.model_id;
         }
 
+        const auto is_mesh_ready = cached_model && cached_model->is_mesh_ready(skinned.mesh_node_index);
         skinned.index_address = 0;
         skinned.index_count = 0;
-        if (
-          cached_model && skinned.mesh_node_index < cached_model->lod0_index_ranges.size() &&
-          cached_model->is_mesh_ready(skinned.mesh_node_index)
-        ) {
+        if (is_mesh_ready && skinned.mesh_node_index < cached_model->lod0_index_ranges.size()) {
           const auto& range = cached_model->lod0_index_ranges[skinned.mesh_node_index];
           skinned.index_address = range.device_address;
           skinned.index_count = range.count;
         }
 
+        // a still pose keeps its skinned vertices, except that the first frame its mesh is ready
+        // skins once more, because every earlier run may have read vertices still uploading
+        skinned.needs_skinning = skinned.pose_advanced || !skinned.is_skinned_from_ready_mesh;
+        skinned.is_skinned_from_ready_mesh = is_mesh_ready;
+
         if (animation_instance->advanced) {
           any_skinned_advanced = true;
           if (gpu_mesh_instances[skinned.gpu_instance_index].flags & GPU::MeshInstanceFlag::CastShadows) {
-            dirty_mesh_instance_gpu_indices.push_back(skinned.gpu_instance_index);
+            dirty_mesh_instance_gpu_indices[dirty_mesh_instance_count++] = skinned.gpu_instance_index;
           }
+        }
+      }
+
+      // cleared here and not in update_animations, so a pose that changed on a tick nothing rendered
+      // still reaches the GPU. One animator can drive several meshes, hence after the whole loop
+      for (const auto& skinned : self.skinned_mesh_instances) {
+        if (auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id)) {
+          animation_instance->advanced = false;
         }
       }
     }
 
     // a BLAS address is a raw pointer the TLAS build dereferences, and nothing promises that whatever
     // moves one also raises `meshes_dirty`, so the table is re-read from the models every frame
-    // instead of being captured once at rebuild
-    {
-      auto& render_context = App::get_rendercontext();
+    // instead of being captured once at rebuild. Only while something traces, because the TLAS build is
+    // its one reader and this runs before the renderer uploads it, so a frame that starts tracing
+    // refreshes whatever went stale meanwhile
+    auto& render_context = App::get_rendercontext();
+    const auto is_tracing = render_context.use_ray_tracing() &&
+                            self.renderer_instance->tlas_has_consumer(self.renderer_cvar);
+    if (is_tracing) {
       // static structures are built only once something traces against the TLAS, and a mesh still
       // without one keeps address zero, which leaves its instances out of the TLAS
-      const auto is_tracing = render_context.use_ray_tracing() &&
-                              self.renderer_instance->tlas_has_consumer(self.renderer_cvar);
       auto build_budget = StaticBLASBudget{
         .triangle_budget = static_cast<u64>(std::max(0, self.renderer_cvar.cvar_rt_static_build_budget.get())),
       };
       auto cached_model_id = ModelID::Invalid;
-      auto cached_model = ReadGuard<Model>();
+      auto cached_model = AssetView<Model>();
       for (const auto& [source, address] : std::views::zip(mesh_sources, blas_addresses)) {
         if (source.model_id != cached_model_id) {
           cached_model.reset();
@@ -1824,7 +2105,7 @@ auto Scene::prepare_render(this Scene& self) -> void {
                                    render_context,
                                    *cached_model.value,
                                    source.mesh_node_index,
-                                   is_tracing ? &build_budget : nullptr
+                                   &build_budget
                                  )
                                : 0_u64;
       }
@@ -1832,24 +2113,27 @@ auto Scene::prepare_render(this Scene& self) -> void {
     // Upload this frame's dirty transforms plus last frame's: the `previous_world` fix-up below
     // runs after the upload, so a transform's corrected previous matrix only reaches the GPU on the
     // following frame. Duplicates are collapsed inside the uploader.
-    auto transform_upload_ids = self.dirty_transforms;
-    transform_upload_ids.insert(
-      transform_upload_ids.end(),
-      self.previously_dirty_transforms.begin(),
-      self.previously_dirty_transforms.end()
+    auto transform_upload_ids = stack.alloc<GPU::TransformID>(
+      self.dirty_transforms.size() + self.previously_dirty_transforms.size()
+    );
+    std::ranges::copy(
+      self.previously_dirty_transforms,
+      std::ranges::copy(self.dirty_transforms, transform_upload_ids.begin()).out
     );
 
     auto update_info = RendererInstanceUpdateInfo{
       .mesh_instance_count = self.gpu_mesh_instance_count,
       .max_meshlet_instance_count = self.max_meshlet_instance_count,
       .meshes_dirty = meshes_were_dirty,
-      .mesh_instances_dirty = meshes_were_dirty || any_skinned_advanced,
+      .skinned_mesh_instances_dirty = any_skinned_advanced,
       .dirty_transform_ids = transform_upload_ids,
       .gpu_transforms = self.transforms.slots_unsafe(),
       .gpu_meshes = gpu_meshes,
       .gpu_mesh_blas_addresses = blas_addresses,
       .gpu_mesh_instances = gpu_mesh_instances,
-      .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices,
+      .dirty_mesh_instance_indices = dirty_mesh_instance_gpu_indices.first(dirty_mesh_instance_count),
+      .changed_mesh_instance_indices = self.changed_mesh_instance_indices,
+      .is_gpu_meshes_changed = self.is_gpu_meshes_changed,
       .skinned_mesh_instances = self.skinned_mesh_instances,
       .skinning_transforms = self.skinning_transforms,
       .skinned_vertex_total = self.skinned_vertex_total,
@@ -2047,7 +2331,7 @@ auto Scene::create_entity(const std::string& name, bool safe_naming) const -> fl
   return e.add<TransformComponent>().add<LayerComponent>();
 }
 
-auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSpawn& spawn) -> flecs::entity {
+auto Scene::spawn_model_hierarchy(this Scene& self, const Model& model, PendingModelSpawn& spawn) -> flecs::entity {
   ZoneScoped;
 
   const auto& root_node = model.mesh_groups.front();
@@ -2100,15 +2384,9 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
 
   if (model.skeleton_uuid) {
     const auto clip_uuid = model.animations.empty() ? UUID(nullptr) : model.animations.front();
-    if (clip_uuid) {
-      // acquire_ref, not load_asset: the clip was published by the model load this is spawning
-      // from, and load_asset would re-enter load_model while the caller still holds a read guard
-      // on the model
-      auto& asset_man = App::mod<AssetManager>();
-      asset_man.acquire_ref(asset_man.get_asset(clip_uuid));
-    }
-
-    root_entity.set<AnimatorComponent>({.clip_uuid = clip_uuid});
+    // from_loaded, not acquire: the clip was published by the model load this is spawning from, and
+    // loading would re-enter load_model while the caller still holds a read guard on the model
+    root_entity.set<AnimatorComponent>({.clip_uuid = AssetHandle<AnimationClip>::from_loaded(clip_uuid)});
   }
 
   emit_group_contents(root_entity, root_node, 0);
@@ -2146,7 +2424,7 @@ auto Scene::spawn_model_hierarchy(this Scene& self, Model& model, PendingModelSp
   return root_entity;
 }
 
-auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
+auto Scene::resolve_mesh_spawn(this Scene& self, const Model& model, const PendingModelSpawn::MeshEntity& mesh_entity)
   -> MeshSpawnInfo {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -2172,25 +2450,20 @@ auto Scene::resolve_mesh_spawn(this Scene& self, Model& model, const PendingMode
 auto Scene::spawn_model_mesh_entity(this Scene& self, const UUID& model_uuid, const MeshSpawnInfo& info) -> void {
   ZoneScoped;
 
-  // the MeshComponent OnRemove observer releases once per mesh entity, so each one holds its own refs.
-  // the material is the model's own, but the component names it and the inspector swaps it as an
-  // owned ref, so it counts as one here too
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.acquire_ref(asset_man.get_asset(model_uuid));
-  asset_man.acquire_ref(asset_man.get_asset(info.material_uuid));
-
+  // every mesh entity holds its own references. The material is the model's own, but the component
+  // names it and the inspector swaps it, so it holds one too. from_loaded, because both were loaded by
+  // the model this spawns from
   auto entity = self.create_entity(self.safe_entity_name(info.name, info.parent), false);
   entity.set<TransformComponent>({});
   // before MeshComponent: attach_mesh reads it to decide which transform the instance follows
   if (info.skeleton_uuid) {
-    asset_man.acquire_ref(asset_man.get_asset(info.skeleton_uuid));
-    entity.set<SkinnedMeshComponent>({.skeleton_uuid = info.skeleton_uuid});
+    entity.set<SkinnedMeshComponent>({.skeleton_uuid = AssetHandle<Skeleton>::from_loaded(info.skeleton_uuid)});
   }
   entity.child_of(info.parent);
   entity.set<MeshComponent>({
-    .model_uuid = model_uuid,
+    .model_uuid = AssetHandle<Model>::from_loaded(model_uuid),
     .mesh_index = static_cast<u32>(info.mesh_index),
-    .material_uuid = info.material_uuid,
+    .material_uuid = AssetHandle<Material>::from_loaded(info.material_uuid),
     .baked_aabb = info.aabb,
   });
   entity.modified<TransformComponent>();
@@ -2281,13 +2554,14 @@ auto Scene::create_particle_system_entity(this Scene& self, const UUID& asset_uu
     }
   }
 
-  if (!asset_man.load_asset(asset_uuid)) {
+  auto particle_system = AssetHandle<ParticleSystem>::acquire(asset_uuid);
+  if (!particle_system.is_loaded()) {
     return {};
   }
 
   auto entity = self.create_entity(name, true);
   entity.set<ParticleSystemComponent>(ParticleSystemComponent{
-    .particle_system = asset_uuid,
+    .particle_system = std::move(particle_system),
   });
 
   return entity;
@@ -2390,55 +2664,102 @@ auto Scene::get_local_transform(flecs::entity entity) -> glm::mat4 {
 }
 
 auto Scene::set_dirty(this Scene& self, flecs::entity entity) -> void {
+  OX_ASSERT(entity.has<TransformComponent>());
+  self.pending_transform_entities.push_back(entity.id());
+}
+
+auto Scene::resolve_transforms(this Scene& self) -> void {
   ZoneScoped;
 
-  auto visit_parent = [](this auto& visitor, Scene& s, flecs::entity e) -> glm::mat4 {
-    auto local_mat = glm::mat4(1.0f);
-    if (e.has<TransformComponent>()) {
-      local_mat = s.get_local_transform(e);
-    }
-
-    auto parent = e.parent();
-    if (parent) {
-      return visitor(s, parent) * local_mat;
-    } else {
-      return local_mat;
-    }
-  };
-
-  OX_ASSERT(entity.has<TransformComponent>());
-  auto it = self.entity_transforms_map.find(entity);
-  if (it == self.entity_transforms_map.end()) {
+  auto& pending = self.pending_transform_entities;
+  if (pending.empty()) {
     return;
   }
 
-  auto transform_id = it->second;
-  auto* gpu_transform = self.transforms.slot(transform_id);
-  gpu_transform->world = visit_parent(self, entity);
-  self.dirty_transforms.push_back(transform_id);
+  std::ranges::sort(pending);
+  pending.erase(std::ranges::unique(pending).begin(), pending.end());
 
-  // Mark the entity's mesh instance (if any) as dirty so the VSM invalidate-pages
-  // pass can clear pages the mesh used to cover. Child entities are notified below,
-  // which re-enters `set_dirty` for each child that has a transform.
-  if (
-    const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
-    mesh_it != self.entity_to_mesh_instance_map.end()
-  ) {
-    // a non-caster is in no shadow page, moving it has nothing to invalidate
-    if (
-      const auto* mesh_instance = self.mesh_instances.slot(mesh_it->second);
-      mesh_instance && mesh_instance->cast_shadows
-    ) {
-      self.dirty_mesh_instances.push_back(mesh_it->second);
+  // top-down, so every matrix is one multiply off its parent's instead of a walk to the root. An
+  // entity without a transform passes its parent's matrix through, as if it had an identity one
+  auto resolve_subtree = [&self](this auto& resolve, flecs::entity entity, const glm::mat4& parent_world) -> void {
+    auto entity_world = parent_world;
+    if (const auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+      entity_world = parent_world * Scene::get_local_transform(entity);
+      if (auto* gpu_transform = self.transforms.slot(it->second)) {
+        gpu_transform->world = entity_world;
+        self.dirty_transforms.push_back(it->second);
+      }
+
+      // a non-caster is in no shadow page, moving it has nothing to invalidate
+      if (
+        const auto mesh_it = self.entity_to_mesh_instance_map.find(entity);
+        mesh_it != self.entity_to_mesh_instance_map.end()
+      ) {
+        if (
+          const auto* mesh_instance = self.mesh_instances.slot(mesh_it->second);
+          mesh_instance && mesh_instance->cast_shadows
+        ) {
+          self.dirty_mesh_instances.push_back(mesh_it->second);
+        }
+      }
+
+      if (auto* mc = entity.try_get_mut<MeshComponent>()) {
+        mc->world_aabb = mc->baked_aabb.get_transformed(entity_world);
+      }
+
+      if (auto* sprite = entity.try_get_mut<SpriteComponent>()) {
+        sprite->rect = AABB(glm::vec3(-0.5f), glm::vec3(0.5f)).get_transformed(entity_world);
+      }
+    }
+
+    entity.children([&resolve, &entity_world](flecs::entity child) { resolve(child, entity_world); });
+  };
+
+  for (const auto id : pending) {
+    const auto entity = flecs::entity(self.world, id);
+    if (!entity.is_alive()) {
+      continue;
+    }
+
+    // a pending ancestor's subtree already covers this one, otherwise the nearest ancestor with a
+    // transform is up to date, since a change to it would have queued it
+    auto is_covered = false;
+    auto is_parent_found = false;
+    auto parent_world = glm::mat4(1.0f);
+    for (auto ancestor = entity.parent(); ancestor; ancestor = ancestor.parent()) {
+      if (std::ranges::binary_search(pending, ancestor.id())) {
+        is_covered = true;
+        break;
+      }
+
+      if (is_parent_found) {
+        continue;
+      }
+
+      if (const auto it = self.entity_transforms_map.find(ancestor); it != self.entity_transforms_map.end()) {
+        if (const auto* gpu_transform = self.transforms.slotc(it->second)) {
+          parent_world = gpu_transform->world;
+          is_parent_found = true;
+        }
+      }
+    }
+
+    if (!is_covered) {
+      resolve_subtree(entity, parent_world);
     }
   }
 
-  // notify children
-  entity.children([](flecs::entity e) {
-    if (e.has<TransformComponent>()) {
-      e.modified<TransformComponent>();
+  pending.clear();
+}
+
+auto Scene::get_resolved_world_transform(this const Scene& self, flecs::entity entity) -> glm::mat4 {
+  if (const auto it = self.entity_transforms_map.find(entity); it != self.entity_transforms_map.end()) {
+    if (const auto* gpu_transform = self.transforms.slotc(it->second)) {
+      return gpu_transform->world;
     }
-  });
+  }
+
+  return Scene::get_world_transform(entity);
 }
 
 auto Scene::get_entity_transform_id(flecs::entity entity) const -> option<GPU::TransformID> {
@@ -2554,13 +2875,12 @@ auto Scene::bake_terrain(this Scene& self) -> void {
     });
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  const auto material_index = [&asset_man](const UUID& uuid) -> u32 {
-    if (!uuid || !asset_man.is_loaded(uuid)) {
+  const auto material_index = [](const AssetHandle<Material>& material) -> u32 {
+    if (!material.is_loaded()) {
       return GPU::TERRAIN_INVALID_LAYER_MATERIAL;
     }
-    const auto asset = asset_man.get_asset(uuid);
-    return asset ? SlotMap_decode_id(asset->material_id).index : GPU::TERRAIN_INVALID_LAYER_MATERIAL;
+
+    return SlotMap_decode_id(static_cast<MaterialID>(material.payload_id())).index;
   };
   terrain->layer_material_indices = {
     material_index(c.layer_grass),
@@ -2603,7 +2923,7 @@ auto Scene::bake_terrain(this Scene& self) -> void {
 
   // `create` only leaves the maps uninitialized when it had to allocate new ones, which is exactly
   // when the strokes have to come back off the asset.
-  self.set_terrain_edits_ref(c.terrain_edits);
+  self.terrain_edits_ref = c.terrain_edits.uuid();
   if (terrain->edits_uninitialized && self.terrain_edits_ref) {
     if (auto edits = App::mod<AssetManager>().get_terrain_edits(self.terrain_edits_ref)) {
       terrain->upload_edits(*edits.value);
@@ -2627,11 +2947,7 @@ auto Scene::find_animator_entity(flecs::entity entity) -> flecs::entity {
 }
 
 auto Scene::end_animation_fade(this Scene& self, AnimationInstance& instance) -> void {
-  if (instance.fade_from_clip_uuid) {
-    App::mod<AssetManager>().unload_asset(instance.fade_from_clip_uuid);
-    instance.fade_from_clip_uuid = UUID(nullptr);
-  }
-
+  instance.fade_from_clip = {};
   instance.fade_duration = 0.0f;
   instance.fade_elapsed = 0.0f;
 }
@@ -2644,13 +2960,9 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-
   auto clip_skeleton_uuid = UUID(nullptr);
-  if (animator->clip_uuid) {
-    if (auto clip = asset_man.get_animation(animator->clip_uuid)) {
-      clip_skeleton_uuid = clip->skeleton_uuid;
-    }
+  if (const auto clip = animator->clip_uuid.get()) {
+    clip_skeleton_uuid = clip->skeleton_uuid;
   }
 
   // the skin is what the joint indices were built against, so it decides the skeleton, and a clip
@@ -2660,7 +2972,7 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     OX_LOG_WARN(
       "Animator '{}' plays clip {} whose skeleton does not match its skinned meshes; the clip is ignored.",
       entity.name().c_str(),
-      animator->clip_uuid.str()
+      animator->clip_uuid.uuid().str()
     );
   }
   const auto skeleton_uuid = skin_skeleton_uuid ? skin_skeleton_uuid : clip_skeleton_uuid;
@@ -2668,7 +2980,7 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
   auto instance_it = self.entity_to_animation_instance_map.find(entity);
   if (instance_it == self.entity_to_animation_instance_map.end()) {
     const auto instance_id = self.animation_instances.create_slot(
-      AnimationInstance{.skeleton_uuid = skeleton_uuid, .clip_uuid = animator->clip_uuid}
+      AnimationInstance{.skeleton = AssetHandle<Skeleton>::from_loaded(skeleton_uuid), .clip = animator->clip_uuid}
     );
     self.entity_to_animation_instance_map.emplace(entity, instance_id);
     self.relink_skinned_meshes(entity);
@@ -2681,27 +2993,31 @@ auto Scene::attach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
-  if (instance->clip_uuid != animator->clip_uuid) {
+  if (instance->clip.uuid() != animator->clip_uuid.uuid()) {
     // a second swap mid-fade supersedes the first, so that clip's reference goes back now
     self.end_animation_fade(*instance);
 
     // assigning a different clip is what starts a crossfade, and the outgoing clip keeps its own
-    // clock so it carries on playing underneath, taking its own reference because by the time this
-    // runs the setter may already have released the component's
-    if (instance->clip_uuid && animator->blend_time > 0.0f && asset_man.load_asset(instance->clip_uuid)) {
-      instance->fade_from_clip_uuid = instance->clip_uuid;
+    // clock so it carries on playing underneath. The instance's own handle is what keeps it loaded,
+    // since by the time this runs the setter has already let go of the component's
+    if (instance->clip.is_loaded() && animator->blend_time > 0.0f) {
+      instance->fade_from_clip = std::move(instance->clip);
       instance->fade_from_time = instance->current_time;
       instance->fade_duration = animator->blend_time;
       instance->fade_elapsed = 0.0f;
     }
 
-    instance->clip_uuid = animator->clip_uuid;
+    instance->clip = animator->clip_uuid;
     instance->current_time = 0.0f;
+    instance->pose_dirty = true;
+  } else if (!instance->clip.is_loaded() && animator->clip_uuid.is_loaded()) {
+    // the scene loader hands the component its reference after the instance already copied it empty
+    instance->clip = animator->clip_uuid;
     instance->pose_dirty = true;
   }
 
-  if (skeleton_uuid && instance->skeleton_uuid != skeleton_uuid) {
-    instance->skeleton_uuid = skeleton_uuid;
+  if (skeleton_uuid && (instance->skeleton.uuid() != skeleton_uuid || !instance->skeleton.is_loaded())) {
+    instance->skeleton = AssetHandle<Skeleton>::from_loaded(skeleton_uuid);
     instance->pose_dirty = true;
     self.relink_skinned_meshes(entity);
   }
@@ -2717,8 +3033,9 @@ auto Scene::detach_animator(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
+  // a destroyed slot keeps its element until the slot is reused, handles and all, so they go back now
   if (auto* instance = self.animation_instances.slot(instance_it->second)) {
-    self.end_animation_fade(*instance);
+    *instance = AnimationInstance{};
   }
 
   self.animation_instances.destroy_slot(instance_it->second);
@@ -2783,9 +3100,10 @@ auto Scene::relink_skinned_meshes_under(this Scene& self, flecs::entity animator
                 // the skin is what the joint indices index into, so its skeleton wins over the clip's
                 if (
                   const auto* skinned = child.try_get<SkinnedMeshComponent>();
-                  skinned != nullptr && skinned->skeleton_uuid && instance->skeleton_uuid != skinned->skeleton_uuid
+                  skinned != nullptr && skinned->skeleton_uuid &&
+                  instance->skeleton.uuid() != skinned->skeleton_uuid.uuid()
                 ) {
-                  instance->skeleton_uuid = skinned->skeleton_uuid;
+                  instance->skeleton = skinned->skeleton_uuid;
                   instance->pose_dirty = true;
                 }
               }
@@ -2802,25 +3120,33 @@ auto Scene::relink_skinned_meshes_under(this Scene& self, flecs::entity animator
 auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
   ZoneScoped;
 
+  // below this many changed poses a helper job's wake-up costs more than it saves
+  constexpr auto PARALLEL_MIN_INSTANCES = 8_sz;
+  constexpr auto CHUNK_SIZE = 4_u32;
+
   if (self.animation_instances.size() == 0) {
     self.skinning_transforms.clear();
     return;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-
   auto bone_offset = 0_u32;
   self.animation_instances.for_each_active([&](usize, AnimationInstance& instance) {
-    auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
+    auto skeleton = instance.skeleton.get();
     instance.bone_count = skeleton ? skeleton->bone_count() : 0_u32;
     instance.bone_offset = bone_offset;
     bone_offset += instance.bone_count;
   });
 
-  if (self.skinning_transforms.size() != bone_offset) {
+  // a resize wipes every slice, so every instance has to write its own again
+  const auto is_skinning_reset = self.skinning_transforms.size() != bone_offset;
+  if (is_skinning_reset) {
     self.skinning_transforms.assign(bone_offset, GPU::SkinningTransform{});
   }
 
+  // the clocks, fades and asset lookups stay on this thread because they reach the flecs world and
+  // release asset refs. Only the sampling and skinning, the expensive part, fans out
+  auto& queue = self.animation_evaluation_queue;
+  queue.clear();
   for (const auto& [entity, instance_id] : self.entity_to_animation_instance_map) {
     auto* instance_ptr = self.animation_instances.slot(instance_id);
     if (instance_ptr == nullptr) {
@@ -2829,15 +3155,23 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
 
     auto& instance = *instance_ptr;
     const auto entity_id = entity.id();
-    instance.advanced = false;
 
     if (instance.bone_count == 0) {
       continue;
     }
 
-    auto skeleton = asset_man.get_skeleton(instance.skeleton_uuid);
-    if (!skeleton || !skeleton->is_valid()) {
-      continue;
+    {
+      auto skeleton = instance.skeleton.get();
+      if (!skeleton || !skeleton->is_valid()) {
+        continue;
+      }
+
+      // reset only on a real shape change
+      if (instance.pose.bone_count() != instance.bone_count) {
+        instance.pose.reset(skeleton.value, Pose::State::ReferencePose);
+        instance.pose.skeleton = nullptr;
+        instance.pose_dirty = true;
+      }
     }
 
     const auto* animator = self.world.entity(entity_id).try_get<AnimatorComponent>();
@@ -2845,24 +3179,12 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
       continue;
     }
 
-    // reset only on a real shape change, though the pointer is refreshed under the guard every
-    // frame because the slot map can move the skeleton out from under a stale one
-    if (instance.pose.bone_count() != instance.bone_count) {
-      instance.pose.reset(skeleton.value, Pose::State::ReferencePose);
-      instance.pose_dirty = true;
-    }
-    instance.pose.skeleton = skeleton.value;
-
-    auto& task_system = instance.task_system;
-    task_system.reset();
-    auto task = INVALID_POSE_TASK;
-
     // clips only play while the scene runs, so outside play mode an animated entity sits in its
     // bind pose rather than on the first frame of whatever clip it references, because editing a
     // character should not deform it
-    const auto advancing = self.running && animator->playing;
-    if (advancing != instance.was_advancing) {
-      instance.was_advancing = advancing;
+    const auto is_advancing = self.running && animator->playing;
+    if (is_advancing != instance.was_advancing) {
+      instance.was_advancing = is_advancing;
       instance.pose_dirty = true;
     }
 
@@ -2877,89 +3199,108 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
       self.end_animation_fade(instance);
     }
 
-    // both guards outlive `execute`: the task system holds raw AnimationClip pointers into the
-    // slot map, so the read locks have to stay taken until the sampling is done
-    auto clip = self.running ? asset_man.get_animation(instance.clip_uuid) : ReadGuard<AnimationClip>();
-    if (clip && clip->skeleton_uuid != instance.skeleton_uuid) {
-      clip.reset();
-    }
-    auto fade_from = ReadGuard<AnimationClip>();
+    auto evaluation = AnimationEvaluation{
+      .influence_radius = instance.influence_radius,
+      .bone_offset = instance.bone_offset,
+    };
 
-    if (clip) {
-      if (animator->playing) {
-        instance.current_time = wrap_clip_time(
-          instance.current_time + delta_time * animator->speed,
-          clip->duration,
-          animator->loop
-        );
-      }
-
-      task = task_system.register_sample(clip.value, instance.current_time);
-
-      if (instance.fade_from_clip_uuid && instance.fade_duration > 0.0f) {
-        instance.fade_elapsed += delta_time;
-
-        if (instance.fade_elapsed >= instance.fade_duration) {
-          self.end_animation_fade(instance);
-        } else if (
-          (fade_from = asset_man.get_animation(instance.fade_from_clip_uuid)) &&
-          fade_from->skeleton_uuid == instance.skeleton_uuid
-        ) {
-          // the outgoing clip keeps running underneath, so the blend does not freeze mid-stride
-          if (animator->playing) {
-            instance.fade_from_time = wrap_clip_time(
-              instance.fade_from_time + delta_time * animator->speed,
-              fade_from->duration,
-              animator->loop
-            );
-          }
-
-          const auto weight = glm::clamp(instance.fade_elapsed / instance.fade_duration, 0.0f, 1.0f);
-          const auto fade_task = task_system.register_sample(fade_from.value, instance.fade_from_time);
-          // source is the outgoing clip, target the incoming one, so the weight runs 0 -> 1
-          task = task_system.register_blend(fade_task, task, weight);
+    // durations are copied out so no two animation read locks are held at once on this thread
+    auto clip_duration = option<f32>();
+    if (self.running) {
+      if (const auto clip = instance.clip.get()) {
+        if (clip->skeleton_uuid == instance.skeleton.uuid()) {
+          clip_duration = clip->duration;
         }
       }
     }
 
-    if (task == INVALID_POSE_TASK) {
-      // not playing, no clip yet, or it failed to load, so fall back to the reference pose because
-      // leaving the skinning transforms untouched would collapse every vertex onto the origin
-      instance.pose.parent_space_transforms = skeleton->parent_space_reference_pose;
-      instance.pose.clear_model_space_transforms();
-      instance.pose.state = Pose::State::ReferencePose;
-    } else {
-      task_system.execute(*skeleton.value, instance.pose);
+    if (clip_duration.has_value()) {
+      evaluation.has_clip = true;
+      if (animator->playing) {
+        instance.current_time = wrap_clip_time(
+          instance.current_time + delta_time * animator->speed,
+          *clip_duration,
+          animator->loop
+        );
+      }
+
+      if (instance.fade_from_clip && instance.fade_duration > 0.0f) {
+        instance.fade_elapsed += delta_time;
+
+        if (instance.fade_elapsed >= instance.fade_duration) {
+          self.end_animation_fade(instance);
+        } else {
+          auto fade_duration = option<f32>();
+          if (const auto fade_from = instance.fade_from_clip.get()) {
+            if (fade_from->skeleton_uuid == instance.skeleton.uuid()) {
+              fade_duration = fade_from->duration;
+            }
+          }
+
+          if (fade_duration.has_value()) {
+            // the outgoing clip keeps running underneath, so the blend does not freeze mid-stride
+            if (animator->playing) {
+              instance.fade_from_time = wrap_clip_time(
+                instance.fade_from_time + delta_time * animator->speed,
+                *fade_duration,
+                animator->loop
+              );
+            }
+
+            evaluation.has_fade = true;
+            evaluation.fade_weight = glm::clamp(instance.fade_elapsed / instance.fade_duration, 0.0f, 1.0f);
+          }
+        }
+      }
     }
 
-    instance.pose.calculate_model_space_transforms();
+    evaluation.current_time = instance.current_time;
+    evaluation.fade_from_time = evaluation.has_fade ? instance.fade_from_time : 0.0f;
 
-    // bone positions inflated by the model's widest bone influence: tight enough to cull with,
-    // loose enough to cover every pose the clip can reach
-    auto bounds_min = glm::vec3(std::numeric_limits<f32>::max());
-    auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
-    for (const auto& bone : instance.pose.model_space_transforms) {
-      bounds_min = glm::min(bounds_min, bone.translation());
-      bounds_max = glm::max(bounds_max, bone.translation());
-    }
-
-    // GPU::MeshBounds::aabb_extent is the full box size, not a half-extent (AABB::from_bounds
-    // halves it), so the influence radius contributes twice, once on each side
-    instance.bounds.aabb_center = (bounds_min + bounds_max) * 0.5f;
-    instance.bounds.aabb_extent = (bounds_max - bounds_min) + glm::vec3(2.0f * instance.influence_radius);
-
-    const auto writable = std::span(self.skinning_transforms).subspan(instance.bone_offset, instance.bone_count);
-    for (auto i = 0_u32; i < instance.bone_count; ++i) {
-      const auto skinning = instance.pose.model_space_transforms[i] * skeleton->inverse_bind_pose[i];
-      writable[i].rotation = {skinning.rotation.x, skinning.rotation.y, skinning.rotation.z, skinning.rotation.w};
-      writable[i].translation_scale = skinning.translation_scale;
-    }
-
-    instance.pose.skeleton = nullptr;
-    // a pose that is not moving must not keep marking itself dirty, which would re-upload the
-    // instance and invalidate its cached shadow pages every frame for a character standing still
-    instance.advanced = advancing || instance.pose_dirty;
+    // a pose whose inputs did not move keeps last frame's skinning, otherwise a character standing
+    // still would be re-sampled, re-uploaded and would invalidate its cached shadow pages every frame
+    const auto is_changed = !instance.is_evaluated || instance.pose_dirty || is_skinning_reset ||
+                            evaluation != instance.evaluation;
     instance.pose_dirty = false;
+    if (!is_changed) {
+      continue;
+    }
+
+    instance.evaluation = evaluation;
+    instance.is_evaluated = true;
+    instance.advanced = true;
+    queue.push_back(&instance);
+  }
+
+  const auto skinning_transforms = std::span(self.skinning_transforms);
+  auto& job_man = App::get_job_manager();
+  const auto worker_count = job_man.get_thread_count();
+  if (queue.size() < PARALLEL_MIN_INSTANCES || worker_count == 0) {
+    for (auto* instance : queue) {
+      evaluate_animation_instance(*instance, skinning_transforms);
+    }
+
+    return;
+  }
+
+  auto batch = Arc<AnimationEvaluationBatch>::create();
+  batch->instances = queue;
+  batch->skinning_transforms = skinning_transforms;
+  batch->chunk_size = CHUNK_SIZE;
+  batch->chunk_count = static_cast<u32>((queue.size() + CHUNK_SIZE - 1) / CHUNK_SIZE);
+
+  // this thread works through the chunks too, so a pool busy with long loads only costs the help it
+  // would have given rather than stalling the frame behind them
+  const auto helper_count = std::min(worker_count, batch->chunk_count - 1);
+  for (auto i = 0_u32; i < helper_count; i++) {
+    job_man.submit(Job::create([batch] { run_animation_chunks(*batch); }), true);
+  }
+
+  run_animation_chunks(*batch);
+  auto done = batch->done_chunks.load(std::memory_order_acquire);
+  while (done != batch->chunk_count) {
+    batch->done_chunks.wait(done, std::memory_order_acquire);
+    done = batch->done_chunks.load(std::memory_order_acquire);
   }
 }
 
@@ -3012,8 +3353,8 @@ auto Scene::attach_mesh(
   auto mesh_instances_it = self.entity_to_mesh_instance_map.find(entity);
   if (mesh_instances_it != self.entity_to_mesh_instance_map.end()) {
     const auto old_mesh_instance_id = mesh_instances_it->second;
+    queue_mesh_instance_removal(self, old_mesh_instance_id);
     self.mesh_instances.destroy_slot(old_mesh_instance_id);
-    self.meshes_dirty = true;
   }
 
   const auto* layer = entity.try_get<LayerComponent>();
@@ -3029,7 +3370,7 @@ auto Scene::attach_mesh(
     }
   );
   self.entity_to_mesh_instance_map.insert_or_assign(entity, instance_id);
-  self.meshes_dirty = true;
+  queue_mesh_instance_addition(self, instance_id);
   // attaching does not change a transform, so queue the exact GPU records that now reference it
   // without notifying descendants, because notifying from a skinned child would reach this observer
   // again through its animator ancestor and recursively reattach the mesh
@@ -3070,8 +3411,8 @@ auto Scene::detach_mesh(this Scene& self, flecs::entity entity) -> bool {
     return false;
   }
 
+  queue_mesh_instance_removal(self, instance_id);
   self.mesh_instances.destroy_slot(instance_id);
-  self.meshes_dirty = true;
 
   self.entity_to_mesh_instance_map.erase(instances_it);
 
@@ -3138,7 +3479,7 @@ auto Scene::set_particle_parameter(
     component.override_parameters = true;
 
     if (auto* state = self.particle_emitter_state(entity); state && state->asset) {
-      if (auto system = App::mod<AssetManager>().get_particle_system(state->asset)) {
+      if (auto system = App::mod<AssetManager>().get_particle_system(state->asset_id)) {
         for (auto i = 0_u32; i < GPU::PARTICLE_USER_PARAM_COUNT; i++) {
           component.parameter(i) = i < system->parameters.size() ? system->parameters[i].default_value
                                                                  : glm::vec4(0.0f);
@@ -3159,7 +3500,7 @@ auto Scene::set_particle_parameter(
   }
 
   auto index = [&]() -> option<u32> {
-    auto system = App::mod<AssetManager>().get_particle_system(state->asset);
+    auto system = App::mod<AssetManager>().get_particle_system(state->asset_id);
     return system ? system->find_parameter(name) : nullopt;
   }();
 
@@ -3324,7 +3665,7 @@ auto build_mesh_collider_shape(
   auto triangles = JPH::IndexedTriangleList();
   for (const auto mesh_entity : mesh_entities) {
     const auto& mesh_component = mesh_entity.get<MeshComponent>();
-    auto model = asset_man.get_model(mesh_component.model_uuid);
+    auto model = mesh_component.model_uuid.get();
     if (!model) {
       OX_LOG_ERROR("MeshColliderComponent on '{}' has no loaded model.", mesh_entity.name().c_str());
       return {};
@@ -3778,31 +4119,6 @@ auto Scene::set_terrain_stamps(this Scene& self, std::span<const TerrainStampDes
   }
 }
 
-auto Scene::set_terrain_edits_ref(this Scene& self, const UUID& uuid) -> void {
-  ZoneScoped;
-
-  if (self.terrain_edits_ref == uuid) {
-    return;
-  }
-
-  auto& asset_man = App::mod<AssetManager>();
-  const auto previous = std::exchange(self.terrain_edits_ref, uuid);
-
-  // The scene holds exactly one ref, matched by the release below and by the OnRemove observer.
-  // `from_json` already took it for a UUID that came out of the scene file, so only an asset
-  // nothing has loaded yet is acquired here. is_loaded() takes and drops its own read guard; don't
-  // hold one across load_asset().
-  if (uuid && !asset_man.is_loaded(uuid)) {
-    asset_man.load_asset(uuid);
-  }
-
-  // Released after the acquire so re-pointing at the same underlying asset does not drop it to zero
-  // in between.
-  if (previous) {
-    asset_man.unload_asset(previous);
-  }
-}
-
 void Scene::create_character_controller(flecs::entity entity, CharacterControllerComponent& component) const {
   ZoneScoped;
 
@@ -4082,6 +4398,8 @@ auto Scene::render(
     self.dirty_transforms.clear();
     self.dirty_mesh_instances.clear();
     self.removed_mesh_bounds.clear();
+    self.changed_mesh_instance_indices.clear();
+    self.is_gpu_meshes_changed = false;
     self.meshes_dirty = false;
   }
   return ticket;
@@ -4124,8 +4442,12 @@ auto Scene::deserialize_component(
   e.add(component);
   auto* data = e.get_mut(component);
   auto deserializer = JsonEntityDeserializer(self.world, std::move(json));
+  deserializer.entity_id = e.id();
+  deserializer.component_id = component.id();
+  deserializer.component_data = static_cast<const u8*>(data);
   deserializer.serialize(component, data);
   requested_assets.insert_range(requested_assets.end(), std::move(deserializer.requested_assets));
+  self.pending_asset_refs.insert_range(self.pending_asset_refs.end(), std::move(deserializer.pending_asset_refs));
   self.deserializing_entity = was_deserializing;
   e.modified(component);
 }
@@ -4508,11 +4830,36 @@ auto Scene::load_requested_assets(this Scene& self, std::span<const UUID> reques
     asset_man.load_asset(asset_uuid);
   }
 
+  // each handle field the loader named takes over the reference its uuid's load took above, or the
+  // reference goes back when the field is gone or was written again since
+  const auto pending_asset_refs = std::exchange(self.pending_asset_refs, {});
+  for (usize i = 0; i < pending_asset_refs.size(); i++) {
+    const auto& pending = pending_asset_refs[i];
+    auto entity = flecs::entity(self.world, pending.entity);
+    const auto is_present = entity.is_alive() && entity.has(pending.component);
+    auto* data = is_present ? static_cast<u8*>(entity.get_mut(pending.component)) : nullptr;
+    auto* field = data != nullptr ? reinterpret_cast<AssetRef*>(data + pending.offset) : nullptr;
+    if (field == nullptr || field->uuid() != pending.uuid || field->is_loaded()) {
+      asset_man.unload_asset(pending.uuid);
+    } else {
+      field->take_over(pending.uuid);
+    }
+
+    // observers on the component saw its fields before their assets were in. A component's fields are
+    // queued together, so it is notified once, after the last of them
+    const auto is_last_of_component = i + 1 == pending_asset_refs.size() ||
+                                      pending_asset_refs[i + 1].entity != pending.entity ||
+                                      pending_asset_refs[i + 1].component != pending.component;
+    if (is_present && is_last_of_component) {
+      entity.modified(pending.component);
+    }
+  }
+
   // Assets are only requested after every entity exists, so meshes whose model was still unloaded
   // when their component was set could not be attached. Attach them now that the models are in.
   self.world.query_builder<MeshComponent>().build().each([&self](flecs::entity e, MeshComponent& mc) {
     if (mc.model_uuid && !self.entity_to_mesh_instance_map.contains(e)) {
-      self.attach_mesh(e, mc.model_uuid, mc.mesh_index, mc.material_uuid, mc.cast_shadows);
+      self.attach_mesh(e, mc.model_uuid.uuid(), mc.mesh_index, mc.material_uuid.uuid(), mc.cast_shadows);
     }
   });
 

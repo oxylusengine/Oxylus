@@ -7,12 +7,28 @@ import scene;
 [[vk::binding(2)]] StructuredBuffer<SkinningTransform> skinning_transforms;
 [[vk::binding(3)]] RWStructuredBuffer<u32x2> skinned_positions;
 [[vk::binding(4)]] RWStructuredBuffer<u32> skinned_normals;
+[[vk::binding(5)]] StructuredBuffer<SkinJob> skin_jobs;
 
 [[shader("compute")]]
-[[numthreads(64, 1, 1)]]
-func cs_main(u32x3 thread_id: SV_DispatchThreadID, uniform SkinJob job) -> void {
-    let vertex_index = thread_id.x;
-    if (vertex_index >= job.vertex_count) {
+[[numthreads(SKIN_GROUP_SIZE, 1, 1)]]
+func cs_main(u32x3 group_id: SV_GroupID, u32x3 local_id: SV_GroupThreadID, uniform SkinPush push) -> void {
+    let group = group_id.y * push.groups_x + group_id.x;
+
+    // the last job starting at or before this workgroup, jobs are sorted by `first_group`
+    var low = u32(0);
+    var high = push.job_count - 1;
+    while (low < high) {
+        let middle = (low + high + 1) / 2;
+        if (skin_jobs[middle].first_group <= group) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+
+    let job = skin_jobs[low];
+    let vertex_index = (group - job.first_group) * SKIN_GROUP_SIZE + local_id.x;
+    if (group < job.first_group || vertex_index >= job.vertex_count) {
         return;
     }
 

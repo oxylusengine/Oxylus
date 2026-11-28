@@ -33,6 +33,7 @@ struct ColorBlendAttachmentState;
 
 namespace ox {
 struct RecordedFrame;
+struct RendererInstanceQueries;
 
 inline constexpr auto BASE_AMBIENT_COLOR = glm::vec3(0.02f, 0.03f, 0.04f);
 
@@ -160,7 +161,15 @@ struct RenderQueue2D {
     previous_offset = num_sprites;
   }
 
-  void add(u16 render_flags, f32 position_y, u32 transform_id, u32 material_id, f32 distance) {
+  void add(
+    u16 render_flags,
+    f32 position_y,
+    u32 transform_id,
+    u32 material_id,
+    f32 distance,
+    glm::vec2 frame_uv_size = {1.0f, 1.0f},
+    glm::vec2 frame_uv_offset = {0.0f, 0.0f}
+  ) {
     const u32 flags_and_distance = math::pack_u16(render_flags, glm::packHalf1x16(distance));
     const u32 materialid_and_ypos = math::pack_u16(static_cast<u16>(material_id), glm::packHalf1x16(position_y));
 
@@ -169,6 +178,8 @@ struct RenderQueue2D {
         .material_id16_ypos16 = materialid_and_ypos,
         .flags16_distance16 = flags_and_distance,
         .transform_id = transform_id,
+        .frame_uv_size16x2 = glm::packHalf2x16(frame_uv_size),
+        .frame_uv_offset16x2 = glm::packHalf2x16(frame_uv_offset),
       }
     );
 
@@ -200,9 +211,9 @@ struct RendererInstanceUpdateInfo {
   u32 max_meshlet_instance_count = 0;
 
   // the mesh and instance arrays are only rebuilt when the instance set changes, but skinned
-  // instances carry per-frame vertex pointers and bounds, so their upload runs more often
+  // instances carry per-frame vertex pointers and bounds, so only their entries upload more often
   bool meshes_dirty = false;
-  bool mesh_instances_dirty = false;
+  bool skinned_mesh_instances_dirty = false;
 
   std::span<GPU::TransformID> dirty_transform_ids = {};
   std::span<GPU::Transforms> gpu_transforms = {};
@@ -211,6 +222,9 @@ struct RendererInstanceUpdateInfo {
   std::span<u64> gpu_mesh_blas_addresses = {};
   std::span<GPU::MeshInstance> gpu_mesh_instances = {};
   std::span<u32> dirty_mesh_instance_indices = {};
+  // entries appended or moved without a rebuild, uploaded on their own
+  std::span<const u32> changed_mesh_instance_indices = {};
+  bool is_gpu_meshes_changed = false;
 
   std::span<const SkinnedMeshInstance> skinned_mesh_instances = {};
   std::span<GPU::SkinningTransform> skinning_transforms = {};
@@ -226,7 +240,7 @@ struct ParticleMeshDraw {
   u32 index_count = 0;
 };
 
-struct TransformRun {
+struct UploadRun {
   u32 src = 0;
   u32 dst = 0;
   u32 count = 0;
@@ -241,24 +255,30 @@ struct FrameData {
 
   u32 skinned_instance_count = 0;
   u32 skinned_vertex_total = 0;
+  // only the instances whose skinned vertices change this frame, one dispatch covers all of them
   std::vector<GPU::SkinJob> skin_jobs = {};
+  u32 skin_group_count = 0;
   std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> skinned_blas_builds = {};
   std::shared_ptr<const std::vector<vir::AccelerationStructureBuild>> tlas_builds = {};
 
   // projected transforms packed per run, no runs means no upload
   std::vector<GPU::TransformWorld> transforms_world = {};
   std::vector<GPU::TransformPrevious> transforms_previous = {};
-  std::vector<TransformRun> transform_runs = {};
+  std::vector<UploadRun> transform_runs = {};
 
   // meshes and instances are only filled when they changed
   std::vector<GPU::Mesh> meshes = {};
+  // packed per run like transforms: everything, only the skinned entries, or nothing
   std::vector<GPU::MeshInstance> mesh_instances = {};
+  std::vector<UploadRun> mesh_instance_runs = {};
   std::vector<u64> blas_addresses = {};
   // one entry per skinned instance rather than per mesh, because ten characters sharing a model
   // need ten structures. Renderer owned and uploaded every frame, so a moving address cannot
   // outlive a scene dirty flag that never fires
   std::vector<u64> skinned_blas_addresses = {};
+  // packed per run like transforms, only the bones of poses that moved
   std::vector<GPU::SkinningTransform> skinning_transforms = {};
+  std::vector<UploadRun> skinning_transform_runs = {};
   std::vector<GPU::Light> lights = {};
   std::vector<u32> dirty_mesh_instances = {};
   std::vector<GPU::MeshBounds> removed_mesh_bounds = {};
@@ -395,6 +415,7 @@ struct FrameValues {
   vir::ValueID exposure = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID skin_jobs = vir::ValueID::Invalid;
   vir::ValueID terrain_patch_visibility_mask = vir::ValueID::Invalid;
   vir::ValueID tlas = vir::ValueID::Invalid;
 };
@@ -1092,8 +1113,8 @@ struct PreparedFrame {
   UploadVariables meshes_upload = {};
   UploadVariables blas_addresses_upload = {};
   UploadVariables skinned_blas_addresses_upload = {};
-  UploadVariables mesh_instances_upload = {};
-  UploadVariables skinning_transforms_upload = {};
+  vir::ValueID mesh_instances_staging = vir::ValueID::Invalid;
+  vir::ValueID skinning_transforms_staging = vir::ValueID::Invalid;
   UploadVariables lights_upload = {};
   vir::ValueID is_meshlet_visibility_reset = vir::ValueID::Invalid;
   vir::ValueID is_terrain_visibility_reset = vir::ValueID::Invalid;
@@ -1103,6 +1124,7 @@ struct PreparedFrame {
   vir::ValueID atmosphere = vir::ValueID::Invalid;
   vir::ValueID dirty_mesh_instances = vir::ValueID::Invalid;
   vir::ValueID removed_mesh_bounds = vir::ValueID::Invalid;
+  vir::ValueID skin_jobs = vir::ValueID::Invalid;
   vir::ValueID probe_volumes = vir::ValueID::Invalid;
   vir::ValueID decals = vir::ValueID::Invalid;
   vir::ValueID decal_count = vir::ValueID::Invalid;
@@ -1225,6 +1247,9 @@ public:
   ) -> void;
 
   auto clear_stages(this RendererInstance& self) -> void;
+
+  // has to run before the scene's world is released, the cached queries are finalized against it
+  auto release_queries(this RendererInstance& self) -> void;
 
   // renders into `target`, which the frame leaves at `vir::Access::FragmentSampled`
   auto render(
@@ -1481,11 +1506,15 @@ public:
 
   FrameProgramStats program_stats = {};
 
+  // renders through this camera entity whatever the scene's own cameras say, the editor's viewport camera
+  flecs::entity_t camera_override = 0;
+
   // read by passes and their variables, filled per frame
   FrameParams frame_params = {};
   FrameData frame_data = {};
 
 private:
+  std::unique_ptr<RendererInstanceQueries> queries;
   SharedResources shared_resources = {};
   std::vector<RenderStageCallback> stage_callbacks;
   std::vector<std::vector<usize>> before_callbacks;
@@ -1610,6 +1639,11 @@ private:
   BufferID transforms_previous_buffer = BufferID::Invalid;
   BufferID mesh_instances_buffer = BufferID::Invalid;
   BufferID skinning_transforms_buffer = BufferID::Invalid;
+  // false from `update` until that frame submits, so a frame that never ran makes the next one
+  // upload and skin everything instead of only what moved
+  bool is_skinning_synced = false;
+  // the same for the mesh instance buffer, so a frame that never ran makes the next one upload it whole
+  bool is_mesh_instances_synced = false;
   // in the same quantized format as the bind pose, so every downstream consumer works by pointer
   // swap alone
   BufferID skinned_vertices_buffer = BufferID::Invalid;

@@ -1231,15 +1231,6 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
       to_select = self.scene_->create_entity("probe_volume", true).add<ProbeVolumeComponent>();
     }
 
-    if (ImGui::MenuItem("Height Fog")) {
-      to_select = self.scene_->create_entity("height_fog", true).add<HeightFogComponent>();
-    }
-
-    if (ImGui::MenuItem("Fog Volume")) {
-      to_select = self.scene_->create_entity("fog_volume", true).add<FogVolumeComponent>();
-      to_select.get_mut<TransformComponent>().scale = glm::vec3(8.0f, 4.0f, 8.0f);
-    }
-
     if (ImGui::MenuItem("Decal")) {
       to_select = self.scene_->create_entity("decal", true).add<DecalComponent>();
       auto& decal_transform = to_select.get_mut<TransformComponent>();
@@ -1274,6 +1265,14 @@ auto SceneHierarchyPanel::draw_entities_context_menu(this SceneHierarchyPanel& s
     if (ImGui::BeginMenu("Effects")) {
       if (ImGui::MenuItem("Particle System")) {
         to_select = self.scene_->create_entity("particle_system", true).add<ParticleSystemComponent>();
+      }
+      if (ImGui::MenuItem("Height Fog")) {
+        to_select = self.scene_->create_entity("height_fog", true).add<HeightFogComponent>();
+      }
+
+      if (ImGui::MenuItem("Fog Volume")) {
+        to_select = self.scene_->create_entity("fog_volume", true).add<FogVolumeComponent>();
+        to_select.get_mut<TransformComponent>().scale = glm::vec3(8.0f, 4.0f, 8.0f);
       }
       ImGui::EndMenu();
     }

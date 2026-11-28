@@ -1314,7 +1314,6 @@ auto ThumbnailManager::render_model_thumbnail(this ThumbnailManager& self, const
     .set<SkyComponent>(SkyComponent{
       .solid_color = glm::vec4(0.f, 0.f, 0.f, 1.0f),
       .ambient_color = glm::vec3(0.25f),
-      .texture = UUID(nullptr),
     })
     .set<AutoExposureComponent>({.adaptation_speed = 1.0e6f});
 
@@ -1347,17 +1346,12 @@ auto ThumbnailManager::render_material_thumbnail(this ThumbnailManager& self, co
     return nullopt;
   }
 
-  // the sphere's MeshComponent owns a ref on its material like any other, taken before the old one
-  // goes so swapping to the same material never drops it to zero
-  auto& asset_man = App::mod<AssetManager>();
-  asset_man.load_asset(material_uuid);
-
+  // the new handle takes its reference before the old one goes, so swapping to the same material
+  // never drops it to zero
   auto& sphere = self.material_preview->sphere;
   auto& mesh_component = sphere.ensure<MeshComponent>();
-  const auto previous_material = std::exchange(mesh_component.material_uuid, material_uuid);
+  mesh_component.material_uuid = AssetHandle<Material>::acquire(material_uuid);
   sphere.modified<MeshComponent>();
-
-  asset_man.unload_asset(previous_material);
 
   return self.render_scene(*self.material_preview->scene, size);
 }
@@ -1392,12 +1386,14 @@ auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> b
   auto& scene = *preview->scene;
 
   const auto sphere_aabb = AABB(glm::vec3(-PREVIEW_SPHERE_RADIUS), glm::vec3(PREVIEW_SPHERE_RADIUS));
+  // the component takes over the reference the load above took
+  auto sphere_model = AssetHandle<Model>();
+  sphere_model.take_over(sphere_model_uuid);
   preview->sphere = scene.create_entity("preview_sphere", true);
   preview->sphere.set<TransformComponent>({});
   preview->sphere.set<MeshComponent>({
-    .model_uuid = sphere_model_uuid,
+    .model_uuid = std::move(sphere_model),
     .mesh_index = 0,
-    .material_uuid = UUID(nullptr),
     .cast_shadows = false,
     .baked_aabb = sphere_aabb,
   });
@@ -1416,7 +1412,6 @@ auto ThumbnailManager::ensure_material_preview(this ThumbnailManager& self) -> b
     .set<SkyComponent>({
       .solid_color = glm::vec4(0.f),
       .ambient_color = glm::vec3(PREVIEW_AMBIENT),
-      .texture = UUID(nullptr),
     });
 
   const auto camera_distance = PREVIEW_SPHERE_RADIUS / std::sin(glm::radians(PREVIEW_FOV * 0.5f)) *

@@ -80,7 +80,7 @@ static auto is_box_near_cursor(
 // collision positions are the only CPU-side copy of a mesh's vertices, skinned meshes give their bind pose
 template <typename Func>
 static auto for_each_mesh_vertex(const MeshComponent& mesh, const glm::mat4& world, Func&& func) -> void {
-  auto model = App::mod<AssetManager>().get_model(mesh.model_uuid);
+  auto model = mesh.model_uuid.get();
   if (!model || mesh.mesh_index >= model->collision_meshes.size() || !model->is_mesh_ready(mesh.mesh_index)) {
     return;
   }

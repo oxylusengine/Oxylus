@@ -147,6 +147,7 @@ TEST_F(MaterialAssetTest, PendingEntrySurvivesAnUnloadAndReRegister) {
 
   ASSERT_TRUE(asset_man->load_asset(uuid));
   asset_man->unload_asset(uuid);
+  asset_man->commit();
   ASSERT_FALSE(asset_man->is_loaded(uuid));
 
   ASSERT_TRUE(asset_man->register_asset(uuid, ox::AssetType::Material, asset_path));

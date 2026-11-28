@@ -14,9 +14,9 @@
 #include "Animation/Skeleton.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Core/App.hpp"
-#include "Render/RenderContext.hpp"
 #include "Memory/Stack.hpp"
 #include "Render/DebugRenderer.hpp"
+#include "Render/RenderContext.hpp"
 #include "Scene/Components.hpp"
 #include "UI/UI.hpp"
 #include "Utils/AnimationAssets.hpp"
@@ -158,7 +158,6 @@ auto AnimationEditorPanel::ensure_preview_scene(this AnimationEditorPanel& self)
   self.preview_sky.set<TransformComponent>({}).set<SkyComponent>({
     .solid_color = self.preview_background,
     .ambient_color = glm::vec3(0.06f),
-    .texture = UUID(nullptr),
   });
 
   for (auto i = 0_u32; i < STUDIO_LIGHT_COUNT; ++i) {
@@ -225,21 +224,17 @@ auto AnimationEditorPanel::set_clip(this AnimationEditorPanel& self, const UUID&
   }
 
   auto& animator = self.preview_animator.get_mut<AnimatorComponent>();
-  if (animator.clip_uuid == uuid) {
+  if (animator.clip_uuid.uuid() == uuid) {
     return;
   }
 
-  // whoever writes the uuid owns the ref, so the swap releases the old one and takes the new
-  auto& asset_man = App::mod<AssetManager>();
-  if (uuid && !asset_man.load_asset(uuid)) {
+  // the handle holds the component's reference, so assigning gives the old clip's back
+  auto clip = AssetHandle<AnimationClip>::acquire(uuid);
+  if (uuid && !clip.is_loaded()) {
     return;
   }
 
-  if (animator.clip_uuid) {
-    asset_man.unload_asset(animator.clip_uuid);
-  }
-
-  animator.clip_uuid = uuid;
+  animator.clip_uuid = std::move(clip);
   self.preview_animator.modified<AnimatorComponent>();
 }
 
@@ -250,7 +245,12 @@ auto AnimationEditorPanel::frame_model(this AnimationEditorPanel& self) -> void 
   auto bounds_max = glm::vec3(std::numeric_limits<f32>::lowest());
 
   if (auto model = App::mod<AssetManager>().get_model(self.model_uuid)) {
-    for (const auto& mesh : model->gpu_meshes) {
+    for (usize mesh_index = 0; mesh_index < model->gpu_meshes.size(); mesh_index++) {
+      if (!model->is_mesh_ready(mesh_index)) {
+        continue;
+      }
+
+      const auto& mesh = model->gpu_meshes[mesh_index];
       const auto half_extent = mesh.bounds.aabb_extent * 0.5f;
       bounds_min = glm::min(bounds_min, mesh.bounds.aabb_center - half_extent);
       bounds_max = glm::max(bounds_max, mesh.bounds.aabb_center + half_extent);
@@ -323,7 +323,7 @@ auto AnimationEditorPanel::draw_skeleton(this AnimationEditorPanel& self) -> voi
     return;
   }
 
-  auto skeleton = App::mod<AssetManager>().get_skeleton(instance->skeleton_uuid);
+  auto skeleton = instance->skeleton.get();
   if (!skeleton) {
     return;
   }
@@ -378,9 +378,7 @@ auto AnimationEditorPanel::on_update(this AnimationEditorPanel& self) -> void {
   // the preview scene ticks in `draw_preview`, immediately before its render
 }
 
-auto AnimationEditorPanel::draw_preview(
-  this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info
-) -> void {
+auto AnimationEditorPanel::draw_preview(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   const auto available = ImGui::GetContentRegionAvail();
@@ -435,14 +433,16 @@ auto AnimationEditorPanel::draw_preview(
     }
   }
 
-  if (const auto rendered = self.preview_scene->render(
-        preview_image.attachment_info(),
-    glm::ivec2(0),
-    glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
-    glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
-    false
-      );
-      !rendered) {
+  if (
+    const auto rendered = self.preview_scene->render(
+      preview_image.attachment_info(),
+      glm::ivec2(0),
+      glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
+      glm::ivec2(static_cast<i32>(self.preview_size.x), static_cast<i32>(self.preview_size.y)),
+      false
+    );
+    !rendered
+  ) {
     OX_LOG_ERROR("failed to render the preview ({})", std::to_underlying(rendered.error()));
   }
 
@@ -565,8 +565,7 @@ auto AnimationEditorPanel::draw_toolbar(this AnimationEditorPanel& self) -> void
   }
 }
 
-auto AnimationEditorPanel::on_render(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info)
-  -> void {
+auto AnimationEditorPanel::on_render(this AnimationEditorPanel& self, const SwapchainInfo& swapchain_info) -> void {
   ZoneScoped;
 
   if (!self.on_begin()) {

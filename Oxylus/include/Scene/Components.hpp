@@ -3,12 +3,23 @@
 #include <flecs.h>
 #include <string>
 
+#include "Asset/AssetHandle.hpp"
 #include "Audio/AudioEngine.hpp"
 #include "Core/UUID.hpp"
 #include "Scene/SceneGPU.hpp"
 #include "Utils/OxMath.hpp"
 
 namespace ox {
+class AudioSource;
+class Texture;
+struct Skeleton;
+struct AnimationClip;
+struct Model;
+struct Material;
+struct ParticleSystem;
+struct Cinematic;
+struct TerrainEdits;
+
 struct TransformComponent {
   glm::vec3 position = {};
   glm::quat rotation = glm::quat::wxyz(1.0, 0.0, 0.0, 0.0);
@@ -26,9 +37,9 @@ struct LayerComponent {
 
 // Rendering
 struct MeshComponent {
-  UUID model_uuid = {};
+  AssetHandle<Model> model_uuid = {};
   u32 mesh_index = {};
-  UUID material_uuid = {};
+  AssetHandle<Material> material_uuid = {};
   bool cast_shadows = true;
 
   AABB baked_aabb = {};
@@ -37,12 +48,12 @@ struct MeshComponent {
 
 // the pose comes from the nearest ancestor carrying an AnimatorComponent
 struct SkinnedMeshComponent {
-  UUID skeleton_uuid = {};
+  AssetHandle<Skeleton> skeleton_uuid = {};
 };
 
 // assigning a different `clip_uuid` crossfades from whatever is playing
 struct AnimatorComponent {
-  UUID clip_uuid = {};
+  AssetHandle<AnimationClip> clip_uuid = {};
   f32 speed = 1.0f;
   f32 blend_time = 0.2f;
   bool loop = true;
@@ -51,7 +62,7 @@ struct AnimatorComponent {
 
 // drives a Cinematic asset's camera and property tracks against this scene
 struct CinematicPlayerComponent {
-  UUID cinematic_uuid = {};
+  AssetHandle<Cinematic> cinematic_uuid = {};
   f32 speed = 1.0f;
   bool loop = false;
   bool play_on_awake = false;
@@ -64,7 +75,7 @@ struct SpriteComponent {
   u32 layer = 0;
   bool sort_y = true;
   bool flip_x = false;
-  UUID material = {};
+  AssetHandle<Material> material = {};
 
   AABB rect = {};
 };
@@ -78,6 +89,10 @@ struct SpriteAnimationComponent {
   glm::vec2 frame_size = {};
 
   float current_time = 0.f;
+  // the current frame's rect in the albedo texture, as a share of its uv. Written by
+  // sprite_animation_update and never saved, so the shared material stays untouched
+  glm::vec2 frame_uv_size = {1.0f, 1.0f};
+  glm::vec2 frame_uv_offset = {0.0f, 0.0f};
 
   void reset() { current_time = 0.f; }
 
@@ -157,7 +172,7 @@ struct CameraComponent {
 };
 
 struct ParticleSystemComponent {
-  UUID particle_system = {};
+  AssetHandle<ParticleSystem> particle_system = {};
   bool play_on_awake = true;
   f32 simulation_speed = 1.0f;
   u32 seed = 0;
@@ -214,7 +229,7 @@ struct ProbeVolumeComponent {
 
 // projects `material` along the entity's -Z through a unit box scaled by its transform
 struct DecalComponent {
-  UUID material = {};
+  AssetHandle<Material> material = {};
   f32 opacity = 1.0f;
   // higher draws over lower
   i32 sort_order = 0;
@@ -277,7 +292,7 @@ struct FogVolumeComponent {
 struct SkyComponent {
   glm::vec4 solid_color = glm::vec4{0.f, 0.f, 0.f, 1.0f};
   glm::vec3 ambient_color = glm::vec3{0.03f};
-  UUID texture = {};
+  AssetHandle<Texture> texture = {};
 };
 
 struct TerrainComponent {
@@ -311,12 +326,12 @@ struct TerrainComponent {
   f32 altitude_snow_begin = 0.7f;
   f32 altitude_snow_end = 0.85f;
 
-  UUID terrain_edits = {};
+  AssetHandle<TerrainEdits> terrain_edits = {};
 
-  UUID layer_grass = {};
-  UUID layer_rock = {};
-  UUID layer_drainage = {};
-  UUID layer_snow = {};
+  AssetHandle<Material> layer_grass = {};
+  AssetHandle<Material> layer_rock = {};
+  AssetHandle<Material> layer_drainage = {};
+  AssetHandle<Material> layer_snow = {};
   // World-space size, in metres, of one tile of each layer texture.
   f32 layer_tiling = 8.0f;
   // Slope above which triplanar projection takes over, so cliffs do not stretch.
@@ -405,7 +420,7 @@ struct ColorGradingComponent {
   glm::vec3 lift = {0.0f, 0.0f, 0.0f};
   glm::vec3 gamma = {1.0f, 1.0f, 1.0f};
   glm::vec3 gain = {1.0f, 1.0f, 1.0f};
-  UUID lut = {};
+  AssetHandle<Texture> lut = {};
   f32 lut_contribution = 1.0f;
 };
 
@@ -610,7 +625,8 @@ struct CharacterControllerComponent {
 
 // Audio
 struct AudioSourceComponent {
-  UUID audio_source = {};
+  // read only from C#, `Audio.SetSound` is what swaps it
+  AssetHandle<AudioSource> audio_source = {};
 
   u32 attenuation_model = AudioEngine::AttenuationModelType::Inverse;
   f32 volume = 1.0f;

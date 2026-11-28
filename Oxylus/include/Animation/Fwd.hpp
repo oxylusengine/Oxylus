@@ -36,6 +36,10 @@ struct SkinnedMeshInstance {
   u32 index_count = 0;
   // a pose that did not move reskins to the same vertices, so its structure is still valid
   bool pose_advanced = false;
+  // skinning runs again for this frame, either because the pose moved or because the vertices it
+  // reads were still uploading the last time it ran
+  bool needs_skinning = false;
+  bool is_skinned_from_ready_mesh = false;
   AnimationInstanceID animation_instance_id = AnimationInstanceID::Invalid;
 };
 } // namespace ox

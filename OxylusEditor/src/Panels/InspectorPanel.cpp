@@ -15,6 +15,7 @@
 
 #include "AnimationEditorPanel.hpp"
 #include "Asset/AssetFile.hpp"
+#include "Asset/AssetHandle.hpp"
 #include "Asset/AssetImporter.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/AssetMeta.hpp"
@@ -771,6 +772,29 @@ struct EntityInspector : IEntitySerializer {
   auto on_opaque_value(
     std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
   ) -> void override {
+    if (flecs::entity(world, field_type).has<AssetRefTag>()) {
+      // every handle type is an AssetRef underneath
+      auto* ref = static_cast<AssetRef*>(field_ptr);
+      auto uuid = ref->uuid();
+
+      UI::end_properties();
+
+      // the helpers count only what they pick. The ref gives back its own reference, because a ref
+      // keeps its uuid without holding one when the load failed
+      auto is_changed = inspector_panel.draw_asset_field(name, uuid, ref, false);
+      is_changed |= inspector_panel.draw_animation_clip_selector(uuid, is_changed);
+      if (is_changed) {
+        *ref = AssetRef();
+        ref->take_over(uuid);
+        modified = true;
+      }
+
+      inspector_panel.draw_asset_contents(uuid);
+
+      UI::begin_properties();
+      return;
+    }
+
     if (field_type != world.entity<UUID>()) {
       return;
     }
@@ -872,7 +896,7 @@ auto InspectorPanel::handle_editor_context(this InspectorPanel& self) -> void {
 }
 
 auto InspectorPanel::draw_material_properties(
-  ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
+  Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
 ) -> bool {
   if (material_uuid) {
     const auto& window = App::get_window();
@@ -1032,13 +1056,10 @@ auto InspectorPanel::draw_material_properties(
         return UUID(nullptr);
       }
 
-      auto& asset_man = App::mod<AssetManager>();
-      if (!asset_man.load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb})) {
+      // loaded without a reference: the material takes its own when the edit is committed with
+      // set_material, which also gives back the old texture's
+      if (!App::mod<AssetManager>().load_asset(picked->uuid, TextureLoadInfo{.is_srgb = is_srgb}, false)) {
         return UUID(nullptr);
-      }
-
-      if (uuid) {
-        asset_man.unload_asset(uuid);
       }
 
       return picked->uuid;
@@ -1298,7 +1319,13 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
   });
 }
 
-auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::string_view label, UUID& uuid) -> bool {
+auto InspectorPanel::draw_asset_field(
+  this InspectorPanel& self,
+  const std::string_view label,
+  UUID& uuid,
+  const void* field_id,
+  const bool is_previous_counted
+) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -1324,13 +1351,16 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
                                        : "Models are added to the scene from the content browser, not assigned here";
 
   auto changed = false;
+  // whatever this call picks is counted, so a second change in the same call gives that one back
+  auto is_counted = is_previous_counted;
+  const auto* const field = field_id != nullptr ? field_id : &uuid;
 
-  ImGui::PushID(&uuid);
+  ImGui::PushID(field);
   ImGui::SeparatorText(stack.format_char("{} {}", asset_type_icon(picker_type), label));
 
   // Any file dropped here is imported first, so dragging straight from the content browser works
   // even for a file the registry has never seen.
-  const auto accept_drop = [&asset_man, &uuid, &changed, pickable] {
+  const auto accept_drop = [&asset_man, &uuid, &changed, &is_counted, pickable] {
     if (!pickable || !ImGui::BeginDragDropTarget()) {
       return;
     }
@@ -1342,11 +1372,12 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
       ) {
         // Must not hold a registry read guard while unloading: unload_asset() takes the registry
         // write lock. unload_asset() no-ops on missing/unloaded assets.
-        if (uuid) {
+        if (uuid && is_counted) {
           asset_man.unload_asset(uuid);
         }
         uuid = imported;
         changed = true;
+        is_counted = true;
       }
     }
     ImGui::EndDragDropTarget();
@@ -1388,7 +1419,9 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   ImGui::BeginDisabled(!uuid || !pickable);
   if (UI::button(stack.format_char("{} Clear", ICON_MDI_CLOSE))) {
     // The field owns one reference, the same way picking and dropping do, so clearing gives it back.
-    asset_man.unload_asset(uuid);
+    if (is_counted) {
+      asset_man.unload_asset(uuid);
+    }
     uuid = UUID(nullptr);
     changed = true;
   }
@@ -1396,20 +1429,21 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   ImGui::EndGroup();
 
   if (browse) {
-    self.asset_picker_field = &uuid;
+    self.asset_picker_field = field;
   }
 
-  if (self.asset_picker_field == &uuid) {
+  if (self.asset_picker_field == field) {
     auto open = true;
     const auto picked = self.asset_browser
                           .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
 
     if (picked && picked->uuid != uuid && asset_man.load_asset(picked->uuid)) {
-      if (uuid) {
+      if (uuid && is_counted) {
         asset_man.unload_asset(uuid);
       }
       uuid = picked->uuid;
       changed = true;
+      is_counted = true;
     }
 
     if (!open) {
@@ -1422,7 +1456,8 @@ auto InspectorPanel::draw_asset_field(this InspectorPanel& self, const std::stri
   return changed;
 }
 
-auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool {
+auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid, const bool is_previous_counted)
+  -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -1487,7 +1522,7 @@ auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUI
     return false;
   }
 
-  if (uuid) {
+  if (uuid && is_previous_counted) {
     asset_man.unload_asset(uuid);
   }
 
@@ -1589,10 +1624,12 @@ auto InspectorPanel::draw_asset_contents(this InspectorPanel& self, const UUID& 
         break;
       }
 
-      const auto material_dirty = draw_material_properties(std::move(material), uuid, path);
+      // the payload is immutable, so the edit goes into a copy that replaces it, which also marks it
+      // dirty and moves the material's texture references over
+      auto edited = material.copy();
       material.reset();
-      if (material_dirty) {
-        asset_man.set_material_dirty(material_id);
+      if (draw_material_properties(&edited, uuid, path)) {
+        asset_man.set_material(uuid, edited);
         editor.thumbnail_manager.invalidate_material(uuid);
       }
       break;
@@ -1658,7 +1695,7 @@ auto InspectorPanel::draw_asset_info(
 }
 
 auto InspectorPanel::draw_audio_asset(
-  this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio
+  this InspectorPanel& self, const std::filesystem::path& path, AssetView<AudioSource> audio
 ) -> void {
   ZoneScoped;
   memory::ScopedStack stack;

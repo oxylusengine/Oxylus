@@ -40,6 +40,10 @@ VOutput vs_main(u32 vertex_id : SV_VertexID) {
   f32x2 uvs[6] = {f32x2(0.0, 1.0), f32x2(1.0, 1.0), f32x2(1.0, 0.0), f32x2(1.0, 0.0), f32x2(0.0, 0.0), f32x2(0.0, 1.0)};
 
   output.uv = uvs[vertex_index];
+  // the animation frame picks a rect of the texture first, then the material tiles and offsets that
+  const f32x2 frame_uv_size = f32x2(f16tof32(input.frame_uv_size16x2), f16tof32(input.frame_uv_size16x2 >> 16));
+  const f32x2 frame_uv_offset = f32x2(f16tof32(input.frame_uv_offset16x2), f16tof32(input.frame_uv_offset16x2 >> 16));
+  output.uv = output.uv * frame_uv_size + frame_uv_offset;
   output.uv = (output.uv * uv_size_offset.xy) + (uv_size_offset.zw);
 
   const int flip = flags & RENDER_FLAGS_2D_FLIP_X;

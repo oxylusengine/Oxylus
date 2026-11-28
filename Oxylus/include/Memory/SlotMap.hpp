@@ -4,6 +4,7 @@
 #include <shared_mutex>
 #include <span>
 #include <tracy/Tracy.hpp>
+#include <type_traits>
 #include <vector>
 
 #include "Core/Option.hpp"
@@ -57,6 +58,11 @@ private:
   std::vector<usize> free_indices = {};
   mutable std::shared_mutex mutex = {};
 
+  auto is_valid_unlocked(this const Self& self, ID id) -> bool {
+    auto [version, index] = SlotMap_decode_id(id);
+    return index < self.slots.size() && self.versions[index] == version;
+  }
+
 public:
   auto create_slot(this Self& self, T&& v = {}) -> ID {
     ZoneScoped;
@@ -79,19 +85,19 @@ public:
   auto destroy_slot(this Self& self, ID id) -> bool {
     ZoneScoped;
 
-    if (self.is_valid(id)) {
-      std::unique_lock lock(self.mutex);
-      auto index = SlotMap_decode_id(id).index;
-      self.states[index] = false;
-      self.versions[index] += 1;
-      if (self.versions[index] < ~0_u32) {
-        self.free_indices.push_back(index);
-      }
-
-      return true;
+    std::unique_lock _(self.mutex);
+    if (!self.is_valid_unlocked(id)) {
+      return false;
     }
 
-    return false;
+    auto index = SlotMap_decode_id(id).index;
+    self.states[index] = false;
+    self.versions[index] += 1;
+    if (self.versions[index] < ~0_u32) {
+      self.free_indices.push_back(index);
+    }
+
+    return true;
   }
 
   auto reset(this Self& self) -> void {
@@ -108,20 +114,18 @@ public:
     ZoneScoped;
 
     std::shared_lock _(self.mutex);
-    auto [version, index] = SlotMap_decode_id(id);
-    return index < self.slots.size() && self.versions[index] == version;
+    return self.is_valid_unlocked(id);
   }
 
   auto slot(this Self& self, ID id) -> T* {
     ZoneScoped;
 
-    if (self.is_valid(id)) {
-      std::shared_lock _(self.mutex);
-      auto index = SlotMap_decode_id(id).index;
-      return &self.slots[index];
+    std::shared_lock _(self.mutex);
+    if (!self.is_valid_unlocked(id)) {
+      return nullptr;
     }
 
-    return nullptr;
+    return &self.slots[SlotMap_decode_id(id).index];
   }
 
   auto copy_slot(this const Self& self, ID id) -> option<T>
@@ -130,24 +134,22 @@ public:
     ZoneScoped;
 
     std::shared_lock _(self.mutex);
-    auto [version, index] = SlotMap_decode_id(id);
-    if (index >= self.slots.size() || self.versions[index] != version) {
+    if (!self.is_valid_unlocked(id)) {
       return nullopt;
     }
 
-    return self.slots[index];
+    return self.slots[SlotMap_decode_id(id).index];
   }
 
   auto slotc(this const Self& self, ID id) -> const T* {
     ZoneScoped;
 
-    if (self.is_valid(id)) {
-      std::shared_lock _(self.mutex);
-      auto index = SlotMap_decode_id(id).index;
-      return &self.slots[index];
+    std::shared_lock _(self.mutex);
+    if (!self.is_valid_unlocked(id)) {
+      return nullptr;
     }
 
-    return nullptr;
+    return &self.slots[SlotMap_decode_id(id).index];
   }
 
   auto slot_from_index(this Self& self, usize index) -> T* {

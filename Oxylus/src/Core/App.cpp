@@ -4,6 +4,7 @@
 #include <vir/RenderGraph.hpp>
 #include <vir/Types.hpp>
 
+#include "Asset/AssetManager.hpp"
 #include "Asset/Texture.hpp"
 #include "Core/EventSystem.hpp"
 #include "Core/Input.hpp"
@@ -128,6 +129,11 @@ auto App::step(this App& self) -> void {
 
   if (!self.is_running)
     return;
+
+  // before any module updates, so loads that finished on workers appear at a frame boundary
+  if (self.registry.has<AssetManager>()) {
+    self.mod<AssetManager>().commit();
+  }
 
   self.registry.update(self.timestep);
 

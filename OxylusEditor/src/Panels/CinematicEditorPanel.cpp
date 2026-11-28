@@ -221,7 +221,7 @@ auto CinematicEditorPanel::resolve_player(this CinematicEditorPanel& self) -> fl
   auto found = flecs::entity{};
   scene->world.query_builder<const CinematicPlayerComponent>().build().each(
     [&](flecs::entity e, const CinematicPlayerComponent& player) {
-      if (!found && player.cinematic_uuid == self.asset_uuid) {
+      if (!found && player.cinematic_uuid.uuid() == self.asset_uuid) {
         found = e;
       }
     }
@@ -238,16 +238,15 @@ auto CinematicEditorPanel::create_player(this CinematicEditorPanel& self) -> voi
     return;
   }
 
-  auto& asset_man = App::mod<AssetManager>();
-  if (!asset_man.load_asset(self.asset_uuid)) {
+  auto cinematic = AssetHandle<Cinematic>::acquire(self.asset_uuid);
+  if (!cinematic.is_loaded()) {
     OX_LOG_ERROR("Couldn't load cinematic {}.", self.asset_uuid.str());
     return;
   }
 
   auto entity = scene->create_entity("Director", true);
   entity.add<TransformComponent>();
-  // the component owns this reference from here on, and its OnRemove observer gives it back
-  entity.set<CinematicPlayerComponent>({.cinematic_uuid = self.asset_uuid});
+  entity.set<CinematicPlayerComponent>({.cinematic_uuid = std::move(cinematic)});
 }
 
 auto CinematicEditorPanel::seek(this CinematicEditorPanel& self, const f32 time) -> void {
@@ -292,7 +291,7 @@ auto CinematicEditorPanel::open_asset(this CinematicEditorPanel& self, const UUI
 
   const auto previous_asset = self.asset_uuid;
   self.asset_uuid = uuid;
-  if (previous_asset && previous_asset != uuid) {
+  if (previous_asset) {
     asset_man.unload_asset(previous_asset);
   }
 

@@ -5,6 +5,7 @@
 #include <utility>
 #include <vir/RenderGraph.hpp>
 
+#include "../RendererInstanceQueries.hpp"
 #include "Asset/AssetManager.hpp"
 #include "Asset/ParticleEmitterProgram.hpp"
 #include "Core/App.hpp"
@@ -79,10 +80,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
   auto pool_offset = 0_u32;
   auto layout_changed = false;
 
-  self.scene.world
-    .query_builder<const TransformComponent, const ParticleSystemComponent>() //
-    .build()
-    .each([&](flecs::entity entity, const TransformComponent&, const ParticleSystemComponent& component) {
+  self.queries->particle_systems.each(
+    [&](flecs::entity entity, const TransformComponent&, const ParticleSystemComponent& component) {
       const auto emitter_it = self.scene.entity_particle_emitters_map.find(entity);
       if (emitter_it == self.scene.entity_particle_emitters_map.end()) {
         return;
@@ -97,7 +96,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       if (snapshot_it == snapshot_of.end()) {
         auto snapshot = ParticleAssetSnapshot{};
         {
-          auto system = asset_man.get_particle_system(state->asset);
+          auto system = asset_man.get_particle_system(state->asset_id);
           if (!system || !system->compile_error.empty()) {
             return;
           }
@@ -111,9 +110,9 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
           snapshot.update_count = system->programs.update_count;
           snapshot.curve_row_count = system->curve_row_count();
           snapshot.atlas_row_count = system->atlas_row_count();
-          if (system->curve_atlas) {
-            snapshot.curve_atlas_index = system->curve_atlas.get_view_index();
-            snapshot.curve_sampler_index = system->curve_atlas.get_sampler_index();
+          if (system->curve_atlas != nullptr && *system->curve_atlas) {
+            snapshot.curve_atlas_index = system->curve_atlas->get_view_index();
+            snapshot.curve_sampler_index = system->curve_atlas->get_sampler_index();
           }
 
           snapshot.emitter_instructions = system->programs.emitter_instructions;
@@ -243,8 +242,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         {
           auto model = asset_man.get_model(snapshot.render.mesh);
           if (
-            model && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() &&
-            model->gpu_mesh_buffers[0] != BufferID::Invalid && model->is_mesh_ready(0)
+            model && model->is_mesh_ready(0) && !model->gpu_meshes.empty() && !model->lod0_index_ranges.empty() &&
+            model->gpu_mesh_buffers[0] != BufferID::Invalid
           ) {
             const auto& range = model->lod0_index_ranges[0];
             const auto buffer = render_context.buffer(model->gpu_mesh_buffers[0]);
@@ -266,7 +265,7 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
         }
       }
 
-      const auto world = Scene::get_world_transform(entity);
+      const auto world = self.scene.get_resolved_world_transform(entity);
 
       // spawn direction has to follow the *world* orientation. an exhaust emitter parented to a car
       // inherits the car's rotation, which the entity's local rotation knows nothing about
@@ -319,7 +318,8 @@ auto RendererInstance::prepare_particles(this RendererInstance& self, const f32 
       data.particle_total_spawn += spawn_count;
       data.particle_sort_enabled = data.particle_sort_enabled || snapshot.render.sort;
       data.particle_emitters.emplace_back(gpu_emitter);
-    });
+    }
+  );
 
   if (data.particle_emitters.empty()) {
     return;

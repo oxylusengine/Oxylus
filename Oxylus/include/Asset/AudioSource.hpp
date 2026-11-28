@@ -37,7 +37,8 @@ public:
 
   auto load(this AudioSource& self, const std::filesystem::path& path) -> bool;
   auto unload(this AudioSource& self) -> void;
-  auto get_source(this AudioSource& self) -> ma_sound*;
+  // the sound is miniaudio's playback state, not the asset's, so a const payload still plays it
+  auto get_source(this const AudioSource& self) -> ma_sound*;
 
 private:
   ma_sound* sound = nullptr;

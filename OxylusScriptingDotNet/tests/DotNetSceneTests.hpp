@@ -807,12 +807,10 @@ TEST_F(DotNetSceneTest, HullsEveryMeshOfAModelRoot) {
     .set(ox::BoxColliderComponent{.size = {50.0f, 0.5f, 50.0f}});
   auto slab = scene->create_entity("Slab").set(ox::TransformComponent{.position = {0.0f, 2.0f, 0.0f}});
   for (const auto mesh_index : {0_u32, 1_u32}) {
-    // the MeshComponent gives its reference back when it goes, as a spawned mesh entity does
-    assets.load_asset(model_uuid);
     scene->create_entity(mesh_index == 0 ? "Bottom" : "Top")
       .child_of(slab)
       .set(ox::TransformComponent{})
-      .set(ox::MeshComponent{.model_uuid = model_uuid, .mesh_index = mesh_index});
+      .set(ox::MeshComponent{.model_uuid = ox::AssetHandle<ox::Model>::acquire(model_uuid), .mesh_index = mesh_index});
   }
 
   slab.set(ox::MeshColliderComponent{.convex = true})
@@ -893,8 +891,9 @@ TEST_F(DotNetSceneTest, ReachesAssetsAudioScenesAndFilesFromCSharp) {
   scene->runtime_stop();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "content released, refs 1"), 1);
 
-  // the speaker going with the scene gives back the last reference
+  // the speaker going with the scene gives back the last reference, and the unload lands at the commit
   scene.reset();
+  assets.commit();
   EXPECT_FALSE(assets.is_loaded(content.beep));
   EXPECT_EQ(count_logs(ox::OxLogLevel::Error), 0) << logs_text();
   std::ignore = ox::App::get_event_system().unsubscribe<ox::SceneLoadRequestEvent>(handler);
@@ -915,6 +914,7 @@ TEST_F(DotNetSceneTest, ReleasesHandlesTheScriptsForgot) {
     ),
     1
   ) << logs_text();
+  assets.commit();
   EXPECT_FALSE(assets.is_loaded(content.beep));
 }
 
@@ -961,6 +961,49 @@ TEST_F(DotNetSceneTest, SetsADecalsMaterialAndKeepsItsReferenceBalanced) {
   assets.unload_asset(paint);
 }
 
+TEST_F(DotNetSceneTest, SetsAMeshsMaterialAndKeepsItsReferenceBalanced) {
+  auto& assets = ox::App::mod<ox::AssetManager>();
+  const auto root = std::filesystem::temp_directory_path() / "ox_dotnet_content_test";
+  ox::App::get_vfs().mount_dir(ox::VFS::ASSETS_DIR, root);
+
+  const auto paint = ox::UUID::generate_random();
+  const auto texture = ox::UUID::generate_random();
+  assets.register_asset(
+    paint,
+    ox::AssetType::Material,
+    root / "Materials/mesh_paint.mat",
+    root / "Materials/mesh_paint.mat"
+  );
+  assets.register_asset(
+    texture,
+    ox::AssetType::Texture,
+    root / "Textures/mesh_not_a_material.png",
+    root / "Textures/mesh_not_a_material.png"
+  );
+  assets.publish_texture(texture, ox::Texture{});
+  assets.set_pending_load_info(paint, ox::Material{});
+  // held by the test as well, so clearing the mesh's reference doesn't free the material out from under the probe
+  ASSERT_TRUE(assets.load_asset(paint));
+  ASSERT_EQ(assets.get_asset(paint)->ref_count, 1);
+
+  ASSERT_TRUE(scene->add_script_type("SmokeGame.MeshMaterialProbe").has_value());
+  scene->runtime_start();
+
+  const auto expect_log = [](std::string_view message) {
+    EXPECT_EQ(count_logs(ox::OxLogLevel::Info, message), 1) << message << "\n" << logs_text();
+  };
+  expect_log("mesh defaults material False");
+  expect_log("mesh set True refs 2");
+  expect_log("mesh set again refs 2");
+  expect_log("mesh refused texture True plain True kept True refs 2");
+  expect_log("mesh cleared False refs 1");
+  expect_log("mesh destroyed refs 1");
+
+  scene->runtime_stop();
+  EXPECT_EQ(assets.get_asset(paint)->ref_count, 1);
+  assets.unload_asset(paint);
+}
+
 TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   auto& assets = ox::App::mod<ox::AssetManager>();
   const auto content = material_assets();
@@ -968,12 +1011,14 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
     return assets.get_asset(uuid)->ref_count;
   };
 
+  // the test and the model hold the material, and the loaded material holds one reference on each
+  // texture it names however many hold it
   EXPECT_EQ(refs(content.stone), 2);
-  EXPECT_EQ(refs(content.texture_a), 2);
+  EXPECT_EQ(refs(content.texture_a), 1);
   EXPECT_EQ(refs(content.texture_b), 0);
-  EXPECT_EQ(refs(content.texture_c), 2);
-  EXPECT_EQ(refs(content.texture_d), 2);
-  EXPECT_EQ(refs(content.texture_e), 2);
+  EXPECT_EQ(refs(content.texture_c), 1);
+  EXPECT_EQ(refs(content.texture_d), 1);
+  EXPECT_EQ(refs(content.texture_e), 1);
   std::ignore = assets.get_dirty_material_ids();
 
   ASSERT_TRUE(scene->add_script_type("SmokeGame.MaterialProbe").has_value());
@@ -995,7 +1040,7 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   expect_log("material read attenuation 0.25 0.50 0.75 distance 2.50 shading Water");
   expect_log("material read water 0.125 0.250 0.500 flow 0.50 0.75 detail 0.625 shore 0.875");
   expect_log("material read transmission d True thickness e True");
-  expect_log("material refs a 2 b 0 c 2 d 2 e 2");
+  expect_log("material refs a 1 b 0 c 1 d 1 e 1");
   expect_log("material written color 0.50 0.25 0.125 1.00 uv 3.00 5.00 offset 0.50 0.75 emissive 4.0 5.0 6.0");
   expect_log(
     "material written roughness 0.500 metallic 0.875 normal 1.50 occlusion 0.25 alpha Blend cutoff 0.50 sampling "
@@ -1006,17 +1051,17 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   expect_log("material written attenuation 0.50 0.25 0.12 distance 0.00 shading Standard");
   expect_log("material written water 0.500 0.125 0.250 flow 0.25 0.125 detail 0.250 shore 0.375");
   expect_log("material written transmission e True thickness d True");
-  expect_log("material refs a 2 b 2 c 2 d 2 e 2");
+  expect_log("material refs a 1 b 1 c 1 d 1 e 1");
   expect_log("material refused idle True texture True unknown True slot True mode True shading True thickness True");
   expect_log("material unread idle False texture False unknown False");
-  expect_log("material refs after refusals a 2 b 2 c 2 d 2 e 2");
+  expect_log("material refs after refusals a 1 b 1 c 1 d 1 e 1");
 
-  // every texture moved with the material's two references: b gained both, a and c only changed slots
-  EXPECT_EQ(refs(content.texture_a), 2);
-  EXPECT_EQ(refs(content.texture_b), 2);
-  EXPECT_EQ(refs(content.texture_c), 2);
-  EXPECT_EQ(refs(content.texture_d), 2);
-  EXPECT_EQ(refs(content.texture_e), 2);
+  // the material's one reference moved with each texture: b gained it, a and c only changed slots
+  EXPECT_EQ(refs(content.texture_a), 1);
+  EXPECT_EQ(refs(content.texture_b), 1);
+  EXPECT_EQ(refs(content.texture_c), 1);
+  EXPECT_EQ(refs(content.texture_d), 1);
+  EXPECT_EQ(refs(content.texture_e), 1);
   {
     const auto stone = assets.get_material(content.stone);
     ASSERT_TRUE(static_cast<bool>(stone));
@@ -1047,9 +1092,10 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   ASSERT_EQ(dirty.size(), 1);
   EXPECT_EQ(dirty.front(), assets.get_asset(content.stone)->material_id);
 
-  // dropping every texture gives back all the references they held for the material
+  // dropping every texture gives back the material's references, and the commit unloads them
   scene->runtime_stop();
   expect_log("material cleared refs a 0 b 0 c 0 d 0 e 0");
+  assets.commit();
   for (const auto& texture :
        {content.texture_a, content.texture_b, content.texture_c, content.texture_d, content.texture_e}) {
     EXPECT_EQ(refs(texture), 0);
@@ -1071,6 +1117,8 @@ TEST_F(DotNetSceneTest, ReadsAndWritesMaterialsAndKeepsTheirTexturesBalanced) {
   // letting go of the material afterwards must not take anything below zero
   assets.unload_asset(content.model);
   assets.unload_asset(content.stone);
+  // the model unloads first and gives back its reference on the material in the same commit
+  assets.commit();
   EXPECT_FALSE(assets.is_loaded(content.stone));
   EXPECT_FALSE(assets.is_loaded(content.model));
   for (const auto& texture :
@@ -1165,9 +1213,11 @@ TEST_F(DotNetSceneTest, MirrorsUuidFieldsOfComponents) {
   const auto& b = first.get<ox::SpriteComponent>().material;
   EXPECT_TRUE(a);
   EXPECT_TRUE(b);
-  EXPECT_NE(a, b);
-  EXPECT_EQ(count_logs(ox::OxLogLevel::Info, std::format("sprite materials {} {} valid True", a.str(), b.str())), 1)
-    << logs_text();
+  EXPECT_NE(a.uuid(), b.uuid());
+  EXPECT_EQ(
+    count_logs(ox::OxLogLevel::Info, std::format("sprite materials {} {} valid True", a.uuid().str(), b.uuid().str())),
+    1
+  ) << logs_text();
   EXPECT_EQ(count_logs(ox::OxLogLevel::Info, "sprite swapped"), 1) << logs_text();
 }
 

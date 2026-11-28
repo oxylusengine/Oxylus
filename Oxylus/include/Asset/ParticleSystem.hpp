@@ -5,6 +5,7 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -113,7 +114,8 @@ struct ParticleSystem {
 
   ParticleCompiledPrograms programs = {};
   std::string compile_error = {};
-  Texture curve_atlas = {};
+  // shared by the versions an edit leaves behind until it recompiles, see `recompile`
+  std::shared_ptr<Texture> curve_atlas = {};
 
   ParticleSystem() = default;
   ~ParticleSystem() = default;
@@ -127,8 +129,12 @@ struct ParticleSystem {
   static auto read(const std::filesystem::path& path) -> option<ParticleSystem>;
   auto write(this const ParticleSystem& self, const std::filesystem::path& path) -> bool;
 
+  // bakes a fresh atlas when the current one is still shared with another version, so a version that
+  // is still being read keeps the curves it was built with
   auto recompile(this ParticleSystem& self) -> void;
   auto destroy(this ParticleSystem& self) -> void;
+  // copies are explicit, an edit builds the next version from one. The atlas is shared, not copied
+  auto clone(this const ParticleSystem& self) -> ParticleSystem;
 
   auto curve_row_count(this const ParticleSystem& self) -> u32 { return static_cast<u32>(self.curves.size()); }
   auto atlas_row_count(this const ParticleSystem& self) -> u32 {
@@ -144,6 +150,9 @@ enum class ParticleEmitterID : u64 { Invalid = std::numeric_limits<u64>::max() }
 // scene JSON.
 struct ParticleEmitterState {
   UUID asset = {};
+  // the payload `asset` resolves to, refreshed whenever the component is set. Stable while the
+  // component's handle holds the asset, since an edit replaces the payload in the same slot
+  ParticleSystemID asset_id = ParticleSystemID::Invalid;
   bool playing = false;
   f32 time = 0.0f;
   f32 spawn_accumulator = 0.0f;

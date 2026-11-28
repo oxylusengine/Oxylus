@@ -141,7 +141,7 @@ auto upload_mesh(
 }
 
 auto AssetManager::resolve_mesh_blas(
-  RenderContext& render_context, Model& model, const usize mesh_index, StaticBLASBudget* budget
+  RenderContext& render_context, const Model& model, const usize mesh_index, StaticBLASBudget* budget
 ) -> u64 {
   ZoneScoped;
 
@@ -149,8 +149,8 @@ auto AssetManager::resolve_mesh_blas(
     return 0;
   }
 
-  // the slot is written under the models' shared lock, and two scenes rendering from different threads
-  // can both find it empty, so the loser of the exchange below throws its copy away
+  // two scenes rendering from different threads can both find the slot empty, so the loser of the
+  // exchange below throws its copy away
   auto blas = std::atomic_ref(model.mesh_blases[mesh_index]);
   const auto is_unbuilt = blas.load(std::memory_order_acquire) == AccelerationStructureID::Invalid;
   // published models may mark a mesh ready without any GPU side at all
@@ -338,11 +338,8 @@ auto AssetManager::load_model(
   model.mesh_ready = std::vector<std::atomic_flag>(mesh_count);
   model.pending_meshes = static_cast<u32>(mesh_count);
 
-  auto model_id = ModelID::Invalid;
-  {
-    auto write_lock = std::unique_lock(self.models_mutex);
-    model_id = self.model_map.create_slot(std::move(model));
-  }
+  // published as const, the upload jobs below fill each mesh's streamed fields and set its ready flag
+  const auto model_id = self.model_storage.create(model_payload(std::move(model)));
 
   auto mesh_barrier = Barrier::create();
   auto mesh_batch = UploadBatch::create();
@@ -373,7 +370,6 @@ auto AssetManager::load_model(
 
       auto pending = std::atomic_ref(loaded_model->pending_meshes);
       const auto was_last = pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
-      // Lock order is model_load -> models, so drop `models_mutex` before notifying.
       loaded_model.reset();
 
       if (was_last) {
@@ -411,17 +407,19 @@ auto AssetManager::load_model(this AssetManager& self, const std::filesystem::pa
   return ModelID::Invalid;
 }
 
+auto AssetManager::model_payload(Model&& model) -> std::shared_ptr<const Model> {
+  return std::shared_ptr<const Model>(new Model(std::move(model)), [](const Model* payload) {
+    payload->destroy_gpu_resources(App::get_rendercontext());
+    delete payload;
+  });
+}
+
 auto AssetManager::unload_model(this AssetManager& self, const ModelID model_id) -> bool {
   ZoneScoped;
 
+  // its upload jobs write into it until they are done
   self.wait_until_model_loaded(model_id);
-
-  auto write_lock = std::unique_lock(self.models_mutex);
-  if (auto* model = self.model_map.slot(model_id)) {
-    model->destroy_gpu_resources(App::get_rendercontext());
-    *model = Model{};
-  }
-  self.model_map.destroy_slot(model_id);
+  self.retire(self.model_storage.destroy(model_id));
 
   return true;
 }

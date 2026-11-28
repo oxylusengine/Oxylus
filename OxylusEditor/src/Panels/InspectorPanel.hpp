@@ -26,8 +26,9 @@ public:
 
   auto handle_editor_context(this InspectorPanel& self) -> void;
 
+  // edits `material`, a copy of the payload the caller commits with AssetManager::set_material
   static auto draw_material_properties(
-    ReadGuard<Material> material, const UUID& material_uuid, const std::filesystem::path& default_path
+    Material* material, const UUID& material_uuid, const std::filesystem::path& default_path
   ) -> bool;
 
   auto draw_components(this InspectorPanel& self, flecs::entity entity) -> void;
@@ -38,16 +39,24 @@ public:
 
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.
-  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid) -> bool;
+  // `field_id` names the field for the picker when `uuid` is a copy, the field's own address otherwise
+  // A new pick takes one reference, and the old one is given back only when `is_previous_counted`
+  auto draw_asset_field(
+    this InspectorPanel& self,
+    std::string_view label,
+    UUID& uuid,
+    const void* field_id = nullptr,
+    bool is_previous_counted = true
+  ) -> bool;
 
   // switches an animation field between the clips imported from the same model
-  auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool;
+  auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid, bool is_previous_counted = true) -> bool;
 
   // Type specific editor for whatever `uuid` names, shown under an asset field and under a file
   // selected in the content browser.
   auto draw_asset_contents(this InspectorPanel& self, const UUID& uuid) -> void;
 
-  auto draw_audio_asset(this InspectorPanel& self, const std::filesystem::path& path, ReadGuard<AudioSource> audio)
+  auto draw_audio_asset(this InspectorPanel& self, const std::filesystem::path& path, AssetView<AudioSource> audio)
     -> void;
 
 private:

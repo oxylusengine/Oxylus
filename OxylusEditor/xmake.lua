@@ -51,6 +51,14 @@ target("OxylusEditor")
 
     set_prefixdir("/", { bindir = ".", libdir = "." })
 
+    -- the exe delay-loads it, and IDE launch configs start it without the package PATH `xmake run` sets
+    after_build(function (target)
+        if has_config("profile") and target:is_plat("windows") then
+            local tracy = target:dep("Oxylus"):pkg("tracy")
+            os.vcp(path.join(tracy:installdir(), "bin", "TracyClient.dll"), target:targetdir())
+        end
+    end)
+
     -- slang loads its modules at runtime, so xmake never sees them as dependencies
     after_install(function (target)
         local installdir = target:installdir()
