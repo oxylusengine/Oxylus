@@ -773,15 +773,18 @@ struct EntityInspector : IEntitySerializer {
     std::string_view name, flecs::entity_t field_type, void* field_ptr, flecs::entity_t opaque_type, const void* value
   ) -> void override {
     if (flecs::entity(world, field_type).has<AssetRefTag>()) {
-      // every handle type is an AssetRef underneath, and the asset field moves the references itself
+      // every handle type is an AssetRef underneath
       auto* ref = static_cast<AssetRef*>(field_ptr);
       auto uuid = ref->uuid();
 
       UI::end_properties();
 
-      auto is_changed = inspector_panel.draw_asset_field(name, uuid, ref);
-      is_changed |= inspector_panel.draw_animation_clip_selector(uuid);
+      // the helpers count only what they pick. The ref gives back its own reference, because a ref
+      // keeps its uuid without holding one when the load failed
+      auto is_changed = inspector_panel.draw_asset_field(name, uuid, ref, false);
+      is_changed |= inspector_panel.draw_animation_clip_selector(uuid, is_changed);
       if (is_changed) {
+        *ref = AssetRef();
         ref->take_over(uuid);
         modified = true;
       }
@@ -1317,7 +1320,11 @@ void InspectorPanel::draw_components(this InspectorPanel& self, flecs::entity en
 }
 
 auto InspectorPanel::draw_asset_field(
-  this InspectorPanel& self, const std::string_view label, UUID& uuid, const void* field_id
+  this InspectorPanel& self,
+  const std::string_view label,
+  UUID& uuid,
+  const void* field_id,
+  const bool is_previous_counted
 ) -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
@@ -1344,6 +1351,8 @@ auto InspectorPanel::draw_asset_field(
                                        : "Models are added to the scene from the content browser, not assigned here";
 
   auto changed = false;
+  // whatever this call picks is counted, so a second change in the same call gives that one back
+  auto is_counted = is_previous_counted;
   const auto* const field = field_id != nullptr ? field_id : &uuid;
 
   ImGui::PushID(field);
@@ -1351,7 +1360,7 @@ auto InspectorPanel::draw_asset_field(
 
   // Any file dropped here is imported first, so dragging straight from the content browser works
   // even for a file the registry has never seen.
-  const auto accept_drop = [&asset_man, &uuid, &changed, pickable] {
+  const auto accept_drop = [&asset_man, &uuid, &changed, &is_counted, pickable] {
     if (!pickable || !ImGui::BeginDragDropTarget()) {
       return;
     }
@@ -1363,11 +1372,12 @@ auto InspectorPanel::draw_asset_field(
       ) {
         // Must not hold a registry read guard while unloading: unload_asset() takes the registry
         // write lock. unload_asset() no-ops on missing/unloaded assets.
-        if (uuid) {
+        if (uuid && is_counted) {
           asset_man.unload_asset(uuid);
         }
         uuid = imported;
         changed = true;
+        is_counted = true;
       }
     }
     ImGui::EndDragDropTarget();
@@ -1409,7 +1419,9 @@ auto InspectorPanel::draw_asset_field(
   ImGui::BeginDisabled(!uuid || !pickable);
   if (UI::button(stack.format_char("{} Clear", ICON_MDI_CLOSE))) {
     // The field owns one reference, the same way picking and dropping do, so clearing gives it back.
-    asset_man.unload_asset(uuid);
+    if (is_counted) {
+      asset_man.unload_asset(uuid);
+    }
     uuid = UUID(nullptr);
     changed = true;
   }
@@ -1426,11 +1438,12 @@ auto InspectorPanel::draw_asset_field(
                           .render_picker(stack.format_char("Pick {}###AssetPicker", label), &open, picker_type, uuid);
 
     if (picked && picked->uuid != uuid && asset_man.load_asset(picked->uuid)) {
-      if (uuid) {
+      if (uuid && is_counted) {
         asset_man.unload_asset(uuid);
       }
       uuid = picked->uuid;
       changed = true;
+      is_counted = true;
     }
 
     if (!open) {
@@ -1443,7 +1456,8 @@ auto InspectorPanel::draw_asset_field(
   return changed;
 }
 
-auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool {
+auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid, const bool is_previous_counted)
+  -> bool {
   ZoneScoped;
   memory::ScopedStack stack;
 
@@ -1508,7 +1522,7 @@ auto InspectorPanel::draw_animation_clip_selector(this InspectorPanel& self, UUI
     return false;
   }
 
-  if (uuid) {
+  if (uuid && is_previous_counted) {
     asset_man.unload_asset(uuid);
   }
 

@@ -40,11 +40,17 @@ public:
   // One component field holding an asset UUID: preview, name, picker, clear, and drop target.
   // Returns true when it pointed the field somewhere else.
   // `field_id` names the field for the picker when `uuid` is a copy, the field's own address otherwise
-  auto draw_asset_field(this InspectorPanel& self, std::string_view label, UUID& uuid, const void* field_id = nullptr)
-    -> bool;
+  // A new pick takes one reference, and the old one is given back only when `is_previous_counted`
+  auto draw_asset_field(
+    this InspectorPanel& self,
+    std::string_view label,
+    UUID& uuid,
+    const void* field_id = nullptr,
+    bool is_previous_counted = true
+  ) -> bool;
 
   // switches an animation field between the clips imported from the same model
-  auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid) -> bool;
+  auto draw_animation_clip_selector(this InspectorPanel& self, UUID& uuid, bool is_previous_counted = true) -> bool;
 
   // Type specific editor for whatever `uuid` names, shown under an asset field and under a file
   // selected in the content browser.

@@ -291,7 +291,7 @@ auto CinematicEditorPanel::open_asset(this CinematicEditorPanel& self, const UUI
 
   const auto previous_asset = self.asset_uuid;
   self.asset_uuid = uuid;
-  if (previous_asset && previous_asset != uuid) {
+  if (previous_asset) {
     asset_man.unload_asset(previous_asset);
   }
 

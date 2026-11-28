@@ -12,7 +12,7 @@ struct Asset;
 struct AssetRefTag {};
 
 // one reference on an asset, given back when the ref goes away. It holds a count only while it
-// points at a record, which happens when the asset was loaded at the time the ref was made. It
+// points at a record, which happens when the asset was loaded or staged at the time the ref was made. It
 // keeps its uuid either way, so a scene saves a reference that failed to load. Records never move
 // and are never freed before the asset manager, so reading through one skips the registry lookup
 class AssetRef {
@@ -27,7 +27,7 @@ public:
 
   // loads the asset first when it is not loaded
   static auto acquire(const UUID& uuid) -> AssetRef;
-  // never loads: holds a reference only when the asset is loaded already, for code that may not
+  // never loads: holds a reference only when the asset is loaded or staged already, for code that may not
   // re-enter a load, like spawning from a model whose read guard it still holds
   static auto from_loaded(const UUID& uuid) -> AssetRef;
 

@@ -133,7 +133,8 @@ auto AssetRef::acquire(const UUID& uuid) -> AssetRef {
     return ref;
   }
 
-  if (const auto asset = asset_man->get_asset(uuid); asset && asset->is_loaded()) {
+  // on a worker the load is staged until the commit, and it counted the staged record
+  if (const auto asset = asset_man->get_asset(uuid); asset && (asset->is_loaded() || asset->is_staged())) {
     ref.record_ = asset.value;
   }
 
@@ -160,7 +161,7 @@ auto AssetRef::take_over(this AssetRef& self, const UUID& uuid) -> void {
     return;
   }
 
-  if (const auto asset = asset_man->get_asset(uuid); asset && asset->is_loaded()) {
+  if (const auto asset = asset_man->get_asset(uuid); asset && (asset->is_loaded() || asset->is_staged())) {
     self.record_ = asset.value;
   }
 }
@@ -189,9 +190,9 @@ auto AssetRef::point_at_loaded(this AssetRef& self) -> void {
     return;
   }
 
-  // a copy holds a count only when there is a loaded asset to count, like the ref it copies
+  // a copy holds a count only when there is a loaded or staged asset to count, like the ref it copies
   auto asset = asset_man->get_asset(self.uuid_);
-  if (!asset || !asset->is_loaded()) {
+  if (!asset || !(asset->is_loaded() || asset->is_staged())) {
     return;
   }
 

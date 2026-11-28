@@ -2068,6 +2068,14 @@ auto Scene::prepare_render(this Scene& self) -> void {
           }
         }
       }
+
+      // cleared here and not in update_animations, so a pose that changed on a tick nothing rendered
+      // still reaches the GPU. One animator can drive several meshes, hence after the whole loop
+      for (const auto& skinned : self.skinned_mesh_instances) {
+        if (auto* animation_instance = self.animation_instances.slot(skinned.animation_instance_id)) {
+          animation_instance->advanced = false;
+        }
+      }
     }
 
     // a BLAS address is a raw pointer the TLAS build dereferences, and nothing promises that whatever
@@ -3147,7 +3155,6 @@ auto Scene::update_animations(this Scene& self, const f32 delta_time) -> void {
 
     auto& instance = *instance_ptr;
     const auto entity_id = entity.id();
-    instance.advanced = false;
 
     if (instance.bone_count == 0) {
       continue;

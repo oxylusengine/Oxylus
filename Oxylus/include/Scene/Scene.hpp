@@ -140,7 +140,8 @@ struct AnimationInstance {
   f32 influence_radius = 0.0f;
   // model-space and conservative: bone positions inflated by the widest bone influence
   GPU::MeshBounds bounds = {};
-  // advanced this frame, so anything skinned from it has to be re-uploaded and re-skinned
+  // advanced since the last prepare_render, so anything skinned from it has to be re-uploaded and
+  // re-skinned
   bool advanced = false;
   // something other than the clock changed the pose, so it has to be pushed once more even though
   // the clip is not running

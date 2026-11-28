@@ -239,6 +239,10 @@ auto AssetManager::delete_asset(this AssetManager& self, const UUID& uuid) -> vo
     auto write_lock = std::unique_lock(self.registry_mutex);
     if (const auto it = self.asset_registry.find(uuid); it != self.asset_registry.end()) {
       unindex_source(self.source_index, uuid, it->second->source_path);
+      // a staged payload is freed by the commit once it finds no record, and a revived record must
+      // not point at it
+      it->second->staged_raw = ~0_u64;
+      std::atomic_ref(it->second->ref_count).store(0);
       self.retire_record(it);
     }
   }
@@ -474,6 +478,19 @@ auto AssetManager::publish_staged(this AssetManager& self, const UUID& uuid, con
 
     it->second->set_payload_id(payload_id);
     it->second->staged_raw = ~0_u64;
+  }
+
+  // a main-thread load publishes a staged parent ahead of the commit, and two workers can queue a
+  // parent before its child, so staged children go first or the parent would hold none of them
+  for (const auto& child : self.child_uuids(uuid)) {
+    auto child_staged_id = ~0_u64;
+    if (const auto child_asset = self.get_asset(child)) {
+      child_staged_id = child_asset->staged_raw;
+    }
+
+    if (child_staged_id != ~0_u64) {
+      self.publish_staged(child, child_staged_id);
+    }
   }
 
   self.hold_children(uuid);
